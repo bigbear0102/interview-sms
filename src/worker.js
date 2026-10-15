@@ -418,7 +418,7 @@ async function handle(request, env, ctx) {
 
   // 지원자 명단 양식 내려받기
   if (path === '/template.csv') {
-    const csv = toCsv([['사업장(원가중심점)', '이름', '전화번호', '면접일시'], ['1001 강남점', '홍길동', '010-1234-5678', '10/20 14:00'], ['1002 서초점', '김철수', '010-2345-6789', '10/20 15:00']]);
+    const csv = toCsv([['사업장(원가중심점)', '이름', '전화번호', '면접일시'], ['아마노코리아(현장HR)', '홍길동', '010-1234-5678', '10/20 14:00'], ['1002 서초점', '김철수', '010-2345-6789', '10/20 15:00']]);
     return new Response(csv, { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="candidates-template.csv"; filename*=UTF-8''${encodeURIComponent('지원자명단-양식.csv')}` } });
   }
 

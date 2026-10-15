@@ -95,9 +95,9 @@ const SLIDES = [
        <li><span class="o">✓</span><span>번호 오류·중복은 <b>올리는 즉시 걸러서</b> 알려 줘요</span></li>
        <li><span class="o">✓</span><span>한 명에게만 보낼 때는 입력칸 4개면 충분</span></li></ul></div>
      ${mockWindow(`<table><thead><tr><th>사업장</th><th>이름</th><th>전화번호</th><th>면접일시</th></tr></thead><tbody>
-       <tr><td>강남점</td><td>홍길동</td><td>010-1234-5678</td><td>10/20 14:00</td></tr>
-       <tr><td>강남점</td><td>김영희</td><td>010-2345-6789</td><td>10/20 14:30</td></tr>
-       <tr><td>분당점</td><td>이철수</td><td>010-3456-7890</td><td>10/21 10:00</td></tr></tbody></table>
+       <tr><td>아마노코리아(현장HR)</td><td>홍길동</td><td>010-1234-5678</td><td>10/20 14:00</td></tr>
+       <tr><td>아마노코리아(현장HR)</td><td>김영희</td><td>010-2345-6789</td><td>10/20 14:30</td></tr>
+       <tr><td>아마노코리아(현장HR)</td><td>이철수</td><td>010-3456-7890</td><td>10/21 10:00</td></tr></tbody></table>
        <p class="note">※ 화면 예시는 가상 데이터입니다.</p>`)}
    </div>`,
 
@@ -129,8 +129,8 @@ const SLIDES = [
        <li><span class="o">✓</span><span>엑셀로 내려받아 <b>바로 보고용</b>으로 사용</span></li></ul>
      ${mockWindow(`<div class="stats"><div><b>42</b><span>보냄</span></div><div><b>27</b><span>참석</span></div><div><b>6</b><span>불참</span></div><div><b>9</b><span>미회신</span></div></div>
        <table><thead><tr><th>보낸 날</th><th>사업장</th><th class="n">보냄</th><th class="n">참석</th><th class="n">불참</th><th class="n">미회신</th></tr></thead><tbody>
-       <tr><td>10/15</td><td>강남점</td><td class="n">20</td><td class="n">14</td><td class="n">2</td><td class="n">4</td></tr>
-       <tr><td>10/15</td><td>분당점</td><td class="n">22</td><td class="n">13</td><td class="n">4</td><td class="n">5</td></tr></tbody></table>
+       <tr><td>10/15</td><td>아마노코리아(현장HR)</td><td class="n">20</td><td class="n">14</td><td class="n">2</td><td class="n">4</td></tr>
+       <tr><td>10/16</td><td>아마노코리아(현장HR)</td><td class="n">22</td><td class="n">13</td><td class="n">4</td><td class="n">5</td></tr></tbody></table>
        <p class="note">※ 가상 데이터</p>`)}</div>`,
 
   // 8 리마인드

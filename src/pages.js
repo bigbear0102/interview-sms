@@ -270,7 +270,7 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
           <label style="display:flex;gap:8px;align-items:center"><input type="radio" name="mode" value="many"> 여러 명 (명단 파일)</label>
         </div>
         <div id="mode-one">
-          <label>사업장(원가중심점) <input name="one_site" placeholder="예: 1001 강남점"></label>
+          <label>사업장(원가중심점) <input name="one_site" placeholder="예: 아마노코리아(현장HR)"></label>
           <label style="margin-top:12px">이름 <input name="one_name" placeholder="홍길동" autocomplete="off"></label>
           <label style="margin-top:12px">휴대폰 번호 <input name="one_phone" type="tel" inputmode="tel" placeholder="010-1234-5678" autocomplete="off"></label>
           <label style="margin-top:12px">면접일시 <input name="one_when" placeholder="10/20 14:00" autocomplete="off"></label>
@@ -278,12 +278,12 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
         <div id="mode-many" hidden>
         <p class="muted" style="margin-bottom:12px">엑셀에서 <b>CSV로 저장</b>한 파일을 올려 주세요.</p>
         ${tableWrap(`<table class="sample"><thead><tr><th>사업장(원가중심점)</th><th>이름</th><th>전화번호</th><th>면접일시</th></tr></thead><tbody>
-          <tr><td>1001 강남점</td><td>홍길동</td><td>010-1234-5678</td><td>10/20 14:00</td></tr></tbody></table>`)}
+          <tr><td>아마노코리아(현장HR)</td><td>홍길동</td><td>010-1234-5678</td><td>10/20 14:00</td></tr></tbody></table>`)}
         <p style="margin:12px 0"><a class="btn secondary small" href="/template.csv">${icon('download', 16)}양식 받기</a></p>
         <div class="dropzone"><input type="file" id="f" accept=".csv,.txt" aria-label="명단 파일 선택"><p id="fname" class="muted" style="margin-top:8px">아직 고른 파일이 없어요.</p></div>
         <label style="margin-top:16px">사업장(원가중심점)
           <small>파일에 사업장 열이 있으면 비워 두세요. 한 곳에만 보낸다면 여기에 적으면 전체에 적용돼요.</small>
-          <input name="default_site" placeholder="예: 1001 강남점"></label>
+          <input name="default_site" placeholder="예: 아마노코리아(현장HR)"></label>
         <p class="muted" style="margin-top:8px;font-size:14px">사업장 이름은 <b>문자에는 들어가지 않고</b>, 사업장별 회신 현황에만 쓰여요.</p>
         <details style="margin-top:12px"><summary>파일이 없으면 직접 붙여넣기</summary>
           <textarea name="csv" id="csv" rows="6" placeholder="이름,전화번호,면접일시&#10;홍길동,010-1234-5678,10/20 14:00" style="margin-top:8px"></textarea></details>
