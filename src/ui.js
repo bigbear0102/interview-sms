@@ -44,10 +44,20 @@ export function badge(key, labelOverride) {
   return `<span class="badge ${tone}">${esc(labelOverride || label)}</span>`;
 }
 // 문자 목록(보낸/받은)에서 쓰는 상태: 보낸 문자의 sent 는 "보냄"
-export function messageBadge(dir, result, delivery = '') {
+// 문자 서버가 접수만 했고 폰이 아직 보내지 않은 상태(delivery='queued')
+export function phoneWaitBadge(at) {
+  const age = at ? Date.now() - at : 0;
+  if (age > 24 * 3600000) return '<span class="badge mute" title="하루가 지나 더 이상 확인하지 않아요">보냄(전달 확인 안 됨)</span>';
+  const late = age > 10 * 60000;
+  return late
+    ? '<span class="badge fail" title="폰이 꺼져 있거나 앱의 Cloud server가 꺼져 있을 수 있어요">폰이 아직 안 보냈어요</span>'
+    : '<span class="badge wait" title="문자 서버가 받았고, 폰이 보내기를 기다리고 있어요">폰 전달 대기</span>';
+}
+export function messageBadge(dir, result, delivery = '', at = 0) {
   if (dir === 'out' && result === 'sent') {
     if (delivery === 'delivered') return '<span class="badge ok">전달됨</span>';
     if (delivery === 'failed') return '<span class="badge fail">전달 실패</span>';
+    if (delivery === 'queued') return phoneWaitBadge(at);
     return '<span class="badge ok">보냄</span>';
   }
   if (dir === 'out' && result === 'sending') return '<span class="badge mute">보내는 중</span>';

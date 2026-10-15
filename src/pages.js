@@ -4,7 +4,7 @@ import { all, first } from './d1.js';
 import { esc, fmtTime, icon } from './views.js';
 import { OUTCOMES } from './reminders.js';
 import { outcomeSection } from './outcome-view.js';
-import { colHead, colCount, fmtPhone, fmtWhen, badge, messageBadge, responseBar, pageHeader, tableWrap, stat, emptyState } from './ui.js';
+import { phoneWaitBadge, colHead, colCount, fmtPhone, fmtWhen, badge, messageBadge, responseBar, pageHeader, tableWrap, stat, emptyState } from './ui.js';
 
 const DAY = 86400000;
 const KST = 9 * 3600000;
@@ -395,6 +395,7 @@ export function renderCampaignDetail(d) {
         <span><i style="background:var(--purple)"></i>확인 필요 ${totals.unclear || 0}</span><span><i style="background:var(--amber)"></i>답 없음 ${totals.sent || 0}</span>
         <span style="margin-left:auto">회신율 ${siteTotal.rate}</span></div></div>` : ''}
     ${d.delivery && delivered ? `<p class="muted" style="margin-top:10px">${icon('check', 14)} 전달 확인 ${d.delivery.delivered}명 / 보냄 ${delivered}명${d.delivery.retrying ? ` · 다시 시도 중 ${d.delivery.retrying}명` : ''}</p>` : ''}
+    ${d.delivery && d.delivery.stuck ? `<div class="notice warn" style="margin-top:12px" role="alert">${icon('alert')}<div><b>${d.delivery.stuck}명은 폰이 아직 문자를 보내지 않았어요.</b><br>문자 서버는 받았지만 폰이 보내지 못하고 있어요. 폰이 켜져 있는지, SMSGate 앱에서 <b>Cloud server</b>가 켜져 있는지, 인터넷이 되는지 확인해 주세요. 폰이 다시 연결되면 자동으로 나가요.</div></div>` : ''}
     ${outcomeSection(camp, d.outcomes)}
     ${totals.failed ? `<div class="notice warn" style="margin-top:12px" role="alert">${icon('alert')}<div><b>${totals.failed}명에게 문자를 보내지 못했어요.</b> 위의 "답 없는 사람에게 다시 보내기"로 다시 시도할 수 있어요.</div></div>` : ''}
 
@@ -412,7 +413,7 @@ export function renderCampaignDetail(d) {
       ${tableWrap(`<table class="cards cand"><thead><tr><th>사업장</th><th>이름</th><th>전화번호</th><th>상태</th><th>받은 답장</th><th>면접 결과</th><th></th></tr></thead><tbody>
         ${cands.length ? cands.map((c) => `<tr>
           <td class="c-site">${esc(c.site)}</td><td class="c-name">${esc(c.name)}</td><td class="c-phone nowrap">${esc(fmtPhone(c.phone))}</td>
-          <td class="c-status">${badge(c.status)}${c.manual ? ' <small>(직접)</small>' : ''}${c.delivery === 'delivered' ? ' <small title="상대 휴대폰에 전달됨">✓ 전달</small>' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
+          <td class="c-status">${c.status === 'sent' && c.delivery === 'queued' ? phoneWaitBadge(c.sent_at) : badge(c.status)}${c.manual ? ' <small>(직접)</small>' : ''}${c.delivery === 'delivered' ? ' <small title="상대 휴대폰에 전달됨">✓ 전달</small>' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
           <td class="c-reply msg">${esc(c.reply_text)}</td>
           <td class="c-outcome">${camp.purged_at ? esc(OUTCOMES[c.outcome] || '') : `<form method="post" action="/campaigns/${camp.id}/outcome" class="inline">
             <input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(d.backQuery)}">
@@ -511,7 +512,7 @@ export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice =
         <div class="mtop">
           <a href="/messages?phone=${encodeURIComponent(r.phone)}"><b>${esc(fmtPhone(r.phone))}</b></a>
           ${r.dir === 'in' ? '<span class="badge info">받음</span>' : '<span class="badge">보냄</span>'}
-          ${messageBadge(r.dir, r.result, r.delivery)}
+          ${messageBadge(r.dir, r.result, r.delivery, r.at)}
           <span class="when">${fmtWhen(r.at)}</span>
         </div>
         <div class="mtext">${esc(r.text)}</div>

@@ -362,7 +362,7 @@ async function handle(request, env, ctx) {
     }, {});
     siteTotal.rate = siteTotal.delivered ? Math.round((siteTotal.replied / siteTotal.delivered) * 100) + '%' : '-';
     const deliveryStats = await first(db,
-      `SELECT COALESCE(SUM(delivery='delivered'),0) delivered, COALESCE(SUM(status='pending' AND attempts>0),0) retrying FROM candidates WHERE campaign_id=?`, camp.id);
+      `SELECT COALESCE(SUM(delivery='delivered'),0) delivered, COALESCE(SUM(status='pending' AND attempts>0),0) retrying, COALESCE(SUM(status='sent' AND delivery='queued' AND sent_at<?),0) stuck FROM candidates WHERE campaign_id=?`, Date.now() - 10 * 60000, camp.id);
     const outcomeStats = await first(db,
       `SELECT COALESCE(SUM(outcome='showed'),0) showed, COALESCE(SUM(outcome='noshow'),0) noshow, COALESCE(SUM(outcome='passed'),0) passed,
         COALESCE(SUM(outcome='hired'),0) hired, COALESCE(SUM(outcome='rejected'),0) rejected,

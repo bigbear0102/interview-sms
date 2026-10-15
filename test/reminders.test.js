@@ -75,3 +75,17 @@ test('지원자 이력: 같은 번호를 묶고 노쇼 많은 순', async () => 
   assert.match(await renderPeople(db, [{ id: 1 }], '나'), /나/);
   assert.doesNotMatch(await renderPeople(db, [], ''), /노쇼 반복/);
 });
+
+test('문자 상태 표시: 서버 접수만 된 건은 "보냄"이 아니라 폰 전달 대기', async () => {
+  const { messageBadge } = await import('../src/ui.js');
+  assert.match(messageBadge('out', 'sent', 'queued', Date.now()), /폰 전달 대기/);
+  assert.match(messageBadge('out', 'sent', 'queued', Date.now() - 30 * 60000), /폰이 아직 안 보냈어요/);
+  assert.match(messageBadge('out', 'sent', 'sent', Date.now()), />보냄</);
+  assert.match(messageBadge('out', 'sent', 'delivered', Date.now()), /전달됨/);
+  assert.match(messageBadge('out', 'sent', '', Date.now() - 99999999), />보냄</); // 이전 기록(추적 전)은 그대로
+});
+
+test('문자 상태 표시: 하루가 지난 미확인 건은 경고 대신 중립 표시', async () => {
+  const { messageBadge } = await import('../src/ui.js');
+  assert.match(messageBadge('out', 'sent', 'queued', Date.now() - 2 * 86400000), /전달 확인 안 됨/);
+});

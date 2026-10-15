@@ -12,7 +12,7 @@ export const THRESHOLDS = { okMin: 15, downMin: 120, failWindowMin: 30, failCoun
 //   ok    : 최근 15분 안에 폰이 응답함
 //   warn  : 15분~2시간 응답 없음 (대기 중일 수 있음 — 문자를 보낼 때 폰이 깨어난다)
 //   down  : 2시간 넘게 응답 없음 / 서버 연결 실패 / 최근 30분 발송 실패 3건 이상
-export function classify({ reachable, error, count, lastSeenMs }, failures = 0, now = Date.now()) {
+export function classify({ reachable, error, count, lastSeenMs }, failures = 0, now = Date.now(), stuck = 0) {
   let health, note;
   if (!reachable) { health = 'down'; note = `문자 서버에 연결하지 못했어요 (${error || '알 수 없음'})`; }
   else if (!count) { health = 'down'; note = '서버에 등록된 폰이 없어요. 폰 앱이 Online인지 확인해 주세요.'; }
@@ -26,6 +26,10 @@ export function classify({ reachable, error, count, lastSeenMs }, failures = 0, 
   if (failures >= THRESHOLDS.failCount && health !== 'down') {
     health = 'down';
     note = `최근 ${THRESHOLDS.failWindowMin}분 동안 문자 ${failures}건을 보내지 못했어요. ${note}`.trim();
+  }
+  if (stuck > 0 && health !== 'down') {
+    health = 'down';
+    note = `문자 ${stuck}건을 문자 서버는 받았지만 폰이 10분 넘게 보내지 않았어요. 폰 앱의 Cloud server가 켜져 있는지, 인터넷과 절전 설정을 확인해 주세요.`;
   }
   return { health, note };
 }
@@ -64,7 +68,13 @@ export async function monitorPhones(env, now = Date.now(), check = checkGateway)
         `SELECT COUNT(*) n FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
          WHERE k.gateway_id=? AND ca.status='failed' AND ca.sent_at>=?`, row.id, since)).n;
     const lastSeenMs = result.lastSeen ? new Date(result.lastSeen).getTime() : null;
-    const { health, note } = classify({ ...result, lastSeenMs }, failures, now);
+    const stuckFrom = now - 24 * 3600000, stuckTo = now - 10 * MIN;
+    const stuck =
+      (await first(db, `SELECT COUNT(*) n FROM messages WHERE gateway_id=? AND status='sent' AND delivery='queued' AND at BETWEEN ? AND ?`, row.id, stuckFrom, stuckTo)).n +
+      (await first(db,
+        `SELECT COUNT(*) n FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
+         WHERE k.gateway_id=? AND ca.status='sent' AND ca.delivery='queued' AND ca.sent_at BETWEEN ? AND ?`, row.id, stuckFrom, stuckTo)).n;
+    const { health, note } = classify({ ...result, lastSeenMs }, failures, now, stuck);
 
     await run(db, `UPDATE gateways SET health=?, health_note=?, health_checked_at=?, last_seen_at=COALESCE(?, last_seen_at) WHERE id=?`,
       health, note, now, lastSeenMs, row.id);

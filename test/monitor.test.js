@@ -100,3 +100,13 @@ test('/healthz 는 DB 까지 확인한다', async () => {
   const bad = await handleRequest(new Request('https://example.test/healthz'), broken, { waitUntil() {} });
   assert.equal(bad.status, 503);
 });
+
+test('폰이 안 보낸 건(서버 접수만 됨)이 쌓이면 폰 상태가 확인 필요가 된다', async () => {
+  const base = { reachable: true, count: 1 };
+  const ok = classify({ ...base, lastSeenMs: NOW - min(2) }, 0, NOW, 0);
+  assert.equal(ok.health, 'ok');
+  const stuck = classify({ ...base, lastSeenMs: NOW - min(2) }, 0, NOW, 2);
+  assert.equal(stuck.health, 'down');
+  assert.match(stuck.note, /2건/);
+  assert.match(stuck.note, /Cloud server/);
+});
