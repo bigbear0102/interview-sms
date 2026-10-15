@@ -1,4 +1,4 @@
-// 소개 페이지(로그인 전 첫 화면): 스크롤로 읽거나, "발표 모드"로 장표처럼 넘겨 가며 설명한다.
+// 소개 페이지(로그인 전 첫 화면): 스크롤로 읽는 장표형 소개 페이지.
 // 공개 페이지이므로 실제 이름·번호·수치·내부 구성(서버/폰 종류 등)은 쓰지 않는다. 화면 예시는 모두 가상 데이터다.
 
 const CSS = `
@@ -50,8 +50,6 @@ h2{font-size:clamp(26px,4vw,42px);line-height:1.25;margin:0 0 12px;letter-spacin
 .note{font-size:14px;color:var(--muted);margin-top:14px}
 .pill{display:inline-block;background:var(--blue-bg);color:var(--blue);border-radius:980px;padding:4px 12px;font-size:14px;font-weight:700;margin:0 6px 6px 0}
 .pg{position:fixed;right:16px;bottom:14px;z-index:10;background:var(--surface);border:1px solid var(--line);border-radius:980px;padding:4px 12px;font-size:13px;color:var(--muted)}
-body.present .top .hint{display:inline}.hint{display:none;font-size:13px;color:var(--muted)}
-body.present html,html:has(body.present){scroll-snap-type:y mandatory}
 @media print{.top,.pg{display:none}.slide{min-height:auto;height:100vh;page-break-after:always;break-after:page;padding:24px}html{scroll-snap-type:none}}
 `;
 
@@ -200,38 +198,19 @@ export function renderLanding({ loggedIn = false } = {}) {
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>${CSS}</style></head><body>
 <header class="top"><a class="brand" href="#s1"><span class="dot"></span>문자 관리</a>
-  <span class="hint">← → 로 넘기기 · Esc 종료</span>
-  <button class="btn ghost" id="present" type="button" aria-pressed="false">발표 모드</button>${cta}</header>
+  ${cta}</header>
 <main>
 ${SLIDES.map((s, i) => `<section class="slide" id="s${i + 1}" aria-label="${i + 1}/${total}"><div class="in">${s}</div></section>`).join('\n')}
 </main>
 <div class="pg" id="pg" aria-live="polite">1 / ${total}</div>
 <script>
 (function () {
-  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide')), cur = 0;
-  var pg = document.getElementById('pg'), btn = document.getElementById('present');
-  function go(i) { cur = Math.max(0, Math.min(slides.length - 1, i)); slides[cur].scrollIntoView({ behavior: 'smooth' }); }
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var pg = document.getElementById('pg');
   var io = new IntersectionObserver(function (es) {
-    es.forEach(function (e) { if (e.isIntersecting) { cur = slides.indexOf(e.target); pg.textContent = (cur + 1) + ' / ' + slides.length; } });
+    es.forEach(function (e) { if (e.isIntersecting) pg.textContent = (slides.indexOf(e.target) + 1) + ' / ' + slides.length; });
   }, { threshold: 0.55 });
   slides.forEach(function (s) { io.observe(s); });
-  function setPresent(on) {
-    document.body.classList.toggle('present', on); btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-    btn.textContent = on ? '발표 종료' : '발표 모드';
-    try { if (on && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen(); else if (!on && document.fullscreenElement) document.exitFullscreen(); } catch (e) {}
-  }
-  btn.addEventListener('click', function () { setPresent(!document.body.classList.contains('present')); });
-  document.addEventListener('fullscreenchange', function () { if (!document.fullscreenElement && document.body.classList.contains('present')) setPresent(false); });
-  document.addEventListener('keydown', function (e) {
-    if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
-    var k = e.key;
-    if (k === 'ArrowRight' || k === 'ArrowDown' || k === 'PageDown' || k === ' ') { e.preventDefault(); go(cur + 1); }
-    else if (k === 'ArrowLeft' || k === 'ArrowUp' || k === 'PageUp') { e.preventDefault(); go(cur - 1); }
-    else if (k === 'Home') { e.preventDefault(); go(0); }
-    else if (k === 'End') { e.preventDefault(); go(slides.length - 1); }
-    else if (k === 'Escape' && document.body.classList.contains('present')) setPresent(false);
-    else if (k === 'f' || k === 'F') setPresent(!document.body.classList.contains('present'));
-  });
 })();
 </script></body></html>`;
 }
