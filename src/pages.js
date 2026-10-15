@@ -4,7 +4,7 @@ import { all, first } from './d1.js';
 import { esc, fmtTime, icon } from './views.js';
 import { OUTCOMES } from './reminders.js';
 import { outcomeSection } from './outcome-view.js';
-import { fmtPhone, fmtWhen, badge, messageBadge, responseBar, pageHeader, tableWrap, stat, emptyState } from './ui.js';
+import { colHead, colCount, fmtPhone, fmtWhen, badge, messageBadge, responseBar, pageHeader, tableWrap, stat, emptyState } from './ui.js';
 
 const DAY = 86400000;
 const KST = 9 * 3600000;
@@ -162,9 +162,9 @@ export async function renderHome(db, user, deps) {
   const bsum = board.reduce((a, r) => ({ showed: a.showed + r.showed, noshow: a.noshow + r.noshow, sent: a.sent + r.sent, attending: a.attending + r.attending, absent: a.absent + r.absent, unclear: a.unclear + r.unclear, noreply: a.noreply + r.noreply }),
     { showed: 0, noshow: 0, sent: 0, attending: 0, absent: 0, unclear: 0, noreply: 0 });
   const dayLabel = (d) => { const [, m, dd] = d.split('-'); return `${Number(m)}/${Number(dd)}`; };
-  const boardHtml = board.length ? tableWrap(`<table><thead><tr><th>보낸 날</th><th>사업장</th><th class="num">보냄</th><th class="num">참석</th><th class="num">불참</th><th class="num">확인 필요</th><th class="num">미회신</th><th class="num">출석</th><th class="num">노쇼</th></tr></thead><tbody>
-      ${board.map((r) => `<tr><td>${dayLabel(r.day)}</td><td>${esc(r.site)}</td><td class="num">${r.sent}</td><td class="num">${r.attending}</td><td class="num">${r.absent}</td><td class="num">${r.unclear}</td><td class="num">${r.noreply}</td><td class="num">${r.showed}</td><td class="num">${r.noshow}</td></tr>`).join('')}
-      </tbody><tfoot><tr><th colspan="2">합계</th><th class="num">${bsum.sent}</th><th class="num">${bsum.attending}</th><th class="num">${bsum.absent}</th><th class="num">${bsum.unclear}</th><th class="num">${bsum.noreply}</th><th class="num">${bsum.showed}</th><th class="num">${bsum.noshow}</th></tr></tfoot></table>`)
+  const boardHtml = board.length ? tableWrap(`<table><thead><tr><th>보낸 날</th><th>사업장</th><th class="num">보냄</th><th class="num">${colHead('참석', 'ok')}</th><th class="num">${colHead('불참', 'no')}</th><th class="num">${colHead('확인 필요', 'review')}</th><th class="num">${colHead('미회신', 'wait')}</th><th class="num">${colHead('출석', 'ok')}</th><th class="num">${colHead('노쇼', 'no')}</th></tr></thead><tbody>
+      ${board.map((r) => `<tr><td>${dayLabel(r.day)}</td><td>${esc(r.site)}</td><td class="num">${r.sent}</td><td class="num">${colCount(r.attending, 'ok')}</td><td class="num">${colCount(r.absent, 'no')}</td><td class="num">${colCount(r.unclear, 'review')}</td><td class="num">${colCount(r.noreply, 'wait')}</td><td class="num">${colCount(r.showed, 'ok')}</td><td class="num">${colCount(r.noshow, 'no')}</td></tr>`).join('')}
+      </tbody><tfoot><tr><th colspan="2">합계</th><th class="num">${bsum.sent}</th><th class="num">${colCount(bsum.attending, 'ok')}</th><th class="num">${colCount(bsum.absent, 'no')}</th><th class="num">${colCount(bsum.unclear, 'review')}</th><th class="num">${colCount(bsum.noreply, 'wait')}</th><th class="num">${colCount(bsum.showed, 'ok')}</th><th class="num">${colCount(bsum.noshow, 'no')}</th></tr></tfoot></table>`)
     : emptyState({ title: '아직 보낸 면접 안내가 없어요', desc: '면접 안내를 보내면 사업장·날짜별 참석/불참/미회신이 여기에 모여요.' });
 
   const phoneNotice = gwCount
@@ -369,13 +369,13 @@ export function renderCampaignDetail(d) {
     </div>${SCHEDULE_JS}` : '';
 
   const siteTable = tableWrap(`<table><thead><tr><th>사업장(원가중심점)</th><th class="num">보냄</th><th class="num">회신</th><th class="num">회신율</th>
-      <th class="num">참석</th><th class="num">불참</th><th class="num">확인 필요</th><th class="num">답 없음</th><th class="num">못 보냄</th><th>응답</th></tr></thead><tbody>
+      <th class="num">${colHead('참석', 'ok')}</th><th class="num">${colHead('불참', 'no')}</th><th class="num">${colHead('확인 필요', 'review')}</th><th class="num">${colHead('답 없음', 'wait')}</th><th class="num">${colHead('못 보냄', 'fail')}</th><th>응답</th></tr></thead><tbody>
     ${siteRows.map((s) => `<tr><td><a href="${esc(qs(statusFilter))}${qs(statusFilter).includes('?') ? '&' : '?'}site=${encodeURIComponent(s.site)}">${esc(s.site)}</a></td>
       <td class="num">${s.delivered}</td><td class="num"><b>${s.replied}</b></td><td class="num">${s.rate}</td>
-      <td class="num">${s.attending}</td><td class="num">${s.absent}</td><td class="num">${s.unclear}</td><td class="num">${s.noreply}</td><td class="num">${s.failed}</td>
+      <td class="num">${colCount(s.attending, 'ok')}</td><td class="num">${colCount(s.absent, 'no')}</td><td class="num">${colCount(s.unclear, 'review')}</td><td class="num">${colCount(s.noreply, 'wait')}</td><td class="num">${colCount(s.failed, 'fail')}</td>
       <td style="min-width:120px">${responseBar(s)}</td></tr>`).join('')}
     ${siteRows.length > 1 ? `<tr class="total"><td>합계</td><td class="num">${siteTotal.delivered}</td><td class="num">${siteTotal.replied}</td><td class="num">${siteTotal.rate}</td>
-      <td class="num">${siteTotal.attending}</td><td class="num">${siteTotal.absent}</td><td class="num">${siteTotal.unclear}</td><td class="num">${siteTotal.noreply}</td><td class="num">${siteTotal.failed}</td><td></td></tr>` : ''}
+      <td class="num">${colCount(siteTotal.attending, 'ok')}</td><td class="num">${colCount(siteTotal.absent, 'no')}</td><td class="num">${colCount(siteTotal.unclear, 'review')}</td><td class="num">${colCount(siteTotal.noreply, 'wait')}</td><td class="num">${colCount(siteTotal.failed, 'fail')}</td><td></td></tr>` : ''}
     </tbody></table>`);
 
   return `${pageHeader({ title: camp.name, back, actions,

@@ -55,6 +55,10 @@ export function messageBadge(dir, result, delivery = '') {
   return badge(result);
 }
 
+// 표의 열 머리글(색 뱃지)과 숫자(0 이면 흐리게, 있으면 색 뱃지)
+export const colHead = (label, tone) => `<span class="badge ${tone}">${esc(label)}</span>`;
+export const colCount = (n, tone) => (Number(n) ? `<span class="badge ${tone}">${Number(n)}</span>` : '<span class="muted">0</span>');
+
 // ---- 응답 구성 막대 (참석/불참/확인 필요/답 없음) ----
 export function responseBar({ attending = 0, absent = 0, unclear = 0, noreply = 0 }) {
   const total = attending + absent + unclear + noreply;
