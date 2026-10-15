@@ -6,7 +6,7 @@ import { openSqliteD1 } from '../src/node/d1-sqlite.js';
 const createTestDb = () => openSqliteD1(':memory:', fileURLToPath(new URL('../migrations', import.meta.url)));
 import { createCampaign, scheduleCampaign, processQueue, handleInbound, purgeExpired, campaignStats, remindCampaign } from '../src/core.js';
 import { candidatesFromCsv } from '../src/csv.js';
-import { verifySignature } from '../src/gateway.js';
+import { verifySignature, toE164 } from '../src/gateway.js';
 import { hashPassword, verifyPassword, encryptText, decryptText } from '../src/crypto.js';
 import { parseKstLocal, fmtTime } from '../src/views.js';
 
@@ -111,4 +111,10 @@ test('직접 발송: 번호 검증, 기록, 실패 처리', async () => {
   assert.deepEqual(ok, [['01011112222', '안녕']]);
   const rows = (await db.prepare(`SELECT status FROM messages ORDER BY id`).all()).results.map((r) => r.status);
   assert.deepEqual(rows, ['sent', 'failed']);
+});
+
+test('E.164 변환', () => {
+  assert.equal(toE164('01029501868'), '+821029501868');
+  assert.equal(toE164('010-2950-1868'), '+821029501868');
+  assert.equal(toE164('+821029501868'), '+821029501868');
 });

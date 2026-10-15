@@ -4,12 +4,21 @@ import { hmacSha256Hex, safeEqual } from './crypto.js';
 const authHeader = (gw) => 'Basic ' + btoa(`${gw.username}:${gw.password}`);
 const baseUrl = (gw) => gw.base_url.replace(/\/$/, '');
 
+// 게이트웨이 서버는 국제 형식(E.164)만 받는다. 국내 번호 01012345678 → +821012345678
+export function toE164(phone) {
+  const d = String(phone).replace(/\D/g, '');
+  if (String(phone).trim().startsWith('+')) return `+${d}`;
+  if (d.startsWith('0')) return `+82${d.slice(1)}`;
+  if (d.startsWith('82')) return `+${d}`;
+  return `+${d}`;
+}
+
 // gw.password 는 호출 전에 복호화되어 있어야 한다.
 export async function sendSms(gw, phone, text) {
   const res = await fetch(baseUrl(gw) + gw.send_path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: authHeader(gw) },
-    body: JSON.stringify({ textMessage: { text }, phoneNumbers: [phone] }),
+    body: JSON.stringify({ textMessage: { text }, phoneNumbers: [toE164(phone)] }),
     signal: AbortSignal.timeout(20000)
   });
   if (!res.ok) throw new Error(`게이트웨이 응답 ${res.status}: ${(await res.text()).slice(0, 150)}`);
