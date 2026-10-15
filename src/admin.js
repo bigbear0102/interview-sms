@@ -2,7 +2,8 @@
 import { all, first, run } from './d1.js';
 import { esc, fmtTime } from './views.js';
 import { encryptText, decryptText, randomToken, hashPassword } from './crypto.js';
-import { registerWebhook, checkGateway } from './gateway.js';
+import { registerWebhook, checkGateway, sendSms } from './gateway.js';
+import { normalizePhone, isValidMobile } from './parser.js';
 
 // 폰 앱에 입력할 주소: .../api/3rdparty/v1 → .../api/mobile/v1
 export const phoneApiUrl = (env) => (env.GATEWAY_URL || '').replace('/api/3rdparty/v1', '/api/mobile/v1');
@@ -73,6 +74,32 @@ export async function applyAdminAction(db, env, f, publicBase) {
           : { ok: false, msg: `"${gw.name}": 폰이 한동안 응답하지 않았어요. (마지막 응답 ${seen}) 폰이 켜져 있는지, 앱이 Online인지 봐 주세요.` };
       }
 
+      // 받기 시험: 폰이 자기 번호로 문자를 보내고, 그 문자가 서버로 알려지는지 기다려서 확인한다
+      case 'gw_selftest': {
+        const gw = await loadGateway(db, env, f.gateway_id);
+        const number = normalizePhone(f.number || gw.own_number);
+        if (!isValidMobile(number)) return { ok: false, msg: '이 폰의 전화번호(010으로 시작)를 칸에 적어 주세요.' };
+        if (number !== gw.own_number) await run(db, `UPDATE gateways SET own_number=? WHERE id=?`, number, gw.id);
+        const code = String(Math.floor(1000 + Math.random() * 9000));
+        const text = `수신시험 ${code} 이 문자가 문자함에 보이면 성공이에요`;
+        try {
+          await sendSms(gw, number, text);
+        } catch (e) {
+          return { ok: false, msg: `시험 문자를 보내지 못했어요. (${e.message})` };
+        }
+        const deadline = Date.now() + (Number(env.SELFTEST_WAIT_MS) || 45000);
+        for (;;) {
+          const row = await first(db, `SELECT id FROM inbound WHERE gateway_id=? AND message LIKE ? ORDER BY id DESC LIMIT 1`, gw.id, `%수신시험 ${code}%`);
+          if (row) return { ok: true, msg: '✅ 받기 시험에 성공했어요! 폰이 받은 문자를 서버로 잘 알려 주고 있어요.' };
+          if (Date.now() >= deadline) break;
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+        return {
+          ok: false,
+          msg: '시험 문자는 보냈는데, 폰이 받은 문자를 서버로 알려 주지 않았어요. 폰 SMSGate 앱에서 ① Home의 "Start Service"가 켜져 있는지(Stop Service로 보이는지) ② 설정의 Webhooks에 항목이 있는지 ③ 폰 문자 앱에 시험 문자가 실제로 도착했는지 확인해 주세요.'
+        };
+      }
+
       case 'gw_hook': {
         const gw = await loadGateway(db, env, f.gateway_id);
         await registerWebhook(gw, publicBase);
@@ -133,7 +160,7 @@ document.addEventListener('click', function (e) {
 export async function renderAdmin(db, env, publicBase, result = null) {
   const deps = await all(db, `SELECT * FROM departments ORDER BY name`);
   const gws = await all(db,
-    `SELECT g.id,g.name,g.username,g.active,d.name dept FROM gateways g JOIN departments d ON d.id=g.department_id ORDER BY g.active DESC, g.id`);
+    `SELECT g.id,g.name,g.username,g.active,g.own_number,d.name dept FROM gateways g JOIN departments d ON d.id=g.department_id ORDER BY g.active DESC, g.id`);
   const users = await all(db,
     `SELECT u.id,u.username,u.role,u.active,
        (SELECT group_concat(d.name, ', ') FROM user_departments ud JOIN departments d ON d.id=ud.department_id WHERE ud.user_id=u.id) deps
@@ -280,6 +307,9 @@ export async function renderAdmin(db, env, publicBase, result = null) {
         <td class="actions">
           ${g.active ? `
           <form method="post" class="inline"><input type="hidden" name="do" value="gw_check"><input type="hidden" name="gateway_id" value="${g.id}"><button class="btn">잘 연결됐는지 확인</button></form>
+          <form method="post" class="inline row"><input type="hidden" name="do" value="gw_selftest"><input type="hidden" name="gateway_id" value="${g.id}">
+            <input name="number" value="${esc(g.own_number)}" placeholder="이 폰의 전화번호 010..." style="width:190px;padding:7px 12px;font-size:14px">
+            <button class="btn">받기 시험</button></form>
           <form method="post" class="inline"><input type="hidden" name="do" value="gw_hook"><input type="hidden" name="gateway_id" value="${g.id}"><button>답장 받기 다시 설정</button></form>
           <details class="inline"><summary>폰을 다시 설치했어요</summary>
             <form method="post" class="stack small-form"><input type="hidden" name="do" value="gw_update"><input type="hidden" name="gateway_id" value="${g.id}">

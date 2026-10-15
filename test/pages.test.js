@@ -94,3 +94,29 @@ test('문자함: 공백/줄바꿈으로 구분한 여러 번호', async () => {
   } finally { globalThis.fetch = originalFetch; }
   assert.deepEqual(sent, ['+821011112222', '+821033334444', '+821055556666']);
 });
+
+test('받기 시험: 폰이 자기 번호로 보낸 문자가 수신되면 성공, 안 오면 안내', async () => {
+  const { db, env, post } = await setup();
+  env.SELFTEST_WAIT_MS = 1500;
+  await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
+  await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'폰','u',?, 't')`)
+    .bind(await encryptText('k', 'pw')).run();
+  const { handleInbound } = await import('../src/core.js');
+  const originalFetch = globalThis.fetch;
+  try {
+    // 1) 폰이 문자를 받아 서버에 알려주는 경우
+    globalThis.fetch = async (url, init) => {
+      const text = JSON.parse(init.body).textMessage.text;
+      await handleInbound(db, 1, { sender: '+821012348711', message: text });
+      return new Response('{}', { status: 202 });
+    };
+    let html = await (await post('/admin', { do: 'gw_selftest', gateway_id: '1', number: '010-1234-8711' })).text();
+    assert.match(html, /받기 시험에 성공/);
+    assert.equal((await db.prepare(`SELECT own_number FROM gateways`).first()).own_number, '01012348711');
+
+    // 2) 폰이 알려주지 않는 경우
+    globalThis.fetch = async () => new Response('{}', { status: 202 });
+    html = await (await post('/admin', { do: 'gw_selftest', gateway_id: '1', number: '' })).text();
+    assert.match(html, /알려 주지 않았어요/);
+  } finally { globalThis.fetch = originalFetch; }
+});
