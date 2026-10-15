@@ -80,7 +80,7 @@ test('면접 안내: 명단 올리기 → 보내기 화면 → 숫자 카드', a
   assert.match(detail, /지금 바로 보내기 \(2명\)/);
   assert.match(detail, /아직 문자를 보내지 않았어요/);
   const home = await (await call('/')).text();
-  assert.ok(home.includes('<title>홈 - 문자 관리</title>'));
+  assert.ok(home.includes('<title>홈 - 문자 관리 시스템</title>'));
   assert.ok(home.includes('href="/send"'));
   assert.match(home, /면접 안내/);
 });
