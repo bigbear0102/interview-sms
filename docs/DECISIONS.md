@@ -3,7 +3,7 @@
 ## 결정
 | # | 결정 | 이유 |
 |---|---|---|
-| 1 | 호스팅은 **PC 직접 운영** → 추후 회사 서버. 외부 접속은 Cloudflare Tunnel | 요구사항: 사내 정보 유출 대비, 직접 통제. (Workers 배포도 가능하나 보류) |
+| 1 | 웹은 **Cloudflare Workers + D1**, 게이트웨이는 자체 서버(현재 PC) → 둘 다 추후 회사 서버로 | PC 상시 가동 불가(2026-10-15). 같은 코드가 Node/Workers 양쪽에서 돌아 이전이 쉽다. 사내 정보는 본인 Cloudflare 계정과 자체 서버에만 둔다 |
 | 2 | 게이트웨이는 **자체 호스팅 Private 서버**(Docker) | 지원자 번호/문자가 제3자 공개 서버(`api.sms-gate.app`)를 거치지 않게 함 |
 | 11 | 같은 코드를 Node/SQLite 와 Workers/D1 에서 실행 (D1 API 어댑터) | 이전 유연성. 회사 서버/클라우드 어디로든 이동 가능 |
 | 3 | 답장 방식은 **자유 문구 해석**(링크 클릭 아님) | 요구사항: "참석/불참/미참 등 다양한 문구" |
@@ -32,3 +32,10 @@
 ## 운영 메모
 - 기존 Cloudflare Worker `interview-sms`(workers.dev)와 D1 은 PC 이전 전 시험 배포본이다. 현재 운영 대상이 아니며 필요 없으면 삭제한다(`npx wrangler delete`, D1 삭제).
 - Cloudflare 계정에는 다른 터널(`real-estate-dashboard`, `my-homelab-tunnel`, `oracle`)이 있다. `interview-sms` 터널만 사용하며 DNS 연결 시 반드시 **터널 UUID** 로 지정한다(이름 지정 시 기본 config 의 다른 터널로 연결될 수 있음).
+
+## 2026-10-15 웹을 Cloudflare Workers 로 이전
+- 도메인(`interview.bigbears.me`)은 DNS 를 바꾸지 않고 Worker route 로 가로챔. 웹훅 주소/토큰이 그대로라 폰 쪽 변경 없음.
+- 데이터는 `deploy/cloudflare/export-to-d1.mjs` 로 SQLite → D1 이전, 시크릿은 `put-secrets.mjs`.
+- **남은 PC 의존**: 게이트웨이 서버(Docker). 상시 서버(예: Cloudflare 계정에 터널이 있는 Oracle/홈서버, 또는 회사 서버)로 옮기면 PC 는 완전히 불필요.
+- Workers 무료 플랜 발송 처리량 ≈ 25건/분(시간당 1,500건). 대량 발송이 잦으면 유료 플랜 + `SEND_BATCH` 상향.
+- 회사 서버 이전 시 D1 → SQLite: `deploy/cloudflare/import-d1-export.mjs` (검증 완료).

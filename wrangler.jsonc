@@ -12,12 +12,18 @@
       "migrations_dir": "migrations"
     }
   ],
+  // 운영 주소. DNS 레코드는 기존 그대로 두고 Worker 경로(route)가 요청을 가로챈다.
+  "routes": [{ "pattern": "interview.bigbears.me/*", "zone_name": "bigbears.me" }],
   // 매 분 발송 큐 처리, 정각에 파기/세션 정리
   "triggers": { "crons": ["* * * * *"] },
   "vars": {
-    "PUBLIC_BASE_URL": "https://interview-sms.bigbears.workers.dev",
+    "PUBLIC_BASE_URL": "https://interview.bigbears.me",
+    // SMS 게이트웨이(자체 서버)의 3rd-party API 주소. 폰 앱에 안내되는 주소도 여기서 만든다.
+    "GATEWAY_URL": "https://sms.bigbears.me/api/3rdparty/v1",
     "ADMIN_USER": "admin",
-    // 호출 1회당 최대 발송 건수 (무료 플랜 서브리퀘스트 한도 50 고려)
+    // 호출 1회당 최대 발송 건수 (무료 플랜 서브리퀘스트 한도 50 고려, 유료 플랜이면 올릴 수 있음)
     "SEND_BATCH": "25"
   }
+  // 시크릿(wrangler secret put): ENCRYPTION_KEY, GATEWAY_PRIVATE_TOKEN
+  // → deploy/cloudflare/put-secrets.mjs 로 .env 의 값을 올린다.
 }

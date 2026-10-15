@@ -1,15 +1,46 @@
 # 운영 가이드
 
-현재 운영 형태: **이 PC(Windows)에서 직접 운영**, 외부 접속은 Cloudflare Tunnel.
-나중에 회사 서버로 옮기는 방법은 마지막 절 참고.
+## 현재 운영 형태 (2026-10-15 기준)
 
-| 구성요소 | 위치 | 공개 주소 |
+| 구성요소 | 위치 | 주소 |
 |---|---|---|
-| 면접 관리 웹 (Node, SQLite `data/app.db`) | PC `127.0.0.1:8787` | https://interview.bigbears.me |
-| SMS 게이트웨이 서버 (Docker: backend/worker/MariaDB) | PC `127.0.0.1:3000` | https://sms.bigbears.me |
-| Cloudflare Tunnel `interview-sms` | PC (`cloudflared`) | — |
+| **면접 웹** | **Cloudflare Workers + D1** (`interview-sms`) | https://interview.bigbears.me |
+| **SMS 게이트웨이 서버** (Docker: backend/worker/MariaDB) | **이 PC** (임시) → 상시 서버로 이전 예정 | https://sms.bigbears.me (Cloudflare Tunnel `interview-sms`) |
+| 폰 (SMSGate 앱) | 부서 폰 | — |
 
-비밀값은 모두 레포 루트의 `.env`(git 제외)에 있다. **`.env`와 `data/`는 반드시 백업**한다. (`ENCRYPTION_KEY`를 잃으면 저장된 게이트웨이 비밀번호를 복구할 수 없다)
+- 웹은 PC와 무관하게 24시간 동작한다. **문자 발송/수신은 게이트웨이 서버가 켜져 있어야** 된다. (현재 PC → **PC 상시 가동 필요**)
+- 웹 코드는 같은 코드가 Node(회사 서버)에서도 돈다. 이전 절차는 아래 "회사 서버로 이전".
+- Worker 설정: `wrangler.jsonc`. 시크릿: `ENCRYPTION_KEY`, `GATEWAY_PRIVATE_TOKEN` (`deploy/cloudflare/put-secrets.mjs`).
+- 접속 경로: DNS(`interview`)는 기존 터널 CNAME 그대로 두고, Worker **경로(route) `interview.bigbears.me/*`** 가 요청을 가로챈다.
+  응답 헤더 `X-Runtime: workers` 로 어느 쪽이 응답했는지 확인할 수 있다 (`node` 이면 PC 가 응답한 것).
+
+### 배포/변경 (Worker)
+```bash
+npm test
+npm run db:migrate     # 스키마 변경이 있을 때 (원격 D1)
+npm run deploy         # Worker 배포
+npx wrangler tail      # 실시간 로그
+```
+- 비밀값 교체: `node --env-file=.env deploy/cloudflare/put-secrets.mjs` (값은 출력되지 않음)
+- **`ENCRYPTION_KEY`를 바꾸면** 저장된 게이트웨이 비밀번호를 복호화할 수 없다 → 설정 화면에서 폰 계정을 다시 입력한다.
+- 백업: `npx wrangler d1 export interview-sms --remote --output backup.sql` (개인정보 포함, 보관 후 삭제 정책 준수)
+
+### 회사 서버로 이전 (Worker/D1 → Node/SQLite)
+1. 회사 서버에 Node 22.5+ 설치, 레포 clone, `node deploy/setup.mjs <웹도메인> <게이트웨이도메인>` 로 `.env` 생성
+   (**`ENCRYPTION_KEY`는 기존 값으로 바꿔 넣을 것** — 게이트웨이 비밀번호 복호화에 필요. 현재 값은 PC 의 `.env`)
+2. D1 내보내기 → 가져오기
+   ```bash
+   npx wrangler d1 export interview-sms --remote --output backup.sql
+   node deploy/cloudflare/import-d1-export.mjs backup.sql data/app.db
+   ```
+3. `npm start` (또는 `deploy/windows`/systemd 로 상시 실행), 게이트웨이는 `deploy/gateway` docker compose
+4. DNS 를 새 서버(터널)로 돌리고 Worker route 를 제거한다 (`wrangler.jsonc` 의 routes 삭제 후 `npm run deploy`, 또는 Worker 삭제).
+5. 설정 화면에서 **답장 받기 다시 설정**(웹훅 재등록), **받기 시험**으로 확인한다.
+
+---
+
+# (참고) PC 에서 웹을 직접 돌리는 방식
+아래 내용은 Node 로 웹을 직접 운영할 때의 절차이다. 현재는 웹을 Worker 로 옮겼으므로 PC 웹 작업(`interview-sms-web`)은 **비활성화** 상태다.
 
 ## 1. 최초 설치 (새 PC/서버에서)
 ```bash

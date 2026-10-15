@@ -5,7 +5,7 @@
 [android-sms-gateway](https://github.com/capcom6/android-sms-gateway)를 **자체 호스팅한 Private 서버**로 송수신한다.
 외부 접속은 Cloudflare Tunnel 을 쓰고, 지원자 정보는 외부 공개 SMS 서버를 거치지 않는다.
 
-- 웹: https://interview.bigbears.me  /  게이트웨이: https://sms.bigbears.me
+- 웹: https://interview.bigbears.me (**Cloudflare Workers + D1**)  /  게이트웨이: https://sms.bigbears.me (자체 서버, 현재 PC)
 
 ```
 관리자 브라우저 ─▶ Cloudflare Tunnel ─▶ 면접 웹(Node + SQLite) ──발송 API──▶ 게이트웨이 서버(Docker)

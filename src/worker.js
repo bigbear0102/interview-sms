@@ -12,8 +12,10 @@ import { normalizePhone } from './parser.js';
 import { applyAdminAction, renderAdmin } from './admin.js';
 import { page, esc, STATUS_LABEL, fmtTime, parseKstLocal } from './views.js';
 
+// 어느 실행 환경이 응답했는지 확인용 (Cloudflare Workers / Node)
+const RUNTIME = typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers' ? 'workers' : 'node';
 const html = (body, status = 200, headers = {}) =>
-  new Response(body, { status, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Frame-Options': 'DENY', 'Cache-Control': 'no-store', ...headers } });
+  new Response(body, { status, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Frame-Options': 'DENY', 'Cache-Control': 'no-store', 'X-Runtime': RUNTIME, ...headers } });
 const redirect = (to, headers = {}) => new Response(null, { status: 303, headers: { Location: to, ...headers } });
 const form = (raw) => Object.fromEntries(new URLSearchParams(raw));
 const getCookie = (req, name) =>

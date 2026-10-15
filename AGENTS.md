@@ -4,17 +4,18 @@
 
 ## 프로젝트 요약
 면접 참석 확인 문자 시스템. 서버 렌더링 HTML, 외부 런타임 의존성 없음. **같은 코드가 두 런타임에서 동작**한다:
-- **Node + SQLite**(현재 운영: PC → 회사 서버): `src/node/server.js`, D1 API 어댑터 `src/node/d1-sqlite.js`
-- **Cloudflare Workers + D1**: `src/worker.js`, `wrangler.jsonc`
+- **Cloudflare Workers + D1**(**현재 운영**): `src/worker.js`, `wrangler.jsonc`, 배포 `npm run deploy`
+- **Node + SQLite**(회사 서버 이전용, 검증 완료): `src/node/server.js`, D1 API 어댑터 `src/node/d1-sqlite.js`
 부서별 안드로이드 폰(android-sms-gateway)은 **자체 호스팅 Private 서버**(`deploy/gateway`, Docker)에 연결되고,
 폰이 웹훅(`/hook/:gatewayId/:token`)으로 답장을 보낸다. 외부 접속은 Cloudflare Tunnel.
 
 ## 명령어
 ```bash
 npm test                 # 반드시 통과 후 커밋
-# 운영 PC 재시작: powershell -File deploywindowsestart.ps1
-npm start                # Node 서버 (.env 필요, 마이그레이션은 시작 시 자동 적용)
-# Workers 배포 시: npm run db:migrate && npm run deploy
+npm run db:migrate       # 원격 D1 마이그레이션 (스키마 변경 시)
+npm run deploy           # 운영 배포 (Cloudflare Worker)
+npm start                # Node 서버 (회사 서버 이전용, .env 필요)
+# 게이트웨이(PC) 재시작: powershell -File deploywindowsestart.ps1  (웹 작업은 비활성화됨)
 ```
 
 ## 코드 지도
