@@ -34,7 +34,7 @@ export function renderTemplate(tpl, c) {
 }
 
 // candidates: [{site,name,phone,interview_at}]
-export async function createCampaign(db, { departmentId, gatewayId, name, template, retentionDays, userId, candidates, defaultSite = '' }) {
+export async function createCampaign(db, { departmentId, gatewayId, name, template, retentionDays, userId, candidates, defaultSite = '', autoRemind = false }) {
   const seen = new Set();
   const rejected = [];
   const accepted = [];
@@ -49,9 +49,9 @@ export async function createCampaign(db, { departmentId, gatewayId, name, templa
     accepted.push({ ...c, site, phone });
   });
   const ins = await run(db,
-    `INSERT INTO campaigns (department_id, gateway_id, name, template, retention_days, created_by, created_at)
-     VALUES (?,?,?,?,?,?,?)`,
-    departmentId, gatewayId, name, String(template || '').replace(/\r\n?/g, '\n').trim() || DEFAULT_TEMPLATE, retentionDays || 90, userId ?? null, Date.now());
+    `INSERT INTO campaigns (department_id, gateway_id, name, template, retention_days, created_by, created_at, auto_remind)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    departmentId, gatewayId, name, String(template || '').replace(/\r\n?/g, '\n').trim() || DEFAULT_TEMPLATE, retentionDays || 90, userId ?? null, Date.now(), autoRemind ? 1 : 0);
   const campaignId = Number(ins.meta.last_row_id);
 
   // D1 은 쿼리당 바인딩 100개 제한 → 행 19개(5컬럼)씩 묶어 한 번의 batch 로 실행

@@ -24,6 +24,7 @@ import {
 } from './accounts.js';
 import { mailConfigured } from './mailer.js';
 import { renderPhoneHelp } from './pages-help.js';
+import { OUTCOMES, setOutcome, queueAutoReminders } from './reminders.js';
 import { phoneApiUrl, isPublicCloud } from './admin.js';
 import { monitorPhones, recordError } from './monitor.js';
 import { applyDeliveryEvent, pollDelivery, notifyNewReply, unreadCount, markAllRead } from './delivery.js';
@@ -259,7 +260,7 @@ async function handle(request, env, ctx) {
     if (parsed.errors.length) return html(pg('오류', `<p>${parsed.errors.map(esc).join('<br>')}</p><p><a href="/campaigns/new">돌아가기</a></p>`), 400);
     const r = await createCampaign(db, {
       departmentId: gw.department_id, gatewayId: gw.id, name: f.name || '무제', template: f.template,
-      retentionDays: Number(f.retention_days) || 90, userId: user.id, candidates: parsed.candidates, defaultSite
+      retentionDays: Number(f.retention_days) || 90, userId: user.id, candidates: parsed.candidates, autoRemind: f.auto_remind === '1', defaultSite
     });
     await audit(db, user, 'campaign.create', `campaign=${r.campaignId} accepted=${r.accepted} rejected=${r.rejected.length}`);
     let scheduledAt = null;
@@ -288,7 +289,7 @@ async function handle(request, env, ctx) {
   }
 
   // 캠페인 상세 / 액션
-  if ((m = path.match(/^\/campaigns\/(\d+)(?:\/(send|unschedule|cancel|remind|export\.csv|set))?$/))) {
+  if ((m = path.match(/^\/campaigns\/(\d+)(?:\/(send|unschedule|cancel|remind|export\.csv|set|outcome|autoremind))?$/))) {
     const camp = await loadCampaign(db, user, Number(m[1]));
     if (!camp) return html(pg('없음', '<p>캠페인을 찾을 수 없습니다.</p>'), 404);
     const action = m[2];
@@ -311,6 +312,15 @@ async function handle(request, env, ctx) {
         const n = await remindCampaign(db, camp.id);
         await audit(db, user, 'campaign.remind', `campaign=${camp.id} n=${n}`);
         if (n > 0) ctx.waitUntil(processQueue(env).catch(console.error));
+      } else if (action === 'outcome') {
+        const cand = await first(db, `SELECT id FROM candidates WHERE id=? AND campaign_id=?`, Number(f.id), camp.id);
+        if (cand && (f.outcome === '' || OUTCOMES[f.outcome])) {
+          await setOutcome(db, cand.id, f.outcome);
+          await audit(db, user, 'candidate.outcome', `campaign=${camp.id} candidate=${cand.id} outcome=${f.outcome || '-'}`);
+        }
+      } else if (action === 'autoremind') {
+        await run(db, `UPDATE campaigns SET auto_remind=? WHERE id=?`, f.on === '1' ? 1 : 0, camp.id);
+        await audit(db, user, 'campaign.autoremind', `campaign=${camp.id} on=${f.on === '1' ? 1 : 0}`);
       } else if (action === 'set') {
         const cand = await first(db, `SELECT id FROM candidates WHERE id=? AND campaign_id=?`, Number(f.id), camp.id);
         if (cand) {
@@ -324,9 +334,9 @@ async function handle(request, env, ctx) {
     if (action === 'export.csv') {
       await audit(db, user, 'campaign.export', `campaign=${camp.id}`);
       const rows = await all(db, `SELECT * FROM candidates WHERE campaign_id=? ORDER BY site, id`, camp.id);
-      const out = [['사업장(원가중심점)', '이름', '전화번호', '면접일시', '상태', '답장', '발송시각', '응답시각']].concat(
+      const out = [['사업장(원가중심점)', '이름', '전화번호', '면접일시', '상태', '답장', '발송시각', '응답시각', '결과']].concat(
         rows.map((r) => [r.site, r.name, r.phone, r.interview_at, STATUS_LABEL[r.status] || r.status, r.reply_text,
-          r.status === 'pending' ? '' : fmtTime(r.sent_at), fmtTime(r.replied_at)]));
+          r.status === 'pending' ? '' : fmtTime(r.sent_at), fmtTime(r.replied_at), OUTCOMES[r.outcome] || '']));
       return new Response(toCsv(out), {
         headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="campaign-${camp.id}.csv"` }
       });
@@ -502,6 +512,11 @@ async function handle(request, env, ctx) {
 
 // 주기 작업: 발송 큐 처리 + 매 시 정각 파기/세션 정리 (Workers Cron, Node 서버 공용)
 export async function runScheduled(env, whenMs = Date.now()) {
+  try {
+    if (await rateLimit(env.DB, 'auto:remind', 1, 4 * 60000)) await queueAutoReminders(env.DB, whenMs);
+  } catch (e) {
+    await recordError(env, 'cron', e, 'autoReminders');
+  }
   try {
     await processQueue(env);
   } catch (e) {
