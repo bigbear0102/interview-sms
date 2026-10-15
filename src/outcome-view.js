@@ -10,6 +10,12 @@ export function outcomeSection(camp, oc = {}) {
       <input type="hidden" name="on" value="${on ? 0 : 1}">
       <span class="muted">${icon('clock', 14)} 자동 리마인드(면접 당일 오전 8시, 참석자에게 한 번): <b>${on ? '켜짐' : '꺼짐'}</b>${on && oc.reminded ? ` · ${oc.reminded}명에게 보냄` : ''}</span>
       <button class="secondary small">${on ? '끄기' : '켜기'}</button></form>`;
+  const any = (oc.showed || 0) + (oc.noshow || 0) + (oc.passed || 0) + (oc.hired || 0) + (oc.rejected || 0);
+  if (!any) {
+    return `<section class="section"><div class="shead"><h2>면접 결과</h2></div>
+      <p class="muted">아직 기록된 결과가 없어요. 아래 "사람별 현황"에서 출석·노쇼·합격·입사를 골라 기록하면 여기에 모여요.</p>
+      ${toggle ? `<div style="margin-top:10px">${toggle}</div>` : ''}</section>`;
+  }
   return `<section class="section">
     <div class="shead"><h2>면접 결과</h2><span class="muted">사람별 표에서 결과를 골라 기록해요</span></div>
     <div class="stats">

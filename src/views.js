@@ -185,6 +185,7 @@ details summary{cursor:pointer;min-height:32px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
 
 /* ---------- 표 ---------- */
+@media (max-width:640px){.table-wrap.hint::after{content:"옆으로 밀면 더 보여요 →";display:block;padding:8px 14px;font-size:13px;color:var(--muted);border-top:1px solid var(--line-soft);position:sticky;left:0}.table-wrap.hint th,.table-wrap.hint td{white-space:nowrap}}
 .table-wrap{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);overflow-x:auto}
 table{width:100%;border-collapse:collapse}
 th{font-size:13px;color:var(--muted);font-weight:600;text-align:left;background:var(--surface-2);padding:12px 16px;white-space:nowrap}

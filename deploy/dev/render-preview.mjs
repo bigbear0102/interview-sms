@@ -21,7 +21,7 @@ const env = {
 const ctx = { waitUntil() {} };
 
 // ---- 데모 데이터 ----
-const u = await db.prepare(`INSERT INTO users (username,pass_hash,role) VALUES ('admin',?,'super')`).bind(await hashPassword('demo-password')).run();
+const u = await db.prepare(`INSERT INTO users (username,pass_hash,role,email_verified_at,name,email) VALUES ('admin',?,'super',1,'김관리','admin@willvi.co.kr')`).bind(await hashPassword('demo-password')).run();
 const sid = await createSession(db, Number(u.meta.last_row_id));
 await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀'),('총무팀')`).run();
 await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token,own_number) VALUES (1,'인사팀 폰','demo',?,'tok','01046608711')`)
@@ -56,7 +56,13 @@ const pages = {
   campaign_detail: [`/campaigns/${camp.campaignId}`, true],
   campaign_scheduled: [`/campaigns/${camp2.campaignId}`, true],
   admin: ['/admin', true],
-  password: ['/password', true]
+  password: ['/password', true],
+  people: ['/people', true],
+  help_phone: ['/help/phone', true],
+  audit: ['/audit', true],
+  intro: ['/intro', true],
+  signup: ['/signup', false],
+  forgot: ['/forgot', false]
 };
 for (const [name, [path, auth]] of Object.entries(pages)) {
   const res = await handleRequest(new Request('https://interview.example' + path, auth ? { headers: { cookie: `sid=${sid}` } } : {}), env, ctx);

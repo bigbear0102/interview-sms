@@ -164,7 +164,7 @@ export async function renderHome(db, user, deps) {
   const dayLabel = (d) => { const [, m, dd] = d.split('-'); return `${Number(m)}/${Number(dd)}`; };
   const boardHtml = board.length ? tableWrap(`<table><thead><tr><th>보낸 날</th><th>사업장</th><th class="num">보냄</th><th class="num">${colHead('참석', 'ok')}</th><th class="num">${colHead('불참', 'no')}</th><th class="num">${colHead('확인 필요', 'review')}</th><th class="num">${colHead('미회신', 'wait')}</th><th class="num">${colHead('출석', 'ok')}</th><th class="num">${colHead('노쇼', 'no')}</th></tr></thead><tbody>
       ${board.map((r) => `<tr><td>${dayLabel(r.day)}</td><td>${esc(r.site)}</td><td class="num">${r.sent}</td><td class="num">${colCount(r.attending, 'ok')}</td><td class="num">${colCount(r.absent, 'no')}</td><td class="num">${colCount(r.unclear, 'review')}</td><td class="num">${colCount(r.noreply, 'wait')}</td><td class="num">${colCount(r.showed, 'ok')}</td><td class="num">${colCount(r.noshow, 'no')}</td></tr>`).join('')}
-      </tbody><tfoot><tr><th colspan="2">합계</th><th class="num">${bsum.sent}</th><th class="num">${colCount(bsum.attending, 'ok')}</th><th class="num">${colCount(bsum.absent, 'no')}</th><th class="num">${colCount(bsum.unclear, 'review')}</th><th class="num">${colCount(bsum.noreply, 'wait')}</th><th class="num">${colCount(bsum.showed, 'ok')}</th><th class="num">${colCount(bsum.noshow, 'no')}</th></tr></tfoot></table>`)
+      </tbody><tfoot><tr><th colspan="2">합계</th><th class="num">${bsum.sent}</th><th class="num">${colCount(bsum.attending, 'ok')}</th><th class="num">${colCount(bsum.absent, 'no')}</th><th class="num">${colCount(bsum.unclear, 'review')}</th><th class="num">${colCount(bsum.noreply, 'wait')}</th><th class="num">${colCount(bsum.showed, 'ok')}</th><th class="num">${colCount(bsum.noshow, 'no')}</th></tr></tfoot></table>`, 'hint')
     : emptyState({ title: '아직 보낸 면접 안내가 없어요', desc: '면접 안내를 보내면 사업장·날짜별 참석/불참/미회신이 여기에 모여요.' });
 
   const phoneNotice = gwCount
@@ -265,10 +265,11 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
 
       <div class="step"><div class="num">1</div><div class="body">
         <h3>대상자 명단 <small>누구에게 보낼까요?</small></h3>
-        <div class="seg" role="radiogroup" aria-label="보낼 대상" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
-          <label style="display:flex;gap:8px;align-items:center"><input type="radio" name="mode" value="one" checked> 한 명에게만</label>
-          <label style="display:flex;gap:8px;align-items:center"><input type="radio" name="mode" value="many"> 여러 명 (명단 파일)</label>
-        </div>
+        <fieldset style="margin-bottom:16px">
+          <legend>보낼 대상</legend>
+          <label class="check"><input type="radio" name="mode" value="one" checked> <span>한 명에게만</span></label>
+          <label class="check"><input type="radio" name="mode" value="many"> <span>여러 명 (명단 파일)</span></label>
+        </fieldset>
         <div id="mode-one">
           <label>사업장(원가중심점) <input name="one_site" placeholder="예: 아마노코리아(현장HR)"></label>
           <label style="margin-top:12px">이름 <input name="one_name" placeholder="홍길동" autocomplete="off"></label>
@@ -376,7 +377,7 @@ export function renderCampaignDetail(d) {
       <td style="min-width:120px">${responseBar(s)}</td></tr>`).join('')}
     ${siteRows.length > 1 ? `<tr class="total"><td>합계</td><td class="num">${siteTotal.delivered}</td><td class="num">${siteTotal.replied}</td><td class="num">${siteTotal.rate}</td>
       <td class="num">${colCount(siteTotal.attending, 'ok')}</td><td class="num">${colCount(siteTotal.absent, 'no')}</td><td class="num">${colCount(siteTotal.unclear, 'review')}</td><td class="num">${colCount(siteTotal.noreply, 'wait')}</td><td class="num">${colCount(siteTotal.failed, 'fail')}</td><td></td></tr>` : ''}
-    </tbody></table>`);
+    </tbody></table>`, 'hint');
 
   return `${pageHeader({ title: camp.name, back, actions,
     desc: `${esc(camp.dept)} · 보내는 폰 ${esc(camp.gateway)} · ${campaignBadge(camp)}` })}
