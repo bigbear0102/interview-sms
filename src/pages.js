@@ -2,6 +2,8 @@
 // 화면 구성 원칙: 한 화면에 하나의 주요 동작, 숫자는 먼저, 설명은 짧게, 모든 표시값은 ui.js 형식을 따른다.
 import { all, first } from './d1.js';
 import { esc, fmtTime, icon } from './views.js';
+import { OUTCOMES } from './reminders.js';
+import { outcomeSection } from './outcome-view.js';
 import { fmtPhone, fmtWhen, badge, messageBadge, responseBar, pageHeader, tableWrap, stat, emptyState } from './ui.js';
 
 const DAY = 86400000;
@@ -150,18 +152,19 @@ export async function renderHome(db, user, deps) {
       `SELECT date((ca.sent_at + 32400000) / 1000, 'unixepoch') day, ca.site site,
          COUNT(*) sent,
          SUM(ca.status='attending') attending, SUM(ca.status='absent') absent,
-         SUM(ca.status='unclear') unclear, SUM(ca.status='sent') noreply
+         SUM(ca.status='unclear') unclear, SUM(ca.status='sent') noreply,
+         SUM(ca.outcome='showed') showed, SUM(ca.outcome='noshow') noshow
        FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
        WHERE k.department_id IN (${idList(depIds)}) AND ca.sent_at IS NOT NULL AND ca.sent_at>=?
          AND ca.status IN ('sent','attending','absent','unclear')
        GROUP BY day, ca.site ORDER BY day DESC, ca.site LIMIT 120`, ...depIds, today - 29 * DAY);
   }
-  const bsum = board.reduce((a, r) => ({ sent: a.sent + r.sent, attending: a.attending + r.attending, absent: a.absent + r.absent, unclear: a.unclear + r.unclear, noreply: a.noreply + r.noreply }),
-    { sent: 0, attending: 0, absent: 0, unclear: 0, noreply: 0 });
+  const bsum = board.reduce((a, r) => ({ showed: a.showed + r.showed, noshow: a.noshow + r.noshow, sent: a.sent + r.sent, attending: a.attending + r.attending, absent: a.absent + r.absent, unclear: a.unclear + r.unclear, noreply: a.noreply + r.noreply }),
+    { showed: 0, noshow: 0, sent: 0, attending: 0, absent: 0, unclear: 0, noreply: 0 });
   const dayLabel = (d) => { const [, m, dd] = d.split('-'); return `${Number(m)}/${Number(dd)}`; };
-  const boardHtml = board.length ? tableWrap(`<table><thead><tr><th>보낸 날</th><th>사업장</th><th class="num">보냄</th><th class="num">참석</th><th class="num">불참</th><th class="num">확인 필요</th><th class="num">미회신</th></tr></thead><tbody>
-      ${board.map((r) => `<tr><td>${dayLabel(r.day)}</td><td>${esc(r.site)}</td><td class="num">${r.sent}</td><td class="num">${r.attending}</td><td class="num">${r.absent}</td><td class="num">${r.unclear}</td><td class="num">${r.noreply}</td></tr>`).join('')}
-      </tbody><tfoot><tr><th colspan="2">합계</th><th class="num">${bsum.sent}</th><th class="num">${bsum.attending}</th><th class="num">${bsum.absent}</th><th class="num">${bsum.unclear}</th><th class="num">${bsum.noreply}</th></tr></tfoot></table>`)
+  const boardHtml = board.length ? tableWrap(`<table><thead><tr><th>보낸 날</th><th>사업장</th><th class="num">보냄</th><th class="num">참석</th><th class="num">불참</th><th class="num">확인 필요</th><th class="num">미회신</th><th class="num">출석</th><th class="num">노쇼</th></tr></thead><tbody>
+      ${board.map((r) => `<tr><td>${dayLabel(r.day)}</td><td>${esc(r.site)}</td><td class="num">${r.sent}</td><td class="num">${r.attending}</td><td class="num">${r.absent}</td><td class="num">${r.unclear}</td><td class="num">${r.noreply}</td><td class="num">${r.showed}</td><td class="num">${r.noshow}</td></tr>`).join('')}
+      </tbody><tfoot><tr><th colspan="2">합계</th><th class="num">${bsum.sent}</th><th class="num">${bsum.attending}</th><th class="num">${bsum.absent}</th><th class="num">${bsum.unclear}</th><th class="num">${bsum.noreply}</th><th class="num">${bsum.showed}</th><th class="num">${bsum.noshow}</th></tr></tfoot></table>`)
     : emptyState({ title: '아직 보낸 면접 안내가 없어요', desc: '면접 안내를 보내면 사업장·날짜별 참석/불참/미회신이 여기에 모여요.' });
 
   const phoneNotice = gwCount
@@ -391,6 +394,7 @@ export function renderCampaignDetail(d) {
         <span><i style="background:var(--purple)"></i>확인 필요 ${totals.unclear || 0}</span><span><i style="background:var(--amber)"></i>답 없음 ${totals.sent || 0}</span>
         <span style="margin-left:auto">회신율 ${siteTotal.rate}</span></div></div>` : ''}
     ${d.delivery && delivered ? `<p class="muted" style="margin-top:10px">${icon('check', 14)} 전달 확인 ${d.delivery.delivered}명 / 보냄 ${delivered}명${d.delivery.retrying ? ` · 다시 시도 중 ${d.delivery.retrying}명` : ''}</p>` : ''}
+    ${outcomeSection(camp, d.outcomes)}
     ${totals.failed ? `<div class="notice warn" style="margin-top:12px" role="alert">${icon('alert')}<div><b>${totals.failed}명에게 문자를 보내지 못했어요.</b> 위의 "답 없는 사람에게 다시 보내기"로 다시 시도할 수 있어요.</div></div>` : ''}
 
     ${camp.template ? `<details class="card" style="margin-top:16px"><summary><b>보낸(보낼) 문자 보기</b></summary><div class="preview" style="margin-top:12px">${esc(previewText)}</div></details>` : ''}
@@ -404,15 +408,18 @@ export function renderCampaignDetail(d) {
       <div class="shead"><h2>사람별 현황${siteFilter ? ` · ${esc(siteFilter)}` : ''}</h2>${siteFilter ? `<a href="${esc(qs(statusFilter).replace(/site=[^&]*&?/, '').replace(/\?$/, '') || `/campaigns/${camp.id}`)}">사업장 필터 해제</a>` : ''}</div>
       <div class="tabs" role="tablist">${FILTERS.map(([key, label, n]) =>
         `<a href="${esc(qs(key))}"${(statusFilter || '') === key ? ' aria-current="page"' : ''}>${label} <span class="n">${n}</span></a>`).join('')}</div>
-      ${tableWrap(`<table class="cards cand"><thead><tr><th>사업장</th><th>이름</th><th>전화번호</th><th>상태</th><th>받은 답장</th><th></th></tr></thead><tbody>
+      ${tableWrap(`<table class="cards cand"><thead><tr><th>사업장</th><th>이름</th><th>전화번호</th><th>상태</th><th>받은 답장</th><th>면접 결과</th><th></th></tr></thead><tbody>
         ${cands.length ? cands.map((c) => `<tr>
           <td class="c-site">${esc(c.site)}</td><td class="c-name">${esc(c.name)}</td><td class="c-phone nowrap">${esc(fmtPhone(c.phone))}</td>
           <td class="c-status">${badge(c.status)}${c.manual ? ' <small>(직접)</small>' : ''}${c.delivery === 'delivered' ? ' <small title="상대 휴대폰에 전달됨">✓ 전달</small>' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
           <td class="c-reply msg">${esc(c.reply_text)}</td>
+          <td class="c-outcome">${camp.purged_at ? esc(OUTCOMES[c.outcome] || '') : `<form method="post" action="/campaigns/${camp.id}/outcome" class="inline">
+            <input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(d.backQuery)}">
+            <select name="outcome" aria-label="면접 결과" onchange="this.form.submit()"><option value="">-</option>${Object.entries(OUTCOMES).map(([k, v]) => `<option value="${k}"${c.outcome === k ? ' selected' : ''}>${v}</option>`).join('')}</select></form>`}</td>
           <td class="actions">${camp.purged_at ? '' : `<form method="post" action="/campaigns/${camp.id}/set" class="inline">
             <input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(d.backQuery)}">
             <button name="status" value="attending">참석</button> <button name="status" value="absent">불참</button></form>`}</td></tr>`).join('')
-          : `<tr><td colspan="6">${emptyState({ title: '해당하는 사람이 없어요' })}</td></tr>`}
+          : `<tr><td colspan="7">${emptyState({ title: '해당하는 사람이 없어요' })}</td></tr>`}
         </tbody></table>`)}
       ${cands.length >= 500 ? '<p class="muted" style="margin-top:8px">최대 500명까지 보여요. 사업장이나 상태로 걸러서 보세요.</p>' : ''}
     </section>`;

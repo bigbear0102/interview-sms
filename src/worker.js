@@ -359,6 +359,10 @@ async function handle(request, env, ctx) {
     siteTotal.rate = siteTotal.delivered ? Math.round((siteTotal.replied / siteTotal.delivered) * 100) + '%' : '-';
     const deliveryStats = await first(db,
       `SELECT COALESCE(SUM(delivery='delivered'),0) delivered, COALESCE(SUM(status='pending' AND attempts>0),0) retrying FROM candidates WHERE campaign_id=?`, camp.id);
+    const outcomeStats = await first(db,
+      `SELECT COALESCE(SUM(outcome='showed'),0) showed, COALESCE(SUM(outcome='noshow'),0) noshow, COALESCE(SUM(outcome='passed'),0) passed,
+        COALESCE(SUM(outcome='hired'),0) hired, COALESCE(SUM(outcome='rejected'),0) rejected,
+        COALESCE(SUM(status='attending' AND reminded_at IS NOT NULL),0) reminded FROM candidates WHERE campaign_id=?`, camp.id);
     const firstCand = camp.template ? await first(db, `SELECT * FROM candidates WHERE campaign_id=? ORDER BY id LIMIT 1`, camp.id) : null;
     const previewText = camp.template ? renderTemplate(camp.template, firstCand || { site: '', name: '홍길동', interview_at: '' }) : '';
     const where = ['campaign_id=?']; const args = [camp.id];
@@ -382,7 +386,7 @@ async function handle(request, env, ctx) {
     const stateNotice = `<div class="notice ${tone}">${icon(tone === 'ok' ? 'check' : tone === 'warn' ? 'alert' : 'info')}<div>${esc(stateText)}</div></div>`;
     const canSend = !camp.purged_at && ['draft', 'scheduled'].includes(camp.status);
     const body = renderCampaignDetail({
-      camp, totals, siteRows, siteTotal, cands, siteFilter, statusFilter, previewText, canSend, stateNotice, delivery: deliveryStats,
+      camp, totals, siteRows, siteTotal, cands, siteFilter, statusFilter, previewText, canSend, stateNotice, delivery: deliveryStats, outcomes: outcomeStats,
       backQuery: back, back: { href: '/campaigns', label: '면접 안내' }
     });
     return html(pg(camp.name, body));
