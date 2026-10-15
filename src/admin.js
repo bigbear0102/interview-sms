@@ -444,8 +444,8 @@ export async function renderAdmin(db, env, publicBase, result = null) {
             <div class="form-actions"><button class="btn secondary small">받기 시험</button></div>
           </form>
           <form method="post" class="inline"><input type="hidden" name="do" value="gw_hook"><input type="hidden" name="gateway_id" value="${g.id}">
-            <p class="muted" style="margin-bottom:8px">받은 문자가 화면에 안 들어오면 눌러 보세요.</p>
-            <button class="btn secondary small">답장 받기 다시 설정</button></form>
+            <p class="muted" style="margin-bottom:8px">받은 문자나 전달 결과가 화면에 안 들어오면 눌러 보세요.</p>
+            <button class="btn secondary small">답장·전달 결과 받기 다시 설정</button></form>
           <details><summary>폰 이름·부서 바꾸기</summary>
             <form method="post" class="stack small-form">
               <input type="hidden" name="do" value="gw_edit"><input type="hidden" name="gateway_id" value="${g.id}">

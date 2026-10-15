@@ -24,6 +24,7 @@ import {
 } from './accounts.js';
 import { mailConfigured } from './mailer.js';
 import { monitorPhones, recordError } from './monitor.js';
+import { applyDeliveryEvent, pollDelivery, notifyNewReply, unreadCount, markAllRead } from './delivery.js';
 import { rateLimit } from './accounts.js';
 
 // 어느 실행 환경이 응답했는지 확인용 (Cloudflare Workers / Node)
@@ -89,6 +90,16 @@ async function handle(request, env, ctx) {
         message: evt.payload.message ?? ''
       });
       note = r.matched ? `matched result=${r.result}` : 'unmatched';
+      ctx.waitUntil(notifyNewReply(env, gw.id).catch((e) => recordError(env, 'notify', e, 'notifyNewReply')));
+    } else if (['sms:sent', 'sms:delivered', 'sms:failed'].includes(evt.event) && evt.payload) {
+      const ev = evt.event.slice(4);
+      const r = await applyDeliveryEvent(db, {
+        gwMsgId: evt.payload.messageId ?? evt.payload.id ?? '',
+        event: ev,
+        reason: evt.payload.reason ?? evt.payload.error ?? ''
+      });
+      note = r.matched ? `${ev} ${r.kind}` : `${ev} unmatched`;
+      if (ev === 'failed' && r.matched) ctx.waitUntil(processQueue(env).catch(() => {}));
     }
     await audit(db, null, 'hook.recv', `gateway=${gw.id} event=${String(evt.event).slice(0, 30)} ${note}`);
     return html('ok');
@@ -199,7 +210,9 @@ async function handle(request, env, ctx) {
 
   const user = await getUser(db, getCookie(request, 'sid'));
   if (!user) return redirect('/login');
-  const pg = (title, body, nav) => page(user, title, body, nav || navFor(path));
+  let unread = 0;
+  if (method === 'GET' && path !== '/logout') unread = await unreadCount(db, user).catch(() => 0);
+  const pg = (title, body, nav) => page(user, title, body, nav || navFor(path), { inbox: unread });
 
   if (path === '/logout' && method === 'POST') {
     await run(db, `DELETE FROM sessions WHERE token_hash=?`, await sha256Hex(getCookie(request, 'sid')));
@@ -324,6 +337,8 @@ async function handle(request, env, ctx) {
       return t;
     }, {});
     siteTotal.rate = siteTotal.delivered ? Math.round((siteTotal.replied / siteTotal.delivered) * 100) + '%' : '-';
+    const deliveryStats = await first(db,
+      `SELECT COALESCE(SUM(delivery='delivered'),0) delivered, COALESCE(SUM(status='pending' AND attempts>0),0) retrying FROM candidates WHERE campaign_id=?`, camp.id);
     const firstCand = camp.template ? await first(db, `SELECT * FROM candidates WHERE campaign_id=? ORDER BY id LIMIT 1`, camp.id) : null;
     const previewText = camp.template ? renderTemplate(camp.template, firstCand || { site: '', name: '홍길동', interview_at: '' }) : '';
     const where = ['campaign_id=?']; const args = [camp.id];
@@ -347,7 +362,7 @@ async function handle(request, env, ctx) {
     const stateNotice = `<div class="notice ${tone}">${icon(tone === 'ok' ? 'check' : tone === 'warn' ? 'alert' : 'info')}<div>${esc(stateText)}</div></div>`;
     const canSend = !camp.purged_at && ['draft', 'scheduled'].includes(camp.status);
     const body = renderCampaignDetail({
-      camp, totals, siteRows, siteTotal, cands, siteFilter, statusFilter, previewText, canSend, stateNotice,
+      camp, totals, siteRows, siteTotal, cands, siteFilter, statusFilter, previewText, canSend, stateNotice, delivery: deliveryStats,
       backQuery: back, back: { href: '/campaigns', label: '면접 안내' }
     });
     return html(pg(camp.name, body));
@@ -438,6 +453,7 @@ async function handle(request, env, ctx) {
 
     const dirParam = url.searchParams.get('dir');
     const dirFilter = ['in', 'out', 'scheduled'].includes(dirParam) ? dirParam : '';
+    if (dirFilter === '' || dirFilter === 'in') { await markAllRead(db, user); unread = 0; }
     const body = await renderMessages(db, { gws, dirFilter, phoneFilter: normalizePhone(url.searchParams.get('phone') || '') });
     const live = '<script>setInterval(function(){var a=document.activeElement;if(a&&(a.tagName==="TEXTAREA"||a.tagName==="INPUT"))return;location.reload();},15000);</script>';
     return html(pg('문자함', body + live));
@@ -445,16 +461,22 @@ async function handle(request, env, ctx) {
 
   // 비밀번호 변경
   if (path === '/password') {
+    const me = await first(db, `SELECT id, name, username, email, notify_replies FROM users WHERE id=?`, user.id);
     if (method === 'POST') {
       const f = form(await request.text());
+      if (f.do === 'notify') {
+        await run(db, `UPDATE users SET notify_replies=? WHERE id=?`, f.notify_replies === '1' ? 1 : 0, user.id);
+        const now = await first(db, `SELECT id, name, username, email, notify_replies FROM users WHERE id=?`, user.id);
+        return html(pg('내 계정', renderPassword('', { user: now, saved: '알림 설정을 저장했어요.' })));
+      }
       const u = await first(db, `SELECT * FROM users WHERE id=?`, user.id);
       if (!(await verifyPassword(f.current || '', u.pass_hash)) || (f.next || '').length < 8)
-        return html(pg('비밀번호 바꾸기', renderPassword('현재 비밀번호가 틀리거나, 새 비밀번호가 8글자보다 짧아요.')), 400);
+        return html(pg('내 계정', renderPassword('현재 비밀번호가 틀리거나, 새 비밀번호가 8글자보다 짧아요.', { user: me })), 400);
       await run(db, `UPDATE users SET pass_hash=? WHERE id=?`, await hashPassword(f.next), user.id);
       await audit(db, user, 'password.change');
       return redirect('/');
     }
-    return html(pg('비밀번호 바꾸기', renderPassword()));
+    return html(pg('내 계정', renderPassword('', { user: me })));
   }
 
   return html(pg('없음', '<p>페이지를 찾을 수 없습니다.</p>'), 404);
@@ -466,6 +488,11 @@ export async function runScheduled(env, whenMs = Date.now()) {
     await processQueue(env);
   } catch (e) {
     await recordError(env, 'cron', e, 'processQueue');
+  }
+  try {
+    if (await rateLimit(env.DB, 'poll:delivery', 1, 110000)) await pollDelivery(env);
+  } catch (e) {
+    await recordError(env, 'cron', e, 'pollDelivery');
   }
   try {
     // 폰 상태 점검은 5분에 한 번 (실행 환경과 무관하게 호출 간격으로 제한)

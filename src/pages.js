@@ -77,10 +77,18 @@ export function renderLogin(err = '') {
   </div>`;
 }
 
-export function renderPassword(err = '') {
-  return `${pageHeader({ title: '비밀번호 바꾸기', desc: '8글자 이상으로 정해 주세요.' })}
+export function renderPassword(err = '', { user = null, saved = '' } = {}) {
+  return `${pageHeader({ title: '내 계정', desc: user ? `${esc(user.name || user.username)}${user.email ? ' · ' + esc(user.email) : ''}` : '' })}
     <div class="col">
       ${err ? `<div class="notice warn" role="alert">${icon('alert')}<div>${esc(err)}</div></div>` : ''}
+      ${saved ? `<div class="notice ok" role="status">${icon('check')}<div>${esc(saved)}</div></div>` : ''}
+      ${user ? `<form method="post" class="card stack" style="margin-bottom:16px">
+        <input type="hidden" name="do" value="notify">
+        <h3>알림</h3>
+        <label class="check"><input type="checkbox" name="notify_replies" value="1"${user.notify_replies ? ' checked' : ''}> <span>새 답장이 오면 메일로 알려 주세요 <small>내용은 메일에 넣지 않고 확인 링크만 보내요 (5분에 한 번)</small></span></label>
+        <div class="form-actions"><button class="btn secondary">알림 설정 저장</button></div>
+      </form>` : ''}
+      <h3 style="margin:8px 0 12px">비밀번호 바꾸기</h3>
       <form method="post" class="card stack">
         <label>현재 비밀번호<input type="password" name="current" autocomplete="current-password" required></label>
         <label>새 비밀번호 <small>8글자 이상</small><input type="password" name="next" autocomplete="new-password" minlength="8" required></label>
@@ -334,6 +342,7 @@ export function renderCampaignDetail(d) {
       <div class="legend"><span><i style="background:var(--green)"></i>참석 ${totals.attending || 0}</span><span><i style="background:var(--red)"></i>불참 ${totals.absent || 0}</span>
         <span><i style="background:var(--purple)"></i>확인 필요 ${totals.unclear || 0}</span><span><i style="background:var(--amber)"></i>답 없음 ${totals.sent || 0}</span>
         <span style="margin-left:auto">회신율 ${siteTotal.rate}</span></div></div>` : ''}
+    ${d.delivery && delivered ? `<p class="muted" style="margin-top:10px">${icon('check', 14)} 전달 확인 ${d.delivery.delivered}명 / 보냄 ${delivered}명${d.delivery.retrying ? ` · 다시 시도 중 ${d.delivery.retrying}명` : ''}</p>` : ''}
     ${totals.failed ? `<div class="notice warn" style="margin-top:12px" role="alert">${icon('alert')}<div><b>${totals.failed}명에게 문자를 보내지 못했어요.</b> 위의 "답 없는 사람에게 다시 보내기"로 다시 시도할 수 있어요.</div></div>` : ''}
 
     ${camp.template ? `<details class="card" style="margin-top:16px"><summary><b>보낸(보낼) 문자 보기</b></summary><div class="preview" style="margin-top:12px">${esc(previewText)}</div></details>` : ''}
@@ -350,7 +359,7 @@ export function renderCampaignDetail(d) {
       ${tableWrap(`<table class="cards cand"><thead><tr><th>사업장</th><th>이름</th><th>전화번호</th><th>상태</th><th>받은 답장</th><th></th></tr></thead><tbody>
         ${cands.length ? cands.map((c) => `<tr>
           <td class="c-site">${esc(c.site)}</td><td class="c-name">${esc(c.name)}</td><td class="c-phone nowrap">${esc(fmtPhone(c.phone))}</td>
-          <td class="c-status">${badge(c.status)}${c.manual ? ' <small>(직접)</small>' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
+          <td class="c-status">${badge(c.status)}${c.manual ? ' <small>(직접)</small>' : ''}${c.delivery === 'delivered' ? ' <small title="상대 휴대폰에 전달됨">✓ 전달</small>' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
           <td class="c-reply msg">${esc(c.reply_text)}</td>
           <td class="actions">${camp.purged_at ? '' : `<form method="post" action="/campaigns/${camp.id}/set" class="inline">
             <input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(d.backQuery)}">
@@ -413,17 +422,17 @@ export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice =
   let rows;
   if (dirFilter === 'scheduled') {
     rows = await all(db,
-      `SELECT 'out' dir, id, phone, text, status result, scheduled_at at, gateway_id,
+      `SELECT 'out' dir, id, phone, text, status result, scheduled_at at, gateway_id, delivery, error, attempts,
          (SELECT COALESCE(NULLIF(name,''), username) FROM users WHERE id=messages.user_id) author FROM messages
        WHERE gateway_id IN (${ph}) AND status IN ('scheduled','sending')${phoneOut} ORDER BY scheduled_at, id LIMIT 200`, ...ids, ...pArgs);
   } else {
     rows = await all(db,
       `SELECT * FROM (
-         SELECT 'out' dir, id, phone, text, status result, COALESCE(CASE WHEN status='scheduled' THEN scheduled_at END, at) at, gateway_id,
+         SELECT 'out' dir, id, phone, text, status result, COALESCE(CASE WHEN status='scheduled' THEN scheduled_at END, at) at, gateway_id, delivery, error, attempts,
            (SELECT COALESCE(NULLIF(name,''), username) FROM users WHERE id=messages.user_id) author
            FROM messages WHERE gateway_id IN (${ph}) AND status != 'cancelled'${phoneOut}
          UNION ALL
-         SELECT 'in' dir, id, sender phone, message text, result, received_at at, gateway_id, NULL author FROM inbound WHERE gateway_id IN (${ph})${phoneIn}
+         SELECT 'in' dir, id, sender phone, message text, result, received_at at, gateway_id, '' delivery, '' error, 0 attempts, NULL author FROM inbound WHERE gateway_id IN (${ph})${phoneIn}
        ) WHERE (? = '' OR dir = ?) ORDER BY at DESC LIMIT 100`, ...ids, ...pArgs, ...ids, ...pArgs, dirFilter, dirFilter);
   }
 
@@ -446,10 +455,11 @@ export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice =
         <div class="mtop">
           <a href="/messages?phone=${encodeURIComponent(r.phone)}"><b>${esc(fmtPhone(r.phone))}</b></a>
           ${r.dir === 'in' ? '<span class="badge info">받음</span>' : '<span class="badge">보냄</span>'}
-          ${messageBadge(r.dir, r.result)}
+          ${messageBadge(r.dir, r.result, r.delivery)}
           <span class="when">${fmtWhen(r.at)}</span>
         </div>
         <div class="mtext">${esc(r.text)}</div>
+        ${r.dir === 'out' && r.error && ['failed', 'scheduled', 'sending'].includes(r.result) || (r.dir === 'out' && r.delivery === 'failed') ? `<div class="muted" style="font-size:13px;margin-top:4px;color:var(--red-t)">${esc(r.error || '전달에 실패했어요')}</div>` : ''}
         ${r.author ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(r.author)} 님이 보냄</div>` : ''}
         <div class="mact">${r.dir === 'out' && r.result === 'scheduled'
           ? `<form method="post" action="/messages/cancel" class="inline" data-confirm="이 예약을 취소할까요?"><input type="hidden" name="id" value="${r.id}"><button class="btn danger small">예약 취소</button></form>`

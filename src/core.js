@@ -1,6 +1,7 @@
 // 업무 로직: 캠페인 생성, 발송 큐, 수신 답장 처리, 보관기간 파기 (Cloudflare D1)
 import { parseReply, normalizePhone, isValidMobile } from './parser.js';
 import { sendSms, unlockGateway } from './gateway.js';
+import { planRetry, retryNote } from './delivery.js';
 import { all, first, run, stmt } from './d1.js';
 
 // 면접 안내 기본 문구. 사업장 이름은 넣지 않는다. (줄바꿈은 그대로 문자에 반영된다)
@@ -100,8 +101,8 @@ export async function processQueue(env, { batchSize = Number(env.SEND_BATCH || 2
     const claimTs = Date.now();
     await run(db,
       `UPDATE candidates SET status='sending', sent_at=? WHERE id IN
-         (SELECT id FROM candidates WHERE campaign_id=? AND status='pending' ORDER BY id LIMIT ?)`,
-      claimTs, camp.id, budget);
+         (SELECT id FROM candidates WHERE campaign_id=? AND status='pending' AND (next_retry_at IS NULL OR next_retry_at<=?) ORDER BY id LIMIT ?)`,
+      claimTs, camp.id, claimTs, budget);
     const claimed = await all(db,
       `SELECT * FROM candidates WHERE campaign_id=? AND status='sending' AND sent_at=? ORDER BY id`, camp.id, claimTs);
     if (claimed.length) {
@@ -111,10 +112,20 @@ export async function processQueue(env, { batchSize = Number(env.SEND_BATCH || 2
       for (const c of claimed) {
         const text = renderTemplate(camp.template, c);
         try {
-          await send(gw, c.phone, text);
-          updates.push(stmt(db, `UPDATE candidates SET status='sent', sent_at=?, message_text=?, error='' WHERE id=?`, Date.now(), text, c.id));
+          const resp = await send(gw, c.phone, text);
+          updates.push(stmt(db,
+            `UPDATE candidates SET status='sent', sent_at=?, message_text=?, error='', gw_msg_id=?, delivery='queued', next_retry_at=NULL WHERE id=?`,
+            Date.now(), text, String(resp?.id || ''), c.id));
         } catch (e) {
-          updates.push(stmt(db, `UPDATE candidates SET status='failed', error=? WHERE id=?`, String(e.message).slice(0, 300), c.id));
+          const attempts = (c.attempts || 0) + 1;
+          const plan = planRetry(attempts, e.message);
+          if (plan.retry) {
+            updates.push(stmt(db, `UPDATE candidates SET status='pending', attempts=?, next_retry_at=?, error=? WHERE id=?`,
+              attempts, plan.at, retryNote(attempts, e.message), c.id));
+          } else {
+            updates.push(stmt(db, `UPDATE candidates SET status='failed', attempts=?, error=? WHERE id=?`,
+              attempts, String(e.message).slice(0, 300), c.id));
+          }
           log.error?.(`발송 실패 candidate=${c.id}: ${e.message}`);
         }
         sentCount++;
@@ -143,10 +154,17 @@ export async function processQueue(env, { batchSize = Number(env.SEND_BATCH || 2
         }
         const gw = gwCache.get(m.gateway_id);
         if (!gw) throw new Error('폰 정보를 찾을 수 없어요.');
-        await send(gw, m.phone, m.text);
-        await run(db, `UPDATE messages SET status='sent', at=?, error='' WHERE id=?`, Date.now(), m.id);
+        const resp = await send(gw, m.phone, m.text);
+        await run(db, `UPDATE messages SET status='sent', at=?, error='', gw_msg_id=?, delivery='queued' WHERE id=?`, Date.now(), String(resp?.id || ''), m.id);
       } catch (e) {
-        await run(db, `UPDATE messages SET status='failed', at=?, error=? WHERE id=?`, Date.now(), String(e.message).slice(0, 300), m.id);
+        const attempts = (m.attempts || 0) + 1;
+        const plan = planRetry(attempts, e.message);
+        if (plan.retry) {
+          await run(db, `UPDATE messages SET status='scheduled', scheduled_at=?, attempts=?, error=? WHERE id=?`,
+            plan.at, attempts, retryNote(attempts, e.message), m.id);
+        } else {
+          await run(db, `UPDATE messages SET status='failed', at=?, attempts=?, error=? WHERE id=?`, Date.now(), attempts, String(e.message).slice(0, 300), m.id);
+        }
         log.error?.(`직접 발송 실패 message=${m.id}: ${e.message}`);
       }
       sentCount++;

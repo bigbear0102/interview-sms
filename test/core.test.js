@@ -60,17 +60,38 @@ test('발송 배치 처리 → 답장 매칭 → 상태 갱신 → 리마인드'
   assert.equal(await remindCampaign(db, r.campaignId), 0);
 });
 
-test('발송 실패는 failed 로 기록되고 리마인드로 재시도된다', async () => {
+test('발송 실패는 자동으로 3번까지 다시 시도하고, 그래도 안 되면 failed → 리마인드로 재시도', async () => {
   const { db, env } = await setup();
   const r = await createCampaign(db, { departmentId: 1, gatewayId: 1, name: 't', candidates: candidatesFromCsv(CSV).candidates, userId: null });
   await scheduleCampaign(db, r.campaignId, Date.now() - 1);
-  await processQueue(env, { send: async () => { throw new Error('boom'); }, log: {} });
-  const failed = await db.prepare(`SELECT COUNT(*) n FROM candidates WHERE status='failed'`).first();
-  assert.equal(failed.n, 2);
+  const boom = async () => { throw new Error('boom'); };
+
+  await processQueue(env, { send: boom, log: {} });
+  // 1회 실패: 대기(pending) + 다음 시도 시각
+  let rows = (await db.prepare(`SELECT status, attempts, next_retry_at, error FROM candidates`).all()).results;
+  assert.ok(rows.every((x) => x.status === 'pending' && x.attempts === 1 && x.next_retry_at > Date.now()));
+  assert.match(rows[0].error, /다시 시도해요 \(1\/3\)/);
+  // 아직 시도 시각 전이면 보내지 않는다
+  let calls = 0;
+  await processQueue(env, { send: async () => { calls++; }, log: {} });
+  assert.equal(calls, 0);
+  assert.equal((await db.prepare(`SELECT status FROM campaigns`).first()).status, 'sending');
+
+  // 시각이 되었다고 보고 2, 3회째도 실패
+  for (let i = 0; i < 2; i++) {
+    await db.prepare(`UPDATE candidates SET next_retry_at=1`).run();
+    await processQueue(env, { send: boom, log: {} });
+  }
+  rows = (await db.prepare(`SELECT status, attempts FROM candidates`).all()).results;
+  assert.ok(rows.every((x) => x.status === 'failed' && x.attempts === 3));
+  assert.equal((await db.prepare(`SELECT status FROM campaigns`).first()).status, 'done');
+
+  // 수동 리마인드는 여전히 가능
   assert.equal(await remindCampaign(db, r.campaignId), 2);
-  await processQueue(env, { send: async () => {} });
+  await processQueue(env, { send: async () => ({ id: 'abc' }) });
   assert.equal((await db.prepare(`SELECT COUNT(*) n FROM candidates WHERE status='sent'`).first()).n, 2);
 });
+
 
 test('보관기간 만료 시 개인정보 파기, 통계 유지', async () => {
   const { db } = await setup();

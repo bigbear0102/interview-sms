@@ -46,18 +46,29 @@ export async function buildSendBody(gw, phone, text) {
   };
 }
 
-// 폰이 문자 수신 시 우리 Worker 로 POST 하도록 웹훅을 등록한다. (같은 id 가 있으면 교체)
+// 폰이 이벤트(문자 수신, 발송/전달/실패)를 우리 Worker 로 POST 하도록 웹훅을 등록한다. (같은 id 가 있으면 교체)
+const HOOK_EVENTS = [['', 'sms:received'], ['-sent', 'sms:sent'], ['-delivered', 'sms:delivered'], ['-failed', 'sms:failed']];
 export async function registerWebhook(gw, publicBaseUrl) {
-  const id = `interview-sms-${gw.id}`;
   const url = `${publicBaseUrl.replace(/\/$/, '')}/hook/${gw.id}/${gw.hook_token}`;
   const headers = { 'Content-Type': 'application/json', Authorization: authHeader(gw) };
-  await fetch(`${baseUrl(gw)}/webhooks/${id}`, { method: 'DELETE', headers, signal: AbortSignal.timeout(20000) }).catch(() => {});
-  const res = await fetch(`${baseUrl(gw)}/webhooks`, {
-    method: 'POST', headers, body: JSON.stringify({ id, url, event: 'sms:received' }),
-    signal: AbortSignal.timeout(20000)
-  });
-  if (!res.ok) throw new Error(`웹훅 등록 실패 ${res.status}: ${(await res.text()).slice(0, 150)}`);
+  for (const [suffix, event] of HOOK_EVENTS) {
+    const id = `interview-sms-${gw.id}${suffix}`;
+    await fetch(`${baseUrl(gw)}/webhooks/${id}`, { method: 'DELETE', headers, signal: AbortSignal.timeout(20000) }).catch(() => {});
+    const res = await fetch(`${baseUrl(gw)}/webhooks`, {
+      method: 'POST', headers, body: JSON.stringify({ id, url, event }), signal: AbortSignal.timeout(20000)
+    });
+    if (!res.ok) throw new Error(`웹훅 등록 실패(${event}) ${res.status}: ${(await res.text()).slice(0, 150)}`);
+  }
   return url;
+}
+
+// 문자 서버에 접수된 메시지의 상태를 조회한다. (웹훅을 놓친 경우 보완)
+export async function getMessage(gw, id) {
+  const res = await fetch(`${baseUrl(gw)}/messages/${encodeURIComponent(id)}`, {
+    headers: { Authorization: authHeader(gw) }, signal: AbortSignal.timeout(15000)
+  });
+  if (!res.ok) throw new Error(`메시지 조회 ${res.status}`);
+  return res.json();
 }
 
 // X-Signature = HMAC-SHA256(key, rawBody + X-Timestamp), 허용 시차 ±5분

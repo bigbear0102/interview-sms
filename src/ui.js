@@ -44,8 +44,12 @@ export function badge(key, labelOverride) {
   return `<span class="badge ${tone}">${esc(labelOverride || label)}</span>`;
 }
 // 문자 목록(보낸/받은)에서 쓰는 상태: 보낸 문자의 sent 는 "보냄"
-export function messageBadge(dir, result) {
-  if (dir === 'out' && result === 'sent') return '<span class="badge ok">보냄</span>';
+export function messageBadge(dir, result, delivery = '') {
+  if (dir === 'out' && result === 'sent') {
+    if (delivery === 'delivered') return '<span class="badge ok">전달됨</span>';
+    if (delivery === 'failed') return '<span class="badge fail">전달 실패</span>';
+    return '<span class="badge ok">보냄</span>';
+  }
   if (dir === 'out' && result === 'sending') return '<span class="badge mute">보내는 중</span>';
   if (dir === 'out' && result === 'failed') return '<span class="badge fail">못 보냄</span>';
   return badge(result);

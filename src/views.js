@@ -98,6 +98,9 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
 .page{max-width:1080px;margin:0 auto;padding:32px 20px 64px}
 .col{max-width:720px}
 .tabbar{display:none}
+.dot{font-style:normal;background:var(--red);color:#fff;border-radius:999px;font-size:11px;font-weight:700;min-width:18px;height:18px;line-height:18px;text-align:center;padding:0 5px;margin-left:2px}
+.topnav a .dot{margin-left:4px}
+.tabbar a{position:relative}
 
 .phead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:24px;flex-wrap:wrap}
 .phead .desc{color:var(--muted);margin-top:6px;font-size:16px}
@@ -272,6 +275,7 @@ details.pop summary{list-style:none}details.pop summary::-webkit-details-marker{
     background:var(--surface);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
   .tabbar a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--muted);font-size:11px;font-weight:500}
   .tabbar a:hover{text-decoration:none}
+  .tabbar a .dot{position:absolute;top:6px;left:calc(50% + 6px);margin:0}
   .tabbar a[aria-current=page]{color:var(--blue)}
   .stats{grid-template-columns:repeat(2,1fr)}
   .actions-grid{grid-template-columns:1fr}
@@ -311,14 +315,14 @@ export const NAV = [
 ];
 
 // nav: 현재 위치(home|send|inbox|interview|settings|account)
-export function page(user, title, body, nav = '') {
+export function page(user, title, body, nav = '', badges = {}) {
   const head = `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - 문자 관리</title>${HEAD_ASSETS}<style>${CSS}</style>`;
   if (!user) return `<!doctype html><html lang="ko"><head>${head}</head><body><main id="main" class="auth">${body}</main></body></html>`;
 
   const items = NAV.filter((n) => !n.superOnly || user.role === 'super');
   // 일반 관리자는 설정 대신 "내 계정" 탭
   const tabItems = user.role === 'super' ? items : [...items, { key: 'account', href: '/password', label: '내 계정', icon: 'user' }];
-  const link = (n, tab) => `<a href="${n.href}"${nav === n.key ? ' aria-current="page"' : ''}>${icon(n.icon, tab ? 22 : 18)}<span>${esc(tab ? n.short || n.label : n.label)}</span></a>`;
+  const link = (n, tab) => `<a href="${n.href}"${nav === n.key ? ' aria-current="page"' : ''}>${icon(n.icon, tab ? 22 : 18)}<span>${esc(tab ? n.short || n.label : n.label)}</span>${badges[n.key] ? `<i class="dot" aria-label="안 읽은 문자 ${badges[n.key]}건">${badges[n.key] > 99 ? '99+' : badges[n.key]}</i>` : ''}</a>`;
   return `<!doctype html><html lang="ko"><head>${head}</head><body>
 <a class="skip" href="#main">본문 바로가기</a>
 <div class="topbar">
@@ -328,7 +332,7 @@ export function page(user, title, body, nav = '') {
     <summary>${icon('user', 18)}<span class="label">${esc(user.name || user.username)}</span></summary>
     <div class="menu">
       <div class="who">${esc(user.name || user.username)}${user.email ? `<br>${esc(user.email)}` : ''}<br>${user.role === 'super' ? '관리자' : '일반 사용자'}</div>
-      <a href="/password">비밀번호 바꾸기</a>
+      <a href="/password">내 계정</a>
       ${user.role === 'super' ? '<a href="/audit">기록 보기</a>' : ''}
       <form method="post" action="/logout"><button type="submit">로그아웃</button></form>
     </div>
