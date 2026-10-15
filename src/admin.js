@@ -2,16 +2,18 @@
 import { all, first, run } from './d1.js';
 import { esc, fmtTime } from './views.js';
 import { encryptText, decryptText, randomToken, hashPassword } from './crypto.js';
-import { registerWebhook, checkGateway, sendSms } from './gateway.js';
+import { registerWebhook, checkGateway, sendSms, unlockGateway } from './gateway.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 
 // 폰 앱에 입력할 주소: .../api/3rdparty/v1 → .../api/mobile/v1
 export const phoneApiUrl = (env) => (env.GATEWAY_URL || '').replace('/api/3rdparty/v1', '/api/mobile/v1');
+// 공개 클라우드(api.sms-gate.app)를 쓰는지: 이 경우 폰 앱에 서버 주소/토큰을 넣지 않는다
+export const isPublicCloud = (env) => (env.GATEWAY_URL || '').includes('://api.sms-gate.app');
 
 async function loadGateway(db, env, id) {
   const row = await first(db, `SELECT * FROM gateways WHERE id=?`, Number(id));
   if (!row) throw new Error('폰을 찾을 수 없어요.');
-  return { ...row, password: await decryptText(env.ENCRYPTION_KEY, row.password) };
+  return unlockGateway(env, row);
 }
 
 // 반환: { ok: boolean, msg: string }
@@ -39,10 +41,11 @@ export async function applyAdminAction(db, env, f, publicBase) {
         const dept = await first(db, `SELECT name FROM departments WHERE id=?`, departmentId);
         const name = (f.name || '').trim() || `${dept.name} 폰`;
         const r = await run(db,
-          `INSERT INTO gateways (department_id,name,base_url,username,password,send_path,signing_key,hook_token)
-           VALUES (?,?,?,?,?,?,?,?)`, departmentId, name,
+          `INSERT INTO gateways (department_id,name,base_url,username,password,send_path,signing_key,hook_token,passphrase)
+           VALUES (?,?,?,?,?,?,?,?,?)`, departmentId, name,
           env.GATEWAY_URL || 'https://api.sms-gate.app/3rdparty/v1', username,
-          await encryptText(env.ENCRYPTION_KEY, password), '/messages', '', randomToken(18));
+          await encryptText(env.ENCRYPTION_KEY, password), '/messages', '', randomToken(18),
+          (f.passphrase || '').trim() ? await encryptText(env.ENCRYPTION_KEY, f.passphrase.trim()) : '');
         const gw = await loadGateway(db, env, r.meta.last_row_id);
         try {
           await registerWebhook(gw, publicBase);
@@ -56,8 +59,12 @@ export async function applyAdminAction(db, env, f, publicBase) {
         const username = (f.username || '').trim();
         const password = (f.password || '').trim();
         if (!username || !password) return { ok: false, msg: 'Username과 Password를 둘 다 적어 주세요.' };
-        await run(db, `UPDATE gateways SET username=?, password=? WHERE id=?`,
-          username, await encryptText(env.ENCRYPTION_KEY, password), Number(f.gateway_id));
+        await run(db, `UPDATE gateways SET username=?, password=?, base_url=? WHERE id=?`,
+          username, await encryptText(env.ENCRYPTION_KEY, password), env.GATEWAY_URL || 'https://api.sms-gate.app/3rdparty/v1', Number(f.gateway_id));
+        if (f.passphrase !== undefined && f.passphrase.trim() !== '') {
+          await run(db, `UPDATE gateways SET passphrase=? WHERE id=?`, await encryptText(env.ENCRYPTION_KEY, f.passphrase.trim()), Number(f.gateway_id));
+        }
+        if (f.passphrase_off === '1') await run(db, `UPDATE gateways SET passphrase='' WHERE id=?`, Number(f.gateway_id));
         const gw = await loadGateway(db, env, f.gateway_id);
         await registerWebhook(gw, publicBase);
         return { ok: true, msg: '폰 정보를 바꾸고, 답장 받는 설정도 다시 했어요.' };
@@ -160,13 +167,14 @@ document.addEventListener('click', function (e) {
 export async function renderAdmin(db, env, publicBase, result = null) {
   const deps = await all(db, `SELECT * FROM departments ORDER BY name`);
   const gws = await all(db,
-    `SELECT g.id,g.name,g.username,g.active,g.own_number,d.name dept FROM gateways g JOIN departments d ON d.id=g.department_id ORDER BY g.active DESC, g.id`);
+    `SELECT g.id,g.name,g.username,g.active,g.own_number,(g.passphrase != '') AS locked,d.name dept FROM gateways g JOIN departments d ON d.id=g.department_id ORDER BY g.active DESC, g.id`);
   const users = await all(db,
     `SELECT u.id,u.username,u.role,u.active,
        (SELECT group_concat(d.name, ', ') FROM user_departments ud JOIN departments d ON d.id=ud.department_id WHERE ud.user_id=u.id) deps
      FROM users u ORDER BY u.id`);
   const apiUrl = phoneApiUrl(env);
   const token = env.GATEWAY_PRIVATE_TOKEN || '';
+  const pub = isPublicCloud(env);
   const hasPhone = gws.some((g) => g.active);
 
   const notice = result ? `<div class="${result.ok ? 'ok' : 'warn'}">${esc(result.msg)}</div>` : '';
@@ -262,7 +270,19 @@ export async function renderAdmin(db, env, publicBase, result = null) {
       </div>
     </div>
 
-    <div class="step">
+    ${pub ? `<div class="step">
+      <div class="num">5</div>
+      <div class="body">
+        <h3>문자 내용 암호화 켜기 <small>(꼭 하세요)</small></h3>
+        <p>이 시스템은 <b>공개 문자 서버</b>를 거쳐 문자를 보내요. 서버가 문자 내용과 전화번호를 볼 수 없도록 <b>암호 비밀번호</b>를 정해 두 곳에 똑같이 넣어요.</p>
+        <ol>
+          <li>폰 SMSGate 앱 → <b>Settings</b> → <b>Encryption</b>(암호화)을 엽니다.</li>
+          <li><b>Passphrase</b> 칸에 <b>길고 아무도 모르는 문장</b>(예: 12자 이상)을 적고 저장합니다.</li>
+          <li>그 문장을 <b>아래 7번 칸의 "암호화 비밀번호"</b>에도 똑같이 적습니다.</li>
+        </ol>
+        <small>서버 주소와 토큰은 따로 넣지 않아요. 앱의 <b>Cloud Server</b> 서버 주소 칸은 <b>기본값 그대로</b> 두세요.</small>
+      </div>
+    </div>` : `<div class="step">
       <div class="num">5</div>
       <div class="body">
         <h3>앱에 서버 정보 넣기</h3>
@@ -272,13 +292,12 @@ export async function renderAdmin(db, env, publicBase, result = null) {
         <ol>
           <li>폰의 앱에서 아래쪽 메뉴의 <b>Settings</b>(설정)를 누릅니다.</li>
           <li>아래로 내려 <b>Cloud Server</b>를 찾아 누릅니다.</li>
-          <li><b>API URL</b> 칸을 길게 눌러 <b>붙여넣기</b>를 누릅니다. <small>(이 화면에서 ①을 복사한 뒤 폰에서 붙여넣으세요)</small></li>
-          <li><b>Private Token</b> 칸도 같은 방법으로 붙여넣습니다. (②를 복사한 뒤)</li>
+          <li><b>API URL</b> 칸을 길게 눌러 <b>붙여넣기</b>를 누릅니다.</li>
+          <li><b>Private Token</b> 칸도 같은 방법으로 붙여넣습니다.</li>
           <li>저장(✔) 버튼이 있으면 누릅니다.</li>
         </ol>
-        <small>컴퓨터에서 복사한 글자를 폰에 옮기기 어려우면, 카카오톡 "나와의 채팅"에 붙여넣고 폰에서 열어 복사하면 편해요.</small>
       </div>
-    </div>
+    </div>`}
 
     <div class="step">
       <div class="num">6</div>
@@ -315,6 +334,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
             <input name="new_department" placeholder="예: 인사팀"></label>
           <label>폰 앱의 Username <input name="username" required autocomplete="off"></label>
           <label>폰 앱의 Password <input name="password" required autocomplete="off"></label>
+          ${pub ? `<label>암호화 비밀번호 <small>(5번에서 앱에 적은 문장과 똑같이)</small><input name="passphrase" autocomplete="off" required></label>` : `<label>암호화 비밀번호 <small>(앱에서 암호화를 쓰는 경우만)</small><input name="passphrase" autocomplete="off"></label>`}
           <details><summary>폰 이름 정하기 (안 해도 돼요)</summary>
             <label>폰 이름<input name="name" placeholder="예: 인사팀 폰"></label></details>
           <button class="btn big">연결 끝내기</button>
@@ -327,7 +347,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
     <h2>연결된 폰</h2>
     ${gws.length ? `<table><tr><th>부서</th><th>폰 이름</th><th>상태</th><th>할 수 있는 일</th></tr>
       ${gws.map((g) => `<tr${g.active ? '' : ' class="off"'}>
-        <td>${esc(g.dept)}</td><td>${esc(g.name)}</td><td>${g.active ? '쓰는 중' : '쓰지 않음'}</td>
+        <td>${esc(g.dept)}</td><td>${esc(g.name)}</td><td>${g.active ? '쓰는 중' : '쓰지 않음'}${g.locked ? ' · 🔒 암호화' : ''}</td>
         <td class="actions">
           ${g.active ? `
           <form method="post" class="inline"><input type="hidden" name="do" value="gw_check"><input type="hidden" name="gateway_id" value="${g.id}"><button class="btn">잘 연결됐는지 확인</button></form>
@@ -340,6 +360,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
               <small>앱을 지우고 다시 설치하면 아이디와 비밀번호가 바뀌어요. 새로 보이는 값을 적어 주세요.</small>
               <input name="username" placeholder="새 Username" required autocomplete="off">
               <input name="password" placeholder="새 Password" required autocomplete="off">
+              <input name="passphrase" placeholder="암호화 비밀번호 (바꿀 때만)" autocomplete="off">
               <button>저장</button></form></details>` : ''}
           <form method="post" class="inline"><input type="hidden" name="do" value="gw_active"><input type="hidden" name="gateway_id" value="${g.id}">
             <input type="hidden" name="active" value="${g.active ? 0 : 1}"><button>${g.active ? '쓰지 않기' : '다시 쓰기'}</button></form>

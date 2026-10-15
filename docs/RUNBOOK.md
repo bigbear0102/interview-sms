@@ -5,11 +5,15 @@
 | 구성요소 | 위치 | 주소 |
 |---|---|---|
 | **면접 웹** | **Cloudflare Workers + D1** (`interview-sms`) | https://interview.bigbears.me |
-| **SMS 게이트웨이 서버** (Docker: backend/worker/MariaDB) | **이 PC** (임시) → 상시 서버로 이전 예정 | https://sms.bigbears.me (Cloudflare Tunnel `interview-sms`) |
+| **SMS 게이트웨이** | **공개 클라우드 `api.sms-gate.app`** (문자 내용/번호는 앱의 종단간 암호화로 보호) | `https://api.sms-gate.app/3rdparty/v1` |
+| (이전 방식) 자체 게이트웨이 서버 (Docker) | 이 PC — 폰이 공개 서버로 옮겨 간 뒤 중지 | https://sms.bigbears.me (Cloudflare Tunnel `interview-sms`) |
 | 폰 (SMSGate 앱) | 부서 폰 | — |
 
-- 웹은 PC와 무관하게 24시간 동작한다. **문자 발송/수신은 게이트웨이 서버가 켜져 있어야** 된다. (현재 PC → **PC 상시 가동 필요**)
+- 공개 클라우드를 쓰면 **PC/서버가 필요 없다.** (웹=Cloudflare, 게이트웨이=공개 서버, 폰만 켜져 있으면 됨)
+- 폰은 SMSGate 앱에서 서버 주소를 **기본값**으로 두고, Settings → Encryption 의 Passphrase 를 웹 설정의 "암호화 비밀번호"와 똑같이 맞춘다.
+- 자체 서버(`deploy/gateway`)로 되돌릴 때는 `wrangler.jsonc` 의 `GATEWAY_URL` 을 `https://<도메인>/api/3rdparty/v1` 로 바꾸고 폰의 서버 주소/토큰을 설정한다.
 - 웹 코드는 같은 코드가 Node(회사 서버)에서도 돈다. 이전 절차는 아래 "회사 서버로 이전".
+- 암호화 반복 횟수 `E2E_ITERATIONS`(기본 10000)는 Workers **무료 플랜 CPU 한도(10ms)** 때문에 낮다. 유료 플랜이면 75000 이상으로 올린다. 무료 플랜에서 발송이 `CPU time limit` 로 실패하면 유료 플랜이 필요하다.
 - Worker 설정: `wrangler.jsonc`. 시크릿: `ENCRYPTION_KEY`, `GATEWAY_PRIVATE_TOKEN` (`deploy/cloudflare/put-secrets.mjs`).
 - 접속 경로: DNS(`interview`)는 기존 터널 CNAME 그대로 두고, Worker **경로(route) `interview.bigbears.me/*`** 가 요청을 가로챈다.
   응답 헤더 `X-Runtime: workers` 로 어느 쪽이 응답했는지 확인할 수 있다 (`node` 이면 PC 가 응답한 것).

@@ -39,3 +39,10 @@
 - **남은 PC 의존**: 게이트웨이 서버(Docker). 상시 서버(예: Cloudflare 계정에 터널이 있는 Oracle/홈서버, 또는 회사 서버)로 옮기면 PC 는 완전히 불필요.
 - Workers 무료 플랜 발송 처리량 ≈ 25건/분(시간당 1,500건). 대량 발송이 잦으면 유료 플랜 + `SEND_BATCH` 상향.
 - 회사 서버 이전 시 D1 → SQLite: `deploy/cloudflare/import-d1-export.mjs` (검증 완료).
+
+## 2026-10-15 게이트웨이를 공개 클라우드(api.sms-gate.app)로 전환 + 종단간 암호화
+- 사용자 결정: PC/서버 없이 운영. 대신 번호/내용이 제3자 서버를 거치므로 **앱의 passphrase 종단간 암호화**를 필수로 안내한다.
+- 암호화 대상: 문자 내용(`textMessage.text`)과 받는 번호(`phoneNumbers`). 형식 `$aes-256-cbc/pbkdf2-sha1$i=<반복>$<salt>$<암호문>` (테스트로 앱 규격 복호화 검증).
+- 한계: 폰이 서버로 올리는 **받은 문자(답장) 내용의 암호화 여부는 문서에 명시되지 않음**. 웹훅은 폰 → 우리 Worker 로 직접 가므로 공개 서버를 거치지 않는다.
+- 기기 키 기반 E2E(RSA-OAEP, MGF1=SHA-1)는 WebCrypto 가 OAEP 와 MGF1 해시를 분리 지정할 수 없어 Workers 에서 구현 불가 → passphrase 방식 사용.
+- 비용/성능: 필드당 PBKDF2 비용이 있어 Workers 무료 플랜(CPU 10ms)에서는 반복 횟수를 낮춰야 한다. 대량 발송은 유료 플랜 권장.

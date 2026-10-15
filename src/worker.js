@@ -1,7 +1,7 @@
 // Cloudflare Worker 진입점: 화면(SSR) + 웹훅 + Cron 발송 큐
 import { createSession, getUser, canAccessDepartment, ensureInitialAdmin, hashPassword, verifyPassword } from './auth.js';
 import { candidatesFromCsv, toCsv } from './csv.js';
-import { registerWebhook, verifySignature } from './gateway.js';
+import { registerWebhook, verifySignature, unlockGateway } from './gateway.js';
 import { encryptText, decryptText, randomToken, sha256Hex } from './crypto.js';
 import {
   DEFAULT_TEMPLATE, createCampaign, scheduleCampaign, cancelCampaign, remindCampaign,
@@ -380,7 +380,7 @@ async function handle(request, env, ctx) {
         notice = '<p class="err">한 번에 최대 20명까지 보낼 수 있습니다. 대량 발송은 캠페인을 사용하세요.</p>';
       } else {
         const full = await first(db, `SELECT * FROM gateways WHERE id=?`, gwRow.id);
-        const gw = { ...full, password: await decryptText(env.ENCRYPTION_KEY, full.password) };
+        const gw = await unlockGateway(env, full);
         const res = await sendDirect(db, gw, phones, text, user.id);
         await audit(db, user, 'message.send', `gateway=${gw.id} count=${res.length} ok=${res.filter((r) => r.ok).length}`);
         const ok = res.filter((r) => r.ok).length;

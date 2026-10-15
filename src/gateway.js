@@ -1,5 +1,5 @@
 // SMS Gateway for Android (capcom6) 클라우드/프라이빗 서버 API 클라이언트
-import { hmacSha256Hex, safeEqual } from './crypto.js';
+import { hmacSha256Hex, safeEqual, decryptText, encryptPassphrase } from './crypto.js';
 
 const authHeader = (gw) => 'Basic ' + btoa(`${gw.username}:${gw.password}`);
 const baseUrl = (gw) => gw.base_url.replace(/\/$/, '');
@@ -13,16 +13,37 @@ export function toE164(phone) {
   return `+${d}`;
 }
 
-// gw.password 는 호출 전에 복호화되어 있어야 한다.
+// DB 의 게이트웨이 행을 사용 가능한 상태로 만든다: 비밀번호/암호화 비밀번호 복호화 + 암호화 반복 횟수
+export async function unlockGateway(env, row) {
+  return {
+    ...row,
+    password: await decryptText(env.ENCRYPTION_KEY, row.password),
+    passphrase: row.passphrase ? await decryptText(env.ENCRYPTION_KEY, row.passphrase) : '',
+    iterations: Number(env.E2E_ITERATIONS) || 75000
+  };
+}
+
+// gw 는 unlockGateway 를 거친 값이어야 한다. gw.passphrase 가 있으면 내용과 번호를 암호화해 보낸다.
 export async function sendSms(gw, phone, text) {
   const res = await fetch(baseUrl(gw) + gw.send_path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: authHeader(gw) },
-    body: JSON.stringify({ textMessage: { text }, phoneNumbers: [toE164(phone)] }),
+    body: JSON.stringify(await buildSendBody(gw, phone, text)),
     signal: AbortSignal.timeout(20000)
   });
   if (!res.ok) throw new Error(`게이트웨이 응답 ${res.status}: ${(await res.text()).slice(0, 150)}`);
   return res.json().catch(() => ({}));
+}
+
+export async function buildSendBody(gw, phone, text) {
+  const number = toE164(phone);
+  if (!gw.passphrase) return { textMessage: { text }, phoneNumbers: [number] };
+  const it = gw.iterations || 75000;
+  return {
+    textMessage: { text: await encryptPassphrase(gw.passphrase, text, it) },
+    phoneNumbers: [await encryptPassphrase(gw.passphrase, number, it)],
+    isEncrypted: true
+  };
 }
 
 // 폰이 문자 수신 시 우리 Worker 로 POST 하도록 웹훅을 등록한다. (같은 id 가 있으면 교체)

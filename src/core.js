@@ -1,7 +1,6 @@
 // 업무 로직: 캠페인 생성, 발송 큐, 수신 답장 처리, 보관기간 파기 (Cloudflare D1)
 import { parseReply, normalizePhone, isValidMobile } from './parser.js';
-import { sendSms } from './gateway.js';
-import { decryptText } from './crypto.js';
+import { sendSms, unlockGateway } from './gateway.js';
 import { all, first, run, stmt } from './d1.js';
 
 export const DEFAULT_TEMPLATE =
@@ -84,7 +83,7 @@ export async function processQueue(env, { batchSize = Number(env.SEND_BATCH || 2
       `SELECT * FROM candidates WHERE campaign_id=? AND status='sending' AND sent_at=? ORDER BY id`, camp.id, claimTs);
     if (claimed.length) {
       const gwRow = await first(db, `SELECT * FROM gateways WHERE id=?`, camp.gateway_id);
-      const gw = { ...gwRow, password: await decryptText(env.ENCRYPTION_KEY, gwRow.password) };
+      const gw = await unlockGateway(env, gwRow);
       const updates = [];
       for (const c of claimed) {
         const text = renderTemplate(camp.template, c);

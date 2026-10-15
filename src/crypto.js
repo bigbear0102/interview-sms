@@ -58,3 +58,15 @@ export async function decryptText(secret, stored) {
   const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv) }, await aesKey(secret), unb64(ct));
   return new TextDecoder().decode(pt);
 }
+
+// SMSGate 앱의 passphrase 방식 종단간 암호화: $aes-256-cbc/pbkdf2-sha1$i=<반복>$<salt b64>$<암호문 b64>
+// (salt 16바이트를 CBC IV 로도 사용 — 앱 규격). 문자 내용과 받는 번호에 적용한다.
+export async function encryptPassphrase(passphrase, cleartext, iterations = 75000) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const base = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', hash: 'SHA-1', salt, iterations },
+    base, { name: 'AES-CBC', length: 256 }, false, ['encrypt']);
+  const ct = await crypto.subtle.encrypt({ name: 'AES-CBC', iv: salt }, key, enc.encode(cleartext));
+  return `$aes-256-cbc/pbkdf2-sha1$i=${iterations}$${b64(salt)}$${b64(ct)}`;
+}

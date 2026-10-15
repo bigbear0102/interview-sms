@@ -118,3 +118,23 @@ test('E.164 변환', () => {
   assert.equal(toE164('010-2950-1868'), '+821029501868');
   assert.equal(toE164('+821029501868'), '+821029501868');
 });
+
+test('종단간 암호화: 앱 규격(passphrase) 형식으로 암호화되고 복호화된다', async () => {
+  const { createDecipheriv, pbkdf2Sync } = await import('node:crypto');
+  const { encryptPassphrase } = await import('../src/crypto.js');
+  const { buildSendBody } = await import('../src/gateway.js');
+  const s = await encryptPassphrase('긴 비밀 문장 입니다', '안녕하세요 +821012345678', 1000);
+  const m = s.match(/^\$aes-256-cbc\/pbkdf2-sha1\$i=(\d+)\$([^$]+)\$([^$]+)$/);
+  assert.ok(m, '형식');
+  const salt = Buffer.from(m[2], 'base64');
+  const key = pbkdf2Sync('긴 비밀 문장 입니다', salt, Number(m[1]), 32, 'sha1');
+  const d = createDecipheriv('aes-256-cbc', key, salt);
+  assert.equal(Buffer.concat([d.update(Buffer.from(m[3], 'base64')), d.final()]).toString('utf8'), '안녕하세요 +821012345678');
+
+  const plain = await buildSendBody({ passphrase: '' }, '010-1234-5678', 'hi');
+  assert.deepEqual(plain, { textMessage: { text: 'hi' }, phoneNumbers: ['+821012345678'] });
+  const enc = await buildSendBody({ passphrase: 'pw-pw-pw-pw', iterations: 1000 }, '01012345678', 'hi');
+  assert.equal(enc.isEncrypted, true);
+  assert.match(enc.phoneNumbers[0], /^\$aes-256-cbc\/pbkdf2-sha1\$i=1000\$/);
+  assert.match(enc.textMessage.text, /^\$aes-256-cbc\/pbkdf2-sha1\$i=1000\$/);
+});

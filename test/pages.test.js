@@ -136,3 +136,21 @@ test('문자함: 받은 문자만 보기 탭과 목록', async () => {
   assert.match(outOnly, /안녕/);
   assert.doesNotMatch(outOnly, /<td[^>]*>참석합니다<\/td>/);
 });
+
+test('공개 클라우드 모드: 서버 주소/토큰 대신 암호화 안내, 암호화 비밀번호 저장', async () => {
+  const { db, env, post, call } = await setup();
+  env.GATEWAY_URL = 'https://api.sms-gate.app/3rdparty/v1';
+  env.GATEWAY_PRIVATE_TOKEN = '';
+  const page = await (await call('/admin')).text();
+  assert.match(page, /문자 내용 암호화 켜기/);
+  assert.doesNotMatch(page, /Private Token/);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 201 });
+  try {
+    await post('/admin', { do: 'connect', new_department: '인사팀', username: 'U', password: 'P', passphrase: '아주 긴 비밀 문장' });
+  } finally { globalThis.fetch = originalFetch; }
+  const gw = await db.prepare(`SELECT passphrase, base_url FROM gateways`).first();
+  assert.match(gw.passphrase, /^enc\$/);
+  assert.equal(gw.base_url, 'https://api.sms-gate.app/3rdparty/v1');
+  assert.match(await (await call('/admin')).text(), /🔒 암호화/);
+});
