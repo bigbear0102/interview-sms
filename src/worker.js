@@ -49,20 +49,32 @@ async function handle(request, env, ctx) {
   let m;
 
   // 문자 수신 웹훅 (로그인 불필요, URL 토큰 + HMAC)
+  // 폰이 정말 알림을 보냈는지 확인할 수 있도록, 도착한 요청은 결과와 함께 감사 로그에 남긴다(개인정보 제외).
   if (method === 'POST' && (m = path.match(/^\/hook\/(\d+)\/([A-Za-z0-9_-]+)$/))) {
     const gw = await first(db, `SELECT * FROM gateways WHERE id=?`, Number(m[1]));
-    if (!gw || gw.hook_token !== m[2]) return html('not found', 404);
+    if (!gw || gw.hook_token !== m[2]) {
+      await audit(db, null, 'hook.reject', `gateway=${m[1]} reason=bad-token`);
+      return html('not found', 404);
+    }
     const raw = await request.text();
-    if (!(await verifySignature(gw.signing_key, raw, request.headers.get('x-signature'), request.headers.get('x-timestamp'))))
+    if (!(await verifySignature(gw.signing_key, raw, request.headers.get('x-signature'), request.headers.get('x-timestamp')))) {
+      await audit(db, null, 'hook.reject', `gateway=${gw.id} reason=bad-signature`);
       return html('bad signature', 401);
+    }
     let evt;
-    try { evt = JSON.parse(raw); } catch { return html('bad request', 400); }
+    try { evt = JSON.parse(raw); } catch {
+      await audit(db, null, 'hook.reject', `gateway=${gw.id} reason=bad-json`);
+      return html('bad request', 400);
+    }
+    let note = 'ignored';
     if (evt.event === 'sms:received' && evt.payload) {
-      await handleInbound(db, gw.id, {
+      const r = await handleInbound(db, gw.id, {
         sender: evt.payload.sender ?? evt.payload.phoneNumber ?? '',
         message: evt.payload.message ?? ''
       });
+      note = r.matched ? `matched result=${r.result}` : 'unmatched';
     }
+    await audit(db, null, 'hook.recv', `gateway=${gw.id} event=${String(evt.event).slice(0, 30)} ${note}`);
     return html('ok');
   }
 
