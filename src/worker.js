@@ -9,7 +9,7 @@ import {
   queueDirect, cancelDirect
 } from './core.js';
 import { all, first, run } from './d1.js';
-import { normalizePhone } from './parser.js';
+import { normalizePhone, isValidMobile } from './parser.js';
 import { applyAdminAction, renderAdmin } from './admin.js';
 import { page, esc, STATUS_LABEL, fmtTime, parseKstLocal, icon } from './views.js';
 import {
@@ -246,8 +246,16 @@ async function handle(request, env, ctx) {
     const f = form(await request.text());
     const gw = gws.find((g) => g.id === Number(f.gateway_id));
     if (!gw) return html(pg('오류', '<p>권한이 없습니다.</p>'), 403);
-    const defaultSite = String(f.default_site || '').trim();
-    const parsed = candidatesFromCsv(f.csv || '', { requireSite: !defaultSite });
+    const one = f.mode === 'one';
+    const defaultSite = String(one ? f.one_site : f.default_site || '').trim();
+    if (one) {
+      if (!defaultSite) return html(pg('오류', '<p>사업장을 적어 주세요.</p><p><a href="/campaigns/new">돌아가기</a></p>'), 400);
+      f.name = `${f.name || '면접 안내'} ${String(f.one_name || '').trim()}`.trim();
+    }
+    if (one && !isValidMobile(normalizePhone(f.one_phone || ''))) return html(pg('오류', '<p>휴대폰 번호를 확인해 주세요. (예: 010-1234-5678)</p><p><a href="/campaigns/new">돌아가기</a></p>'), 400);
+    const parsed = one
+      ? { errors: [], candidates: [{ site: defaultSite, name: String(f.one_name || '').trim(), phone: f.one_phone || '', interview_at: String(f.one_when || '').trim() }] }
+      : candidatesFromCsv(f.csv || '', { requireSite: !defaultSite });
     if (parsed.errors.length) return html(pg('오류', `<p>${parsed.errors.map(esc).join('<br>')}</p><p><a href="/campaigns/new">돌아가기</a></p>`), 400);
     const r = await createCampaign(db, {
       departmentId: gw.department_id, gatewayId: gw.id, name: f.name || '무제', template: f.template,

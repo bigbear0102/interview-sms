@@ -319,3 +319,20 @@ test('폰 설치 안내: Obtainium으로 처음부터 설치, 막힘 해결 안�
   assert.ok(admin.includes('Obtainium'));
   assert.ok(admin.includes('1~9번'));
 });
+
+test('면접 안내: 한 명에게만 보내기, 홈 현황판(사업장·날짜별)', async () => {
+  const { db, call, post } = await setup();
+  await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
+  await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'폰','u',?, 't')`).bind(await encryptText('p', 'k')).run();
+  const gwRow = await db.prepare(`SELECT id FROM gateways LIMIT 1`).first();
+  assert.ok(gwRow, "gateway fixture");
+  const r = await post('/campaigns/new', { mode: 'one', one_site: '1001 강남점', one_name: '홍길동', one_phone: '010-1234-5678', one_when: '10/20 14:00', template: '{이름} {면접일시}', gateway_id: String(gwRow.id), name: '면접 안내 10-15', send_mode: 'manual' });
+  assert.equal(r.status, 200);
+  const c = await db.prepare(`SELECT COUNT(*) n FROM candidates WHERE site='1001 강남점' AND name='홍길동'`).first();
+  assert.equal(c.n, 1);
+  await db.prepare(`UPDATE candidates SET status='attending', sent_at=?`).bind(Date.now()).run();
+  const home = visible(await (await call('/')).text());
+  assert.ok(home.includes('면접 안내 현황'));
+  assert.ok(home.includes('1001 강남점'));
+  assert.ok(home.includes('합계'));
+});

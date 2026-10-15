@@ -143,6 +143,27 @@ export async function renderHome(db, user, deps) {
        FROM campaigns k WHERE k.department_id IN (${dph}) ORDER BY k.id DESC LIMIT 3`, ...depIds);
   }
 
+  // 사업장·발송일별 현황 (최근 30일)
+  let board = [];
+  if (depIds.length) {
+    board = await all(db,
+      `SELECT date((ca.sent_at + 32400000) / 1000, 'unixepoch') day, ca.site site,
+         COUNT(*) sent,
+         SUM(ca.status='attending') attending, SUM(ca.status='absent') absent,
+         SUM(ca.status='unclear') unclear, SUM(ca.status='sent') noreply
+       FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
+       WHERE k.department_id IN (${idList(depIds)}) AND ca.sent_at IS NOT NULL AND ca.sent_at>=?
+         AND ca.status IN ('sent','attending','absent','unclear')
+       GROUP BY day, ca.site ORDER BY day DESC, ca.site LIMIT 120`, ...depIds, today - 29 * DAY);
+  }
+  const bsum = board.reduce((a, r) => ({ sent: a.sent + r.sent, attending: a.attending + r.attending, absent: a.absent + r.absent, unclear: a.unclear + r.unclear, noreply: a.noreply + r.noreply }),
+    { sent: 0, attending: 0, absent: 0, unclear: 0, noreply: 0 });
+  const dayLabel = (d) => { const [, m, dd] = d.split('-'); return `${Number(m)}/${Number(dd)}`; };
+  const boardHtml = board.length ? tableWrap(`<table><thead><tr><th>보낸 날</th><th>사업장</th><th class="num">보냄</th><th class="num">참석</th><th class="num">불참</th><th class="num">확인 필요</th><th class="num">미회신</th></tr></thead><tbody>
+      ${board.map((r) => `<tr><td>${dayLabel(r.day)}</td><td>${esc(r.site)}</td><td class="num">${r.sent}</td><td class="num">${r.attending}</td><td class="num">${r.absent}</td><td class="num">${r.unclear}</td><td class="num">${r.noreply}</td></tr>`).join('')}
+      </tbody><tfoot><tr><th colspan="2">합계</th><th class="num">${bsum.sent}</th><th class="num">${bsum.attending}</th><th class="num">${bsum.absent}</th><th class="num">${bsum.unclear}</th><th class="num">${bsum.noreply}</th></tr></tfoot></table>`)
+    : emptyState({ title: '아직 보낸 면접 안내가 없어요', desc: '면접 안내를 보내면 사업장·날짜별 참석/불참/미회신이 여기에 모여요.' });
+
   const phoneNotice = gwCount
     ? ''
     : `<div class="notice warn" role="alert">${icon('alert')}<div><b>문자를 보낼 폰이 아직 연결되지 않았어요.</b><br>${
@@ -158,6 +179,11 @@ export async function renderHome(db, user, deps) {
       ${stat({ value: scheduled, label: '예약 대기', href: '/messages?dir=scheduled' })}
       ${stat({ value: review, label: '확인이 필요한 답장', tone: review ? 'review' : '', href: '/campaigns' })}
     </div>
+
+    <section class="section">
+      <div class="shead"><h2>면접 안내 현황</h2><span class="muted">최근 30일 · 사업장·보낸 날별</span></div>
+      <div class="card" style="padding:0">${boardHtml}</div>
+    </section>
 
     <section class="section">
       <div class="shead"><h2>최근 받은 문자</h2><a href="/messages?dir=in">전체 보기</a></div>
@@ -235,7 +261,18 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
       <input type="hidden" name="name" value="면접 안내 ${esc(today)}">
 
       <div class="step"><div class="num">1</div><div class="body">
-        <h3>대상자 명단</h3>
+        <h3>대상자 명단 <small>누구에게 보낼까요?</small></h3>
+        <div class="seg" role="radiogroup" aria-label="보낼 대상" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+          <label style="display:flex;gap:8px;align-items:center"><input type="radio" name="mode" value="one" checked> 한 명에게만</label>
+          <label style="display:flex;gap:8px;align-items:center"><input type="radio" name="mode" value="many"> 여러 명 (명단 파일)</label>
+        </div>
+        <div id="mode-one">
+          <label>사업장(원가중심점) <input name="one_site" placeholder="예: 1001 강남점"></label>
+          <label style="margin-top:12px">이름 <input name="one_name" placeholder="홍길동" autocomplete="off"></label>
+          <label style="margin-top:12px">휴대폰 번호 <input name="one_phone" type="tel" inputmode="tel" placeholder="010-1234-5678" autocomplete="off"></label>
+          <label style="margin-top:12px">면접일시 <input name="one_when" placeholder="10/20 14:00" autocomplete="off"></label>
+        </div>
+        <div id="mode-many" hidden>
         <p class="muted" style="margin-bottom:12px">엑셀에서 <b>CSV로 저장</b>한 파일을 올려 주세요.</p>
         ${tableWrap(`<table class="sample"><thead><tr><th>사업장(원가중심점)</th><th>이름</th><th>전화번호</th><th>면접일시</th></tr></thead><tbody>
           <tr><td>1001 강남점</td><td>홍길동</td><td>010-1234-5678</td><td>10/20 14:00</td></tr></tbody></table>`)}
@@ -246,7 +283,8 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
           <input name="default_site" placeholder="예: 1001 강남점"></label>
         <p class="muted" style="margin-top:8px;font-size:14px">사업장 이름은 <b>문자에는 들어가지 않고</b>, 사업장별 회신 현황에만 쓰여요.</p>
         <details style="margin-top:12px"><summary>파일이 없으면 직접 붙여넣기</summary>
-          <textarea name="csv" id="csv" rows="6" placeholder="이름,전화번호,면접일시&#10;홍길동,010-1234-5678,10/20 14:00" required style="margin-top:8px"></textarea></details>
+          <textarea name="csv" id="csv" rows="6" placeholder="이름,전화번호,면접일시&#10;홍길동,010-1234-5678,10/20 14:00" style="margin-top:8px"></textarea></details>
+        </div>
       </div></div>
 
       <div class="step"><div class="num">2</div><div class="body">
@@ -278,6 +316,15 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
         p.textContent = s.split('\\n').map(function (l) { return l.replace(/[ \\t]+/g, ' ').trim(); }).join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
       }
       t.addEventListener('input', show); show();
+      var one = document.getElementById('mode-one'), many = document.getElementById('mode-many');
+      function mode() {
+        var m = document.querySelector('input[name=mode]:checked').value;
+        one.hidden = m !== 'one'; many.hidden = m !== 'many';
+        ['one_site', 'one_name', 'one_phone'].forEach(function (n) { document.getElementsByName(n)[0].required = m === 'one'; });
+        document.getElementById('csv').required = m === 'many';
+      }
+      Array.prototype.forEach.call(document.getElementsByName('mode'), function (r) { r.addEventListener('change', mode); });
+      mode();
       document.getElementById('f').addEventListener('change', async function (e) {
         var file = e.target.files[0]; if (!file) return;
         var buf = await file.arrayBuffer();
