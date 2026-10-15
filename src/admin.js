@@ -1,4 +1,4 @@
-// 설정(관리) 화면: 폰 연결, 부서, 관리자 계정. 처음 쓰는 사람도 따라 할 수 있게 단계별로 구성한다.
+// 설정 화면: 문자 보내는 폰 연결, 부서, 관리자. 처음 쓰는 사람도 순서대로 누르기만 하면 되도록 만든다.
 import { all, first, run } from './d1.js';
 import { esc, fmtTime } from './views.js';
 import { encryptText, decryptText, randomToken, hashPassword } from './crypto.js';
@@ -9,7 +9,7 @@ export const phoneApiUrl = (env) => (env.GATEWAY_URL || '').replace('/api/3rdpar
 
 async function loadGateway(db, env, id) {
   const row = await first(db, `SELECT * FROM gateways WHERE id=?`, Number(id));
-  if (!row) throw new Error('폰을 찾을 수 없습니다.');
+  if (!row) throw new Error('폰을 찾을 수 없어요.');
   return { ...row, password: await decryptText(env.ENCRYPTION_KEY, row.password) };
 }
 
@@ -19,22 +19,22 @@ export async function applyAdminAction(db, env, f, publicBase) {
     switch (f.do) {
       case 'dept': {
         const name = (f.name || '').trim();
-        if (!name) return { ok: false, msg: '부서 이름을 입력하세요.' };
+        if (!name) return { ok: false, msg: '부서 이름을 적어 주세요.' };
         await run(db, `INSERT INTO departments (name) VALUES (?)`, name);
-        return { ok: true, msg: `부서 "${name}"을(를) 추가했습니다.` };
+        return { ok: true, msg: `부서 "${name}"을(를) 만들었어요.` };
       }
 
       case 'connect': {
         const username = (f.username || '').trim();
         const password = (f.password || '').trim();
-        if (!username || !password) return { ok: false, msg: '폰 앱에 표시된 아이디(Username)와 비밀번호(Password)를 모두 입력하세요.' };
+        if (!username || !password) return { ok: false, msg: '폰 앱에 보이는 Username(아이디)과 Password(비밀번호)를 둘 다 적어 주세요.' };
         let departmentId = Number(f.department_id);
         const newDept = (f.new_department || '').trim();
         if (newDept) {
           const exist = await first(db, `SELECT id FROM departments WHERE name=?`, newDept);
           departmentId = exist ? exist.id : Number((await run(db, `INSERT INTO departments (name) VALUES (?)`, newDept)).meta.last_row_id);
         }
-        if (!departmentId) return { ok: false, msg: '부서를 선택하거나 새 부서 이름을 입력하세요.' };
+        if (!departmentId) return { ok: false, msg: '이 폰을 쓸 부서를 고르거나, 새 부서 이름을 적어 주세요.' };
         const dept = await first(db, `SELECT name FROM departments WHERE id=?`, departmentId);
         const name = (f.name || '').trim() || `${dept.name} 폰`;
         const r = await run(db,
@@ -46,77 +46,77 @@ export async function applyAdminAction(db, env, f, publicBase) {
         try {
           await registerWebhook(gw, publicBase);
         } catch (e) {
-          return { ok: false, msg: `폰은 등록했지만 답장 수신 설정에 실패했습니다. 목록의 "답장 수신 다시 설정"을 눌러 주세요. (${e.message})` };
+          return { ok: false, msg: `폰은 등록했지만 답장 받는 설정이 안 됐어요. 아래 목록에서 "답장 받기 다시 설정"을 눌러 주세요. (${e.message})` };
         }
-        return { ok: true, msg: `"${name}" 연결을 마쳤습니다. 아래 목록에서 "연결 확인"을 눌러 폰이 켜져 있는지 확인하세요.` };
+        return { ok: true, msg: `"${name}" 연결이 끝났어요! 아래 목록에서 "잘 연결됐는지 확인"을 눌러 보세요.` };
       }
 
       case 'gw_update': {
         const username = (f.username || '').trim();
         const password = (f.password || '').trim();
-        if (!username || !password) return { ok: false, msg: '아이디와 비밀번호를 모두 입력하세요.' };
+        if (!username || !password) return { ok: false, msg: 'Username과 Password를 둘 다 적어 주세요.' };
         await run(db, `UPDATE gateways SET username=?, password=? WHERE id=?`,
           username, await encryptText(env.ENCRYPTION_KEY, password), Number(f.gateway_id));
         const gw = await loadGateway(db, env, f.gateway_id);
         await registerWebhook(gw, publicBase);
-        return { ok: true, msg: '폰 계정 정보를 바꾸고 답장 수신도 다시 설정했습니다.' };
+        return { ok: true, msg: '폰 정보를 바꾸고, 답장 받는 설정도 다시 했어요.' };
       }
 
       case 'gw_check': {
         const gw = await loadGateway(db, env, f.gateway_id);
         const r = await checkGateway(gw);
-        if (!r.reachable) return { ok: false, msg: `"${gw.name}": 서버에 연결하지 못했습니다. (${r.error})` };
-        if (!r.count) return { ok: false, msg: `"${gw.name}": 서버에는 연결되었지만 등록된 폰이 없습니다. 폰 앱에서 Online 상태인지 확인하세요.` };
+        if (!r.reachable) return { ok: false, msg: `"${gw.name}": 서버에 연결하지 못했어요. 잠시 후 다시 눌러 보세요. (${r.error})` };
+        if (!r.count) return { ok: false, msg: `"${gw.name}": 서버와는 연결됐는데 폰이 보이지 않아요. 폰 앱에서 Online이 되어 있는지 봐 주세요.` };
         const seen = r.lastSeen ? fmtTime(new Date(r.lastSeen).getTime()) : '알 수 없음';
         return r.online
-          ? { ok: true, msg: `"${gw.name}": 정상입니다. 폰이 켜져 있습니다. (마지막 응답 ${seen})` }
-          : { ok: false, msg: `"${gw.name}": 폰이 한동안 응답하지 않았습니다. (마지막 응답 ${seen}) 폰 앱이 Online인지 확인하세요.` };
+          ? { ok: true, msg: `"${gw.name}": 잘 연결되어 있어요. 문자를 보낼 수 있어요. (폰 마지막 응답 ${seen})` }
+          : { ok: false, msg: `"${gw.name}": 폰이 한동안 응답하지 않았어요. (마지막 응답 ${seen}) 폰이 켜져 있는지, 앱이 Online인지 봐 주세요.` };
       }
 
       case 'gw_hook': {
         const gw = await loadGateway(db, env, f.gateway_id);
         await registerWebhook(gw, publicBase);
-        return { ok: true, msg: `"${gw.name}": 답장 수신 설정을 다시 했습니다.` };
+        return { ok: true, msg: `"${gw.name}": 답장 받는 설정을 다시 했어요.` };
       }
 
       case 'gw_active': {
         const on = f.active === '1' ? 1 : 0;
         await run(db, `UPDATE gateways SET active=? WHERE id=?`, on, Number(f.gateway_id));
-        return { ok: true, msg: on ? '폰을 다시 사용합니다.' : '폰 사용을 중지했습니다. 발송 폰 목록에서 사라집니다.' };
+        return { ok: true, msg: on ? '이 폰을 다시 쓰도록 했어요.' : '이 폰을 쓰지 않도록 했어요. 문자 보낼 폰 목록에서 빠져요.' };
       }
 
       case 'user': {
         const username = (f.username || '').trim();
-        if (!username || (f.password || '').length < 8) return { ok: false, msg: '아이디를 입력하고 비밀번호는 8자 이상으로 하세요.' };
+        if (!username || (f.password || '').length < 8) return { ok: false, msg: '아이디를 적고, 비밀번호는 8글자 이상으로 해 주세요.' };
         const r = await run(db, `INSERT INTO users (username,pass_hash,role) VALUES (?,?,?)`,
           username, await hashPassword(f.password), f.role === 'super' ? 'super' : 'admin');
         for (const [k, v] of Object.entries(f)) {
           if (k.startsWith('dep_') && v) await run(db, `INSERT OR IGNORE INTO user_departments VALUES (?,?)`, Number(r.meta.last_row_id), Number(k.slice(4)));
         }
-        return { ok: true, msg: `관리자 "${username}"을(를) 추가했습니다.` };
+        return { ok: true, msg: `"${username}" 계정을 만들었어요.` };
       }
 
       case 'user_reset': {
-        if ((f.password || '').length < 8) return { ok: false, msg: '새 비밀번호는 8자 이상이어야 합니다.' };
+        if ((f.password || '').length < 8) return { ok: false, msg: '새 비밀번호는 8글자 이상이어야 해요.' };
         await run(db, `UPDATE users SET pass_hash=? WHERE id=?`, await hashPassword(f.password), Number(f.user_id));
         await run(db, `DELETE FROM sessions WHERE user_id=?`, Number(f.user_id));
-        return { ok: true, msg: '비밀번호를 바꿨습니다. 해당 사용자는 다시 로그인해야 합니다.' };
+        return { ok: true, msg: '비밀번호를 바꿨어요. 그 사람은 다시 로그인해야 해요.' };
       }
 
       case 'user_active': {
         const on = f.active === '1' ? 1 : 0;
         await run(db, `UPDATE users SET active=? WHERE id=?`, on, Number(f.user_id));
         if (!on) await run(db, `DELETE FROM sessions WHERE user_id=?`, Number(f.user_id));
-        return { ok: true, msg: on ? '계정을 다시 사용합니다.' : '계정을 중지했습니다.' };
+        return { ok: true, msg: on ? '이 계정을 다시 쓰도록 했어요.' : '이 계정을 쓰지 못하게 했어요.' };
       }
 
       default:
-        return { ok: false, msg: '알 수 없는 요청입니다.' };
+        return { ok: false, msg: '알 수 없는 요청이에요.' };
     }
   } catch (e) {
     const m = String(e.message || e);
-    if (/UNIQUE/i.test(m)) return { ok: false, msg: '이미 같은 이름이 있습니다.' };
-    return { ok: false, msg: `처리하지 못했습니다: ${m}` };
+    if (/UNIQUE/i.test(m)) return { ok: false, msg: '같은 이름이 이미 있어요.' };
+    return { ok: false, msg: `잘 안 됐어요: ${m}` };
   }
 }
 
@@ -125,7 +125,7 @@ document.addEventListener('click', function (e) {
   var b = e.target.closest('[data-copy]');
   if (!b) return;
   navigator.clipboard.writeText(b.getAttribute('data-copy')).then(function () {
-    var t = b.textContent; b.textContent = '복사됨'; setTimeout(function () { b.textContent = t; }, 1500);
+    var t = b.textContent; b.textContent = '복사됐어요 ✔'; setTimeout(function () { b.textContent = t; }, 1800);
   });
 });
 </script>`;
@@ -142,98 +142,189 @@ export async function renderAdmin(db, env, publicBase, result = null) {
   const token = env.GATEWAY_PRIVATE_TOKEN || '';
   const hasPhone = gws.some((g) => g.active);
 
-  const notice = result
-    ? `<div class="${result.ok ? 'ok' : 'warn'}">${esc(result.msg)}</div>` : '';
+  const notice = result ? `<div class="${result.ok ? 'ok' : 'warn'}">${esc(result.msg)}</div>` : '';
 
-  const copyRow = (label, value) => `<tr><th>${label}</th><td><code>${esc(value || '(설정 없음)')}</code></td>
-    <td>${value ? `<button type="button" class="btn small" data-copy="${esc(value)}">복사</button>` : ''}</td></tr>`;
+  const status = hasPhone
+    ? '<div class="ok big">🟢 문자를 보낼 폰이 연결되어 있어요.</div>'
+    : '<div class="warn big">🔴 아직 문자를 보낼 폰이 연결되지 않았어요. 아래 1번부터 차례로 해 주세요.</div>';
+
+  const copyBox = (label, value) => `
+    <div class="copybox">
+      <div class="copylabel">${label}</div>
+      <div class="copyvalue">${esc(value || '(설정이 없어요)')}</div>
+      ${value ? `<button type="button" class="btn big" data-copy="${esc(value)}">여기를 눌러 복사하기</button>` : ''}
+    </div>`;
 
   const steps = `
-    <details${hasPhone ? '' : ' open'}>
-      <summary><b>① 폰 준비하기</b> <small>(처음 한 번만, 폰마다 필요)</small></summary>
-      <ol class="steps">
-        <li>문자를 보낼 <b>안드로이드 폰</b>에 <b>SMS Gateway</b> 앱을 설치하고, 처음 실행할 때 <b>문자(SMS) 권한을 허용</b>합니다.
-            <br><small>권한 허용 버튼이 회색이면: 설정 → 앱 → SMS Gateway → 우측 위 ⋮ → "제한된 설정 허용" 후 다시 허용</small></li>
-        <li>앱의 <b>설정 → Cloud Server</b>에 아래 두 값을 그대로 입력합니다.
-          <table class="kv">
-            ${copyRow('서버 주소 (API URL)', apiUrl)}
-            ${copyRow('비밀 토큰 (Private Token)', token)}
-          </table></li>
-        <li>앱 첫 화면에서 <b>Cloud server</b> 스위치를 켜고 <b>Offline</b> 버튼을 눌러 <b>Online</b>이 될 때까지 기다립니다.</li>
-        <li>앱에 표시되는 <b>Username</b>과 <b>Password</b>를 메모합니다. → 아래 ②에 입력합니다.</li>
-      </ol>
-    </details>`;
+    <h2>폰 연결하기</h2>
+    <p class="lead">문자를 보낼 <b>안드로이드 폰</b>에서 하는 일이에요. 폰 1대당 <b>한 번만</b> 하면 돼요. 약 10분 걸려요.</p>
 
-  const connect = `
-    <h3>② 폰 연결하기</h3>
-    <form method="post" class="stack card">
-      <input type="hidden" name="do" value="connect">
-      <label>이 폰을 쓸 부서
-        <select name="department_id">
-          <option value="">— 선택 —</option>
-          ${deps.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}
-        </select>
-      </label>
-      <label>또는 새 부서 이름 <small>(목록에 없으면 여기에 입력)</small>
-        <input name="new_department" placeholder="예: 인사팀"></label>
-      <label>폰 이름 <small>(비워 두면 자동)</small><input name="name" placeholder="예: 인사팀 폰"></label>
-      <label>폰 앱의 Username <input name="username" required autocomplete="off"></label>
-      <label>폰 앱의 Password <input name="password" required autocomplete="off"></label>
-      <button class="btn">연결하기</button>
-      <small>연결하면 답장을 받는 설정도 자동으로 합니다.</small>
-    </form>`;
+    <div class="step">
+      <div class="num">1</div>
+      <div class="body">
+        <h3>앱 설치하기</h3>
+        <ol>
+          <li>폰에서 <b>인터넷(크롬)</b>을 엽니다.</li>
+          <li>위쪽 주소 칸에 아래 주소를 입력하고 이동합니다.<br>
+              <code>github.com/capcom6/android-sms-gateway/releases</code></li>
+          <li>맨 위에 있는 최신 버전에서 <b>Assets</b>(에셋)를 눌러 펼칩니다.</li>
+          <li>이름이 <b>.apk</b>로 끝나는 파일을 누릅니다.<br>
+              <small>파일이 여러 개이면 이름에 <b>insecure</b>가 들어간 것은 고르지 마세요.</small></li>
+          <li>다운로드가 끝나면 <b>열기</b>를 누르고, <b>설치</b>를 누릅니다.<br>
+              <small>"이 출처 허용" 같은 화면이 나오면 스위치를 켜고 뒤로 가서 다시 <b>설치</b>를 누르세요.</small></li>
+          <li>설치가 끝나면 <b>열기</b>를 눌러 앱(<b>SMS Gateway</b>)을 엽니다.</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">2</div>
+      <div class="body">
+        <h3>문자 보내기 허용하기</h3>
+        <ol>
+          <li>앱을 열면 "문자를 보내도록 허용할까요?" 같은 창이 나와요. <b>허용</b>을 누릅니다.</li>
+          <li>"전화 걸기/관리" 허용 창이 나오면 그것도 <b>허용</b>을 누릅니다.</li>
+        </ol>
+        <details class="help">
+          <summary>🔧 <b>허용 버튼이 회색이라 눌리지 않아요</b> (갤럭시 폴드 등에서 자주 생겨요)</summary>
+          <ol>
+            <li>안 눌리는 <b>허용</b> 버튼을 <b>한 번 눌러 보고</b> 나옵니다.</li>
+            <li><b>설정</b> 앱 → <b>애플리케이션</b>(또는 <b>앱</b>) → <b>SMS Gateway</b>를 누릅니다.</li>
+            <li>화면 <b>오른쪽 위의 점 세 개(⋮)</b>를 누릅니다.</li>
+            <li><b>제한된 설정 허용</b>을 누르고, 지문이나 비밀번호로 확인합니다.</li>
+            <li>뒤로 가서 <b>권한</b> → <b>문자(SMS)</b> → <b>허용</b>을 누릅니다.</li>
+          </ol>
+          <small>점 세 개(⋮)가 안 보이면 1번을 다시 한 뒤, 이 화면을 닫았다가 다시 열어 보세요.</small>
+        </details>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">3</div>
+      <div class="body">
+        <h3>폰이 꺼지지 않게 설정하기</h3>
+        <ol>
+          <li><b>설정</b> 앱 → <b>애플리케이션</b> → <b>SMS Gateway</b> → <b>배터리</b>를 누릅니다.</li>
+          <li><b>제한 없음</b>을 선택합니다.</li>
+          <li>이 폰은 <b>충전기에 계속 꽂아 두고</b> 전원을 켜 두세요.</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">4</div>
+      <div class="body">
+        <h3>앱에 서버 정보 넣기</h3>
+        <p>아래 두 개를 차례로 <b>복사</b>해서 앱에 <b>붙여넣어요</b>.</p>
+        ${copyBox('① 서버 주소 (앱에서는 "API URL"이라고 써 있어요)', apiUrl)}
+        ${copyBox('② 비밀 번호표 (앱에서는 "Private Token"이라고 써 있어요)', token)}
+        <ol>
+          <li>폰의 앱에서 아래쪽 메뉴의 <b>Settings</b>(설정)를 누릅니다.</li>
+          <li>아래로 내려 <b>Cloud Server</b>를 찾아 누릅니다.</li>
+          <li><b>API URL</b> 칸을 길게 눌러 <b>붙여넣기</b>를 누릅니다. <small>(이 화면에서 ①을 복사한 뒤 폰에서 붙여넣으세요)</small></li>
+          <li><b>Private Token</b> 칸도 같은 방법으로 붙여넣습니다. (②를 복사한 뒤)</li>
+          <li>저장(✔) 버튼이 있으면 누릅니다.</li>
+        </ol>
+        <small>컴퓨터에서 복사한 글자를 폰에 옮기기 어려우면, 카카오톡 "나와의 채팅"에 붙여넣고 폰에서 열어 복사하면 편해요.</small>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">5</div>
+      <div class="body">
+        <h3>켜기</h3>
+        <ol>
+          <li>앱 아래쪽 메뉴에서 <b>Home</b>을 누릅니다.</li>
+          <li><b>Cloud server</b> 스위치를 <b>켭니다</b>.</li>
+          <li><b>Offline</b> 버튼을 누릅니다.</li>
+          <li>버튼이 <b>Online</b>으로 바뀔 때까지 기다립니다. (몇 초 걸려요)</li>
+        </ol>
+        <small>Online이 안 되면: 서버 주소(①)에 빠진 글자가 없는지, 폰이 인터넷에 연결되어 있는지 확인하세요.</small>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">6</div>
+      <div class="body">
+        <h3>아이디와 비밀번호 옮겨 적기</h3>
+        <ol>
+          <li>앱의 <b>Settings → Cloud Server</b> 화면을 엽니다.</li>
+          <li>거기에 <b>Username</b>(아이디)과 <b>Password</b>(비밀번호)가 보여요.</li>
+          <li>그 두 가지를 아래 칸에 똑같이 적습니다.</li>
+        </ol>
+        <form method="post" class="stack card">
+          <input type="hidden" name="do" value="connect">
+          <label>이 폰을 쓸 부서
+            <select name="department_id">
+              <option value="">— 고르기 —</option>
+              ${deps.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}
+            </select>
+          </label>
+          <label>목록에 부서가 없으면 여기에 새 부서 이름 적기
+            <input name="new_department" placeholder="예: 인사팀"></label>
+          <label>폰 앱의 Username <input name="username" required autocomplete="off"></label>
+          <label>폰 앱의 Password <input name="password" required autocomplete="off"></label>
+          <details><summary>폰 이름 정하기 (안 해도 돼요)</summary>
+            <label>폰 이름<input name="name" placeholder="예: 인사팀 폰"></label></details>
+          <button class="btn big">연결 끝내기</button>
+        </form>
+        <small>이 버튼을 누르면 답장을 받는 설정도 저절로 돼요.</small>
+      </div>
+    </div>`;
 
   const phones = `
-    <h3>③ 연결된 폰</h3>
-    ${gws.length ? `<table><tr><th>부서</th><th>폰 이름</th><th>상태</th><th>작업</th></tr>
+    <h2>연결된 폰</h2>
+    ${gws.length ? `<table><tr><th>부서</th><th>폰 이름</th><th>상태</th><th>할 수 있는 일</th></tr>
       ${gws.map((g) => `<tr${g.active ? '' : ' class="off"'}>
-        <td>${esc(g.dept)}</td><td>${esc(g.name)}</td><td>${g.active ? '사용 중' : '중지됨'}</td>
+        <td>${esc(g.dept)}</td><td>${esc(g.name)}</td><td>${g.active ? '쓰는 중' : '쓰지 않음'}</td>
         <td class="actions">
           ${g.active ? `
-          <form method="post" class="inline"><input type="hidden" name="do" value="gw_check"><input type="hidden" name="gateway_id" value="${g.id}"><button>연결 확인</button></form>
-          <form method="post" class="inline"><input type="hidden" name="do" value="gw_hook"><input type="hidden" name="gateway_id" value="${g.id}"><button>답장 수신 다시 설정</button></form>
-          <details class="inline"><summary>계정 변경</summary>
+          <form method="post" class="inline"><input type="hidden" name="do" value="gw_check"><input type="hidden" name="gateway_id" value="${g.id}"><button class="btn">잘 연결됐는지 확인</button></form>
+          <form method="post" class="inline"><input type="hidden" name="do" value="gw_hook"><input type="hidden" name="gateway_id" value="${g.id}"><button>답장 받기 다시 설정</button></form>
+          <details class="inline"><summary>폰을 다시 설치했어요</summary>
             <form method="post" class="stack small-form"><input type="hidden" name="do" value="gw_update"><input type="hidden" name="gateway_id" value="${g.id}">
-              <small>폰 앱을 다시 설치했다면 새 Username/Password를 입력하세요.</small>
+              <small>앱을 지우고 다시 설치하면 아이디와 비밀번호가 바뀌어요. 새로 보이는 값을 적어 주세요.</small>
               <input name="username" placeholder="새 Username" required autocomplete="off">
               <input name="password" placeholder="새 Password" required autocomplete="off">
               <button>저장</button></form></details>` : ''}
           <form method="post" class="inline"><input type="hidden" name="do" value="gw_active"><input type="hidden" name="gateway_id" value="${g.id}">
-            <input type="hidden" name="active" value="${g.active ? 0 : 1}"><button>${g.active ? '사용 중지' : '다시 사용'}</button></form>
+            <input type="hidden" name="active" value="${g.active ? 0 : 1}"><button>${g.active ? '쓰지 않기' : '다시 쓰기'}</button></form>
         </td></tr>`).join('')}</table>`
-      : '<p>아직 연결된 폰이 없습니다. 위 ①, ②를 진행하세요.</p>'}`;
+      : '<p>아직 연결된 폰이 없어요. 위 1~6번을 해 주세요.</p>'}`;
 
   const people = `
-    <h3>관리자 계정</h3>
-    <table><tr><th>아이디</th><th>권한</th><th>담당 부서</th><th>작업</th></tr>
-    ${users.map((u) => `<tr${u.active ? '' : ' class="off"'}><td>${esc(u.username)}</td>
-      <td>${u.role === 'super' ? '전체 관리자' : '일반 관리자'}</td><td>${esc(u.role === 'super' ? '전체' : u.deps || '(없음)')}</td>
-      <td class="actions">
-        <details class="inline"><summary>비밀번호 재설정</summary>
-          <form method="post" class="stack small-form"><input type="hidden" name="do" value="user_reset"><input type="hidden" name="user_id" value="${u.id}">
-            <input name="password" type="password" placeholder="새 비밀번호(8자 이상)" minlength="8" required>
-            <button>저장</button></form></details>
-        <form method="post" class="inline"><input type="hidden" name="do" value="user_active"><input type="hidden" name="user_id" value="${u.id}">
-          <input type="hidden" name="active" value="${u.active ? 0 : 1}"><button>${u.active ? '사용 중지' : '다시 사용'}</button></form>
-      </td></tr>`).join('')}</table>
-    <details><summary><b>관리자 추가</b></summary>
-      <form method="post" class="stack card">
+    <details class="card">
+      <summary><b>👥 이 시스템을 쓸 사람 관리하기</b> <small>(부서와 로그인 계정)</small></summary>
+      <h3>부서</h3>
+      <p>${deps.length ? deps.map((d) => `<span class="chip">${esc(d.name)}</span>`).join(' ') : '<small>아직 없어요. 위 6번에서 새 부서 이름을 적으면 자동으로 만들어져요.</small>'}</p>
+      <form method="post" class="row"><input type="hidden" name="do" value="dept">
+        <input name="name" placeholder="새 부서 이름"><button class="btn">부서 만들기</button></form>
+
+      <h3>로그인할 수 있는 사람</h3>
+      <table><tr><th>아이디</th><th>권한</th><th>맡은 부서</th><th>할 수 있는 일</th></tr>
+      ${users.map((u) => `<tr${u.active ? '' : ' class="off"'}><td>${esc(u.username)}</td>
+        <td>${u.role === 'super' ? '전체 관리자' : '일반 관리자'}</td><td>${esc(u.role === 'super' ? '전체' : u.deps || '(없음)')}</td>
+        <td class="actions">
+          <details class="inline"><summary>비밀번호 바꿔주기</summary>
+            <form method="post" class="stack small-form"><input type="hidden" name="do" value="user_reset"><input type="hidden" name="user_id" value="${u.id}">
+              <input name="password" type="password" placeholder="새 비밀번호(8글자 이상)" minlength="8" required>
+              <button>저장</button></form></details>
+          <form method="post" class="inline"><input type="hidden" name="do" value="user_active"><input type="hidden" name="user_id" value="${u.id}">
+            <input type="hidden" name="active" value="${u.active ? 0 : 1}"><button>${u.active ? '쓰지 못하게 하기' : '다시 쓰게 하기'}</button></form>
+        </td></tr>`).join('')}</table>
+
+      <h3>사람 추가하기</h3>
+      <form method="post" class="stack">
         <input type="hidden" name="do" value="user">
         <label>아이디 <input name="username" required autocomplete="off"></label>
-        <label>비밀번호 <small>(8자 이상)</small><input name="password" type="password" minlength="8" required></label>
-        <label>권한 <select name="role"><option value="admin">일반 관리자 (선택한 부서만)</option><option value="super">전체 관리자</option></select></label>
-        <fieldset><legend>담당 부서 <small>(일반 관리자만 해당)</small></legend>
-          ${deps.length ? deps.map((d) => `<label class="check"><input type="checkbox" name="dep_${d.id}" value="1"> ${esc(d.name)}</label>`).join('') : '<small>부서가 아직 없습니다.</small>'}
+        <label>비밀번호 <small>(8글자 이상)</small><input name="password" type="password" minlength="8" required></label>
+        <label>권한 <select name="role"><option value="admin">일반 관리자 (고른 부서만 볼 수 있어요)</option><option value="super">전체 관리자 (모든 것을 볼 수 있어요)</option></select></label>
+        <fieldset><legend>맡을 부서 <small>(일반 관리자만 해당)</small></legend>
+          ${deps.length ? deps.map((d) => `<label class="check"><input type="checkbox" name="dep_${d.id}" value="1"> ${esc(d.name)}</label>`).join('') : '<small>부서가 아직 없어요.</small>'}
         </fieldset>
-        <button class="btn">관리자 추가</button>
+        <button class="btn">사람 추가하기</button>
       </form>
     </details>`;
 
-  const depsSec = `
-    <h3>부서</h3>
-    <p>${deps.length ? deps.map((d) => `<span class="chip">${esc(d.name)}</span>`).join(' ') : '<small>아직 없습니다. ②에서 새 부서 이름을 입력하면 자동으로 만들어집니다.</small>'}</p>
-    <form method="post" class="row"><input type="hidden" name="do" value="dept">
-      <input name="name" placeholder="새 부서 이름"><button class="btn">부서 추가</button></form>`;
-
-  return `<h2>설정</h2>${notice}${steps}${connect}${phones}${depsSec}${people}${COPY_JS}`;
+  return `${status}${notice}${hasPhone ? phones + `<details class="card"><summary><b>📱 폰을 새로 연결하려면</b> (눌러서 열기)</summary>${steps}</details>` : steps + phones}${people}${COPY_JS}`;
 }

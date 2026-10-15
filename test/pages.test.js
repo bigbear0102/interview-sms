@@ -45,7 +45,7 @@ test('폰 연결 마법사: 새 부서 생성 + 게이트웨이 등록 + 사용 
   try {
     const res = await post('/admin', { do: 'connect', new_department: '인사팀', username: 'USER1', password: 'PASS1' });
     const html = await res.text();
-    assert.match(html, /연결을 마쳤습니다/);
+    assert.match(html, /연결이 끝났어요/);
     assert.ok(calls.some(([m, u]) => m === 'POST' && u.endsWith('/webhooks')), '웹훅 자동 등록');
     const gw = await db.prepare(`SELECT * FROM gateways`).first();
     assert.equal(gw.name, '인사팀 폰');
@@ -59,4 +59,38 @@ test('입력 누락 시 쉬운 안내 문구', async () => {
   const { post } = await setup();
   const html = await (await post('/admin', { do: 'connect', username: '', password: '' })).text();
   assert.match(html, /Username/);
+});
+
+test('면접 안내: 명단 올리기 → 보내기 화면 → 숫자 카드', async () => {
+  const { db, call, post } = await setup();
+  await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
+  await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'인사팀 폰','u',?, 't')`)
+    .bind(await encryptText('k', 'pw')).run();
+  const form = await (await call('/campaigns/new')).text();
+  assert.match(form, /명단 파일 고르기/);
+  assert.match(form, /name="gateway_id" value="1"/); // 폰이 하나면 자동 선택
+  const done = await (await post('/campaigns/new', {
+    name: '면접 안내 10/20', gateway_id: '1', template: '{이름}님 안내', retention_days: '90',
+    csv: '사업장,이름,전화번호\nA점,홍길동,010-1111-2222\nB점,김철수,010-3333-4444\n'
+  })).text();
+  assert.match(done, /2명을 불러왔어요/);
+  const detail = await (await call('/campaigns/1')).text();
+  assert.match(detail, /지금 바로 보내기 \(2명\)/);
+  assert.match(detail, /아직 문자를 보내지 않았어요/);
+  const home = await (await call('/')).text();
+  assert.match(home, /면접 안내 문자 보내기/);
+});
+
+test('문자함: 공백/줄바꿈으로 구분한 여러 번호', async () => {
+  const { db, post } = await setup();
+  await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
+  await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'폰','u',?, 't')`)
+    .bind(await encryptText('k', 'pw')).run();
+  const originalFetch = globalThis.fetch;
+  const sent = [];
+  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body).phoneNumbers[0]); return new Response('{}', { status: 200 }); };
+  try {
+    await post('/messages', { gateway_id: '1', phones: '010-1111-2222\n010-3333-4444 01055556666', text: '안녕' });
+  } finally { globalThis.fetch = originalFetch; }
+  assert.deepEqual(sent, ['+821011112222', '+821033334444', '+821055556666']);
 });

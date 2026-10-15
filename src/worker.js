@@ -123,23 +123,23 @@ async function handle(request, env, ctx) {
           WHERE k.department_id IN (${deps.map(() => '?').join(',')}) ORDER BY k.id DESC LIMIT 200`, ...deps)
       : [];
     const gwCount = (await first(db, `SELECT COUNT(*) n FROM gateways WHERE active=1`)).n;
-    const guide = `<div class="card guide">
-        <h3>시작하기</h3>
-        <ol class="steps">
-          <li>${gwCount ? '✅' : '👉'} <b>문자 보낼 폰 연결</b> — ${user.role === 'super' ? '<a href="/admin">설정</a>에서 안내에 따라 진행합니다.' : '전체 관리자에게 폰 연결을 요청하세요.'}</li>
-          <li>${rows.length ? '✅' : '👉'} <b>지원자 명단으로 캠페인 만들기</b> — <a href="/template.csv">명단 양식 내려받기</a> 후 <a href="/campaigns/new">새 캠페인</a>에서 올립니다.</li>
-          <li>👉 <b>발송 후 결과 확인</b> — 캠페인을 열면 사업장별 참석/불참 현황이 보입니다.</li>
-        </ol>
-        <p><small>그냥 문자를 보내거나 받은 문자를 보려면 <a href="/messages">문자함</a>을 이용하세요.</small></p>
-      </div>`;
-    const body = `<h2>면접 참석 확인 캠페인</h2>
-      ${rows.length && gwCount ? '' : guide}
-      <p><a class="btn" href="/campaigns/new">+ 새 캠페인</a></p>
-      <table><tr><th>ID</th><th>부서</th><th>이름</th><th>상태</th><th>예약</th><th>전체</th><th>참석</th><th>불참</th><th>미응답/확인필요</th></tr>
-      ${rows.map((r) => `<tr><td>${r.id}</td><td>${esc(r.dept)}</td><td><a href="/campaigns/${r.id}">${esc(r.name)}</a></td>
-        <td>${esc(r.purged_at ? '파기됨' : r.status)}</td><td>${fmtTime(r.scheduled_at)}</td>
-        <td>${r.total}</td><td>${r.att}</td><td>${r.abs}</td><td>${r.wait}</td></tr>`).join('')}
-      </table>`;
+    const phoneBanner = gwCount
+      ? '<div class="ok big">🟢 문자를 보낼 폰이 준비되어 있어요.</div>'
+      : `<div class="warn big">🔴 문자를 보낼 폰이 아직 연결되지 않았어요. ${user.role === 'super' ? '<a href="/admin">여기를 눌러 폰을 연결하세요.</a>' : '전체 관리자에게 폰 연결을 부탁하세요.'}</div>`;
+    const CAMP = { draft: '아직 안 보냄', scheduled: '보낼 시간을 기다리는 중', sending: '보내는 중', done: '모두 보냄', cancelled: '취소함' };
+    const body = `<h2>처음 화면</h2>
+      ${phoneBanner}
+      <div class="bigbtns">
+        <a class="bigbtn" href="/campaigns/new"><span class="n">1</span>면접 안내 문자 보내기<small>명단 파일을 올려서 한꺼번에 보내요</small></a>
+        <a class="bigbtn" href="#results"><span class="n">2</span>보낸 결과 보기<small>누가 참석하고 불참하는지 봐요</small></a>
+        <a class="bigbtn" href="/messages"><span class="n">3</span>문자 따로 보내기 · 받은 문자 보기<small>한 사람에게 보내거나 답장을 봐요</small></a>
+      </div>
+      <h3 id="results">지금까지 보낸 면접 안내</h3>
+      ${rows.length ? `<table><tr><th>이름</th><th>상태</th><th>보낸 사람 수</th><th>참석</th><th>불참</th><th>답 없음·확인 필요</th></tr>
+      ${rows.map((r) => `<tr><td><a href="/campaigns/${r.id}">${esc(r.name)}</a><br><small>${esc(r.dept)}</small></td>
+        <td>${esc(r.purged_at ? '개인정보 지움' : CAMP[r.status] || r.status)}</td>
+        <td>${r.total}</td><td><b>${r.att}</b></td><td><b>${r.abs}</b></td><td>${r.wait}</td></tr>`).join('')}</table>`
+      : '<p>아직 보낸 면접 안내가 없어요. 위의 <b>1번</b>을 눌러 시작하세요.</p>'}`;
     return html(page(user, '대시보드', body));
   }
 
@@ -149,25 +149,45 @@ async function handle(request, env, ctx) {
     const gws = (await all(db, `SELECT id,department_id,name FROM gateways WHERE active=1`)).filter((g) => deps.some((d) => d.id === g.department_id));
     if (method === 'GET') {
       if (!gws.length) return html(page(user, '새 캠페인', `<div class="warn">문자를 보낼 폰이 아직 연결되지 않았습니다. ${user.role === 'super' ? '<a href="/admin">설정</a>에서 폰을 먼저 연결하세요.' : '전체 관리자에게 폰 연결을 요청하세요.'}</div>`));
-      const body = `<h2>새 캠페인</h2>
+      const today = fmtTime(Date.now()).slice(5, 10);
+      const body = `<h2>면접 안내 문자 보내기</h2>
+      <p class="lead">3가지만 하면 돼요. <b>1. 명단 파일 고르기</b> → <b>2. 문자 내용 확인</b> → <b>3. 올리기</b>. 올린 다음에 "지금 보내기"를 눌러야 문자가 나가니까 걱정하지 마세요.</p>
       <form method="post" class="stack">
-        <label>캠페인 이름 <input name="name" required placeholder="예: 10월 3주차 면접"></label>
-        <label>발송 폰(게이트웨이) <select name="gateway_id">${gws.map((g) =>
-          `<option value="${g.id}">${esc(deps.find((d) => d.id === g.department_id).name)} / ${esc(g.name)}</option>`).join('')}</select></label>
-        <label>메시지 템플릿 <small>{사업장} {이름} {면접일시} 사용 가능</small>
-          <textarea name="template" rows="4">${esc(DEFAULT_TEMPLATE)}</textarea></label>
-        <label>개인정보 보관기간(일) <input name="retention_days" type="number" value="90" min="1" max="3650"></label>
-        <label>지원자 명단 CSV <small>컬럼: 사업장, 이름, 전화번호, 면접일시 — <a href="/template.csv">양식 내려받기</a>. 엑셀에서 "CSV로 저장"하면 됩니다.</small>
-          <input type="file" id="f" accept=".csv,.txt"></label>
-        <textarea name="csv" id="csv" rows="6" placeholder="CSV를 붙여넣어도 됩니다" required></textarea>
-        <button class="btn">생성</button>
+        <input type="hidden" name="name" value="면접 안내 ${esc(today)}">
+        <div class="step"><div class="num">1</div><div class="body">
+          <h3>명단 파일 고르기</h3>
+          <p>엑셀에 <b>사업장, 이름, 전화번호, 면접일시</b> 4가지를 적고 <b>CSV로 저장</b>한 파일이에요.</p>
+          <p><a class="btn" href="/template.csv">연습용 양식 받기</a></p>
+          <input type="file" id="f" accept=".csv,.txt" class="bigfile">
+          <p id="fname"><small>아직 고른 파일이 없어요.</small></p>
+          <details><summary>파일이 없으면 여기에 직접 붙여넣어도 돼요</summary>
+            <textarea name="csv" id="csv" rows="6" placeholder="사업장,이름,전화번호,면접일시&#10;강남점,홍길동,010-1234-5678,10/20 14:00" required></textarea></details>
+        </div></div>
+        <div class="step"><div class="num">2</div><div class="body">
+          <h3>보낼 문자 확인하기</h3>
+          <p><small>{이름}, {사업장}, {면접일시} 자리에는 각 사람의 정보가 저절로 들어가요.</small></p>
+          <textarea name="template" rows="5">${esc(DEFAULT_TEMPLATE)}</textarea>
+        </div></div>
+        <div class="step"><div class="num">3</div><div class="body">
+          <h3>올리기</h3>
+          ${gws.length > 1 ? `<label>어느 폰으로 보낼까요? <select name="gateway_id">${gws.map((g) =>
+            `<option value="${g.id}">${esc(deps.find((d) => d.id === g.department_id).name)} / ${esc(g.name)}</option>`).join('')}</select></label>`
+            : `<input type="hidden" name="gateway_id" value="${gws[0].id}"><p><small>보내는 폰: ${esc(gws[0].name)}</small></p>`}
+          <button class="btn big">명단 올리기</button>
+          <details><summary>더 설정하기 (안 해도 돼요)</summary>
+            <label>개인정보를 몇 일 동안 보관할까요? <small>(지나면 이름과 번호가 저절로 지워져요)</small>
+              <input name="retention_days" type="number" value="90" min="1" max="3650"></label></details>
+        </div></div>
       </form>
       <script>
       document.getElementById('f').addEventListener('change', async (e) => {
-        const buf = await e.target.files[0].arrayBuffer();
+        const file = e.target.files[0];
+        if (!file) return;
+        const buf = await file.arrayBuffer();
         let t = new TextDecoder('utf-8').decode(buf);
-        if (t.includes('\\uFFFD')) t = new TextDecoder('euc-kr').decode(buf);
+        if (t.includes('\uFFFD')) t = new TextDecoder('euc-kr').decode(buf);
         document.getElementById('csv').value = t;
+        document.getElementById('fname').innerHTML = '✅ <b>' + file.name.replace(/[<>&]/g, '') + '</b> 파일을 불러왔어요.';
       });
       </script>`;
       return html(page(user, '새 캠페인', body));
@@ -183,9 +203,11 @@ async function handle(request, env, ctx) {
     });
     await audit(db, user, 'campaign.create', `campaign=${r.campaignId} accepted=${r.accepted} rejected=${r.rejected.length}`);
     const rej = r.rejected.length
-      ? `<p>제외된 행 ${r.rejected.length}건:</p><ul>${r.rejected.slice(0, 50).map((x) => `<li>${x.row}행: ${esc(x.reason)}</li>`).join('')}</ul>` : '';
-    return html(page(user, '생성 완료',
-      `<p>지원자 ${r.accepted}명이 등록되었습니다.</p>${rej}<p><a class="btn" href="/campaigns/${r.campaignId}">캠페인으로 이동</a></p>`));
+      ? `<div class="warn"><b>${r.rejected.length}명은 올리지 못했어요.</b> 아래 이유를 고쳐서 다시 올리거나, 그대로 두셔도 돼요.<ul>${r.rejected.slice(0, 50).map((x) => `<li>${x.row}번째 줄: ${esc(x.reason)}</li>`).join('')}</ul></div>` : '';
+    return html(page(user, '올리기 완료',
+      `<h2>명단을 올렸어요</h2><div class="ok big">✅ ${r.accepted}명을 불러왔어요.</div>${rej}
+       <p class="lead">아직 문자는 나가지 않았어요. 다음 화면에서 <b>"지금 보내기"</b>를 누르면 문자가 나가요.</p>
+       <p><a class="btn big" href="/campaigns/${r.campaignId}">다음: 보내기 화면으로</a></p>`));
   }
 
   // 캠페인 상세 / 액션
@@ -238,28 +260,57 @@ async function handle(request, env, ctx) {
     if (statusFilter) { where.push('status=?'); args.push(statusFilter); }
     const cands = await all(db, `SELECT * FROM candidates WHERE ${where.join(' AND ')} ORDER BY site, id LIMIT 500`, ...args);
     const back = '?' + url.searchParams.toString();
+    const totals = stats.reduce((t, s) => {
+      for (const k of ['total', 'attending', 'absent', 'sent', 'unclear', 'failed', 'pending', 'sending']) t[k] = (t[k] || 0) + (s[k] || 0);
+      return t;
+    }, {});
+    const waiting = (totals.pending || 0) + (totals.sending || 0);
+    const STATE = {
+      draft: ['warn', '아직 문자를 보내지 않았어요. 아래 초록색 버튼을 누르면 보내요.'],
+      scheduled: ['ok', `${fmtTime(camp.scheduled_at)}에 보낼 예정이에요.`],
+      sending: ['ok', `문자를 보내는 중이에요. (${totals.total - waiting}/${totals.total}명 보냄) 잠시 후 이 화면을 새로고침해 보세요.`],
+      done: ['ok', '모두 보냈어요. 답장이 오면 아래 숫자가 바뀌어요.'],
+      cancelled: ['warn', '보내기를 취소했어요.']
+    };
+    const [stateClass, stateText] = camp.purged_at ? ['ok', '개인정보 보관 기간이 지나 이름과 전화번호를 지웠어요. 숫자만 남아 있어요.'] : (STATE[camp.status] || ['ok', camp.status]);
+    const canSend = !camp.purged_at && ['draft', 'scheduled'].includes(camp.status);
     const body = `
-      <h2>${esc(camp.name)} <small>#${camp.id} · ${esc(camp.dept)} · ${esc(camp.gateway)}</small></h2>
-      <p>상태: <b>${esc(camp.purged_at ? '개인정보 파기됨' : camp.status)}</b> · 예약: ${fmtTime(camp.scheduled_at)} · 보관 ${camp.retention_days}일</p>
+      <h2>${esc(camp.name)}</h2>
+      <p><small>${esc(camp.dept)} · 보내는 폰: ${esc(camp.gateway)}</small></p>
+      <div class="${stateClass} big">${esc(stateText)}</div>
+      ${canSend ? `
+      <div class="card">
+        <form method="post" action="/campaigns/${camp.id}/send">
+          <button class="btn big go">✉️ 지금 바로 보내기 (${totals.total}명)</button>
+        </form>
+        <details><summary>나중 시간에 보내고 싶어요</summary>
+          <form method="post" action="/campaigns/${camp.id}/send" class="row">
+            <input type="datetime-local" name="when" required> <button class="btn">이 시간에 보내기</button>
+          </form><small>한국 시간 기준이에요.</small></details>
+      </div>` : ''}
+      <div class="counts">
+        <div class="count yes"><b>${totals.attending || 0}</b>참석</div>
+        <div class="count no"><b>${totals.absent || 0}</b>불참</div>
+        <div class="count wait"><b>${totals.sent || 0}</b>답 없음</div>
+        <div class="count check"><b>${totals.unclear || 0}</b>확인 필요</div>
+        ${totals.failed ? `<div class="count bad"><b>${totals.failed}</b>못 보냄</div>` : ''}
+      </div>
       ${camp.purged_at ? '' : `
       <div class="row">
-        <form method="post" action="/campaigns/${camp.id}/send">
-          <input type="datetime-local" name="when"> <button class="btn">예약/즉시 발송</button>
-          <small>시각을 비우면 즉시 발송 (한국시간)</small></form>
-        <form method="post" action="/campaigns/${camp.id}/remind"><button class="btn">미응답자 리마인드 발송</button></form>
-        <form method="post" action="/campaigns/${camp.id}/cancel"><button class="btn danger">발송 취소</button></form>
-        <a class="btn" href="/campaigns/${camp.id}/export.csv">CSV 내보내기</a>
+        <form method="post" action="/campaigns/${camp.id}/remind"><button class="btn" title="답이 없거나 못 보낸 사람에게만 다시 보내요">답 없는 사람에게 다시 보내기</button></form>
+        <a class="btn" href="/campaigns/${camp.id}/export.csv">엑셀로 저장하기</a>
+        ${['scheduled', 'sending'].includes(camp.status) ? `<form method="post" action="/campaigns/${camp.id}/cancel"><button class="btn danger">보내기 멈추기</button></form>` : ''}
       </div>`}
-      <h3>사업장별 현황</h3>
-      <table><tr><th>사업장</th><th>전체</th><th>참석</th><th>불참</th><th>미응답</th><th>확인필요</th><th>실패</th><th>대기</th></tr>
+      <h3>사업장별로 보기</h3>
+      <table><tr><th>사업장</th><th>전체</th><th>참석</th><th>불참</th><th>답 없음</th><th>확인 필요</th><th>못 보냄</th><th>보내는 중</th></tr>
       ${stats.map((s) => `<tr><td><a href="?site=${encodeURIComponent(s.site)}">${esc(s.site)}</a></td><td>${s.total}</td>
         <td>${s.attending || 0}</td><td>${s.absent || 0}</td><td>${s.sent || 0}</td><td>${s.unclear || 0}</td>
         <td>${s.failed || 0}</td><td>${(s.pending || 0) + (s.sending || 0)}</td></tr>`).join('')}</table>
-      <h3>지원자 ${siteFilter ? `· ${esc(siteFilter)}` : ''} ${statusFilter ? `· ${esc(STATUS_LABEL[statusFilter] || statusFilter)}` : ''}
-        <small><a href="/campaigns/${camp.id}">필터 해제</a> ·
+      <h3>사람별로 보기 ${siteFilter ? `· ${esc(siteFilter)}` : ''} ${statusFilter ? `· ${esc(STATUS_LABEL[statusFilter] || statusFilter)}` : ''}
+        <small><a href="/campaigns/${camp.id}">전체 보기</a> ·
         ${['attending', 'absent', 'sent', 'unclear', 'failed'].map((s) =>
           `<a href="?${siteFilter ? `site=${encodeURIComponent(siteFilter)}&` : ''}status=${s}">${STATUS_LABEL[s]}</a>`).join(' · ')}</small></h3>
-      <table><tr><th>사업장</th><th>이름</th><th>전화</th><th>상태</th><th>답장</th><th>수동 확정</th></tr>
+      <table><tr><th>사업장</th><th>이름</th><th>전화</th><th>상태</th><th>받은 답장</th><th>직접 정하기</th></tr>
       ${cands.map((c) => `<tr><td>${esc(c.site)}</td><td>${esc(c.name)}</td><td>${esc(c.phone)}</td>
         <td>${esc(STATUS_LABEL[c.status])}${c.manual ? ' (수동)' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
         <td>${esc(c.reply_text)}</td>
@@ -303,7 +354,7 @@ async function handle(request, env, ctx) {
     if (method === 'POST') {
       const f = form(await request.text());
       const gwRow = gws.find((g) => g.id === Number(f.gateway_id));
-      const phones = String(f.phones || '').split(/[s,;]+/).filter(Boolean);
+      const phones = String(f.phones || '').split(/[\s,;]+/).filter(Boolean);
       const text = String(f.text || '').trim();
       if (!gwRow || !phones.length || !text) {
         notice = '<p class="err">폰, 받는 번호, 내용을 모두 입력하세요.</p>';
