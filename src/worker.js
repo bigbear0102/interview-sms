@@ -266,6 +266,7 @@ async function handle(request, env, ctx) {
       try {
         if (f.do === 'dept') await run(db, `INSERT INTO departments (name) VALUES (?)`, f.name.trim());
         if (f.do === 'gw') {
+          if (!Number(f.department_id)) throw new Error('부서를 먼저 추가한 뒤 선택하세요.');
           await run(db,
             `INSERT INTO gateways (department_id,name,base_url,username,password,send_path,signing_key,hook_token)
              VALUES (?,?,?,?,?,?,?,?)`, Number(f.department_id), f.name,
