@@ -127,7 +127,11 @@ async function handle(request, env, ctx) {
       ? '<div class="ok big">🟢 문자를 보낼 폰이 준비되어 있어요.</div>'
       : `<div class="warn big">🔴 문자를 보낼 폰이 아직 연결되지 않았어요. ${user.role === 'super' ? '<a href="/admin">여기를 눌러 폰을 연결하세요.</a>' : '전체 관리자에게 폰 연결을 부탁하세요.'}</div>`;
     const CAMP = { draft: '아직 안 보냄', scheduled: '보낼 시간을 기다리는 중', sending: '보내는 중', done: '모두 보냄', cancelled: '취소함' };
-    const body = `<h2>처음 화면</h2>
+    const body = `<section class="hero">
+        <h1>면접 안내,<br>문자 한 번이면 끝.</h1>
+        <p>명단 파일을 올리면 참석 여부를 자동으로 모아서 보여 드려요.</p>
+        <div class="cta"><a class="btn big" href="/campaigns/new">면접 안내 보내기</a><a class="btn big ghost" href="#results">보낸 결과 보기</a></div>
+      </section>
       ${phoneBanner}
       <div class="bigbtns">
         <a class="bigbtn" href="/campaigns/new"><span class="n">1</span>면접 안내 문자 보내기<small>명단 파일을 올려서 한꺼번에 보내요</small></a>

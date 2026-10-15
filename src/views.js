@@ -35,9 +35,15 @@ const CSS = `
   --ok-bg:#12301d;--ok-fg:#bfe6c9;--warn-bg:#3a1816;--warn-fg:#f1c4bf;--help-bg:#33290f}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--parchment);color:var(--ink);
-  font:17px/1.55 "SF Pro Text","Apple SD Gothic Neo","Pretendard","Malgun Gothic",system-ui,-apple-system,sans-serif;letter-spacing:-.011em;-webkit-font-smoothing:antialiased}
-h1,h2,h3{font-family:"SF Pro Display","Apple SD Gothic Neo","Pretendard","Malgun Gothic",system-ui,sans-serif;letter-spacing:-.022em;line-height:1.15;margin:0 0 .6em}
-h2{font-size:34px;font-weight:700;margin-top:8px}h3{font-size:22px;font-weight:600;margin-top:1.4em}
+  font:17px/1.55 "Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,system-ui,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;letter-spacing:-.012em;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+h1,h2,h3{font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,system-ui,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;letter-spacing:-.022em;line-height:1.15;margin:0 0 .6em}
+h2{font-size:34px;font-weight:700;margin-top:8px;letter-spacing:-.03em}h3{font-size:22px;font-weight:600;margin-top:1.4em;letter-spacing:-.02em}
+.hero{text-align:center;padding:48px 8px 28px}
+.hero h1{font-size:clamp(34px,6vw,56px);font-weight:700;letter-spacing:-.035em;line-height:1.1;margin:0 0 14px}
+.hero p{font-size:clamp(18px,2.4vw,24px);font-weight:400;color:var(--muted);margin:0 auto 26px;max-width:640px;letter-spacing:-.02em}
+.hero .cta{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.btn.ghost{background:transparent;color:var(--blue);border:1.5px solid var(--blue)}
+.btn.ghost:hover{background:var(--blue);color:#fff}
 a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
 
 /* 상단 글로벌 내비게이션: 검정 띠 */
@@ -122,6 +128,8 @@ details.help{background:var(--help-bg);border-radius:14px;padding:14px 16px;marg
 export function page(user, title, body) {
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - 면접 참석 확인</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>${CSS}</style></head><body>
 ${user ? `<header><a href="/"><b>면접 문자</b></a><a href="/">처음 화면</a><a href="/campaigns/new">면접 안내 보내기</a><a href="/messages">문자함</a>
 ${user.role === 'super' ? '<a href="/admin">설정</a><a href="/audit">기록</a>' : ''}<span class="sp"></span>
