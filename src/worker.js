@@ -24,6 +24,7 @@ import {
 } from './accounts.js';
 import { mailConfigured } from './mailer.js';
 import { renderPhoneHelp } from './pages-help.js';
+import { renderPeople } from './people.js';
 import { OUTCOMES, setOutcome, queueAutoReminders } from './reminders.js';
 import { phoneApiUrl, isPublicCloud } from './admin.js';
 import { monitorPhones, recordError } from './monitor.js';
@@ -416,6 +417,11 @@ async function handle(request, env, ctx) {
   if (path === '/template.csv') {
     const csv = toCsv([['사업장(원가중심점)', '이름', '전화번호', '면접일시'], ['1001 강남점', '홍길동', '010-1234-5678', '10/20 14:00'], ['1002 서초점', '김철수', '010-2345-6789', '10/20 15:00']]);
     return new Response(csv, { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="candidates-template.csv"; filename*=UTF-8''${encodeURIComponent('지원자명단-양식.csv')}` } });
+  }
+
+  if (path === '/people') {
+    const deps = await visibleDepartments(db, user);
+    return html(pg('지원자 이력', await renderPeople(db, deps, url.searchParams.get('q') || ''), 'interview'));
   }
 
   if (path === '/audit' && user.role === 'super') {

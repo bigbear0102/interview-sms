@@ -249,7 +249,7 @@ export async function renderCampaignList(db, user, deps) {
         FROM campaigns k WHERE k.department_id IN (${idList(depIds)}) ORDER BY k.id DESC LIMIT 200`, ...depIds)
     : [];
   return `${pageHeader({ title: '면접 안내', desc: '대상자 명단으로 안내 문자를 한꺼번에 보내고, 참석·불참 답장을 사업장별로 모아 봐요.',
-    actions: `<a class="btn" href="/campaigns/new">${icon('plus', 18)}새 면접 안내</a>` })}
+    actions: `<a class="btn secondary" href="/people">지원자 이력</a><a class="btn" href="/campaigns/new">${icon('plus', 18)}새 면접 안내</a>` })}
     <div class="card" style="padding:0">
       ${rows.length ? rows.map((r) => campaignCard(r)).join('')
         : emptyState({ title: '아직 만든 면접 안내가 없어요', desc: '오른쪽 위 버튼으로 시작해 보세요.' })}

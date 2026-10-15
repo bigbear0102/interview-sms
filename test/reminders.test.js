@@ -59,3 +59,17 @@ test('면접 결과 기록', async () => {
   assert.equal((await db.prepare(`SELECT outcome FROM candidates WHERE id=1`).first()).outcome, '');
   await assert.rejects(() => setOutcome(db, 1, 'bogus'));
 });
+
+test('지원자 이력: 같은 번호를 묶고 노쇼 많은 순', async () => {
+  const { renderPeople } = await import('../src/people.js');
+  const db = await setup();
+  await addCand(db, { name: '가', phone: '+821011110001', when: '10/16 10:00' });
+  await addCand(db, { name: '가', phone: '+821011110001', when: '10/18 10:00' });
+  await addCand(db, { name: '나', phone: '+821011110002', when: '10/16 10:00' });
+  await db.prepare(`UPDATE candidates SET outcome='noshow' WHERE phone='+821011110001'`).run();
+  const html = await renderPeople(db, [{ id: 1 }], '');
+  assert.ok(html.indexOf('가') < html.indexOf('나'));
+  assert.match(html, /노쇼 반복/);
+  assert.match(await renderPeople(db, [{ id: 1 }], '나'), /나/);
+  assert.doesNotMatch(await renderPeople(db, [], ''), /노쇼 반복/);
+});
