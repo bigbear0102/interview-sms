@@ -40,7 +40,16 @@
 - 비밀번호는 PBKDF2-SHA256(100k)로 저장, 재설정 시 기존 로그인 세션을 모두 끊는다.
 - 이전 방식의 아이디(`admin`)는 **이메일이 등록되지 않은 계정에 한해** 로그인에 쓸 수 있다. 설정에서 이메일을 등록하면 이메일로만 로그인한다.
 
-## 메일 발송 설정 (필수)
+## 메일 발송 설정 (현재: Resend, BBform 과 같은 설정 재사용)
+
+**현재 운영 설정**: Resend API(발송 전용 키) + 발신 `문자 관리 <no-reply@mail.bigbears.me>`. BBform 프로젝트(`projects/bbform`, `src/lib/email.ts`)에서 쓰던
+Resend 계정과 인증된 발신 도메인 `mail.bigbears.me`를 그대로 사용한다. 시크릿 `RESEND_API_KEY`는 Worker 에 등록되어 있고
+`MAIL_FROM`은 `wrangler.jsonc` 변수다. (발송 시험: Resend 시험 수신 주소로 `ok:true` 확인)
+
+> 주의: 발신 도메인이 `bigbears.me` 계열이라 `@willvi.co.kr` 메일함에서 **스팸함으로 분류**될 수 있다. 처음 가입 시험 때 스팸함을 확인하고,
+> 계속 스팸 처리되면 IT팀에 `no-reply@mail.bigbears.me` 허용(또는 `willvi.co.kr` 쪽 발신 도메인 인증)을 요청한다.
+
+### 다른 방식으로 바꾸려면
 
 인증 메일을 보내려면 아래 중 **하나**를 설정한다. (`src/mailer.js`)
 

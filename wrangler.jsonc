@@ -25,6 +25,8 @@
     // 유료 플랜이면 75000(앱 기본값) 이상으로 올린다.
     "E2E_ITERATIONS": "10000",
     "ADMIN_USER": "admin",
+    // 인증 메일 발신 주소 (BBform 과 같은 Resend 인증 도메인 mail.bigbears.me)
+    "MAIL_FROM": "문자 관리 <no-reply@mail.bigbears.me>",
     // 가입 허용 이메일 도메인
     "ALLOWED_EMAIL_DOMAIN": "willvi.co.kr",
     // 인증 메일 발신 주소(예: "문자 관리 <noreply@도메인>")는 MAIL_FROM, 메일 서비스 키는 시크릿 RESEND_API_KEY. docs/ACCOUNTS.md 참고
