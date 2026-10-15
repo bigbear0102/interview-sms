@@ -96,7 +96,7 @@ export async function applyAdminAction(db, env, f, publicBase) {
         }
         return {
           ok: false,
-          msg: '시험 문자는 보냈는데, 폰이 받은 문자를 서버로 알려 주지 않았어요. 폰 SMSGate 앱에서 ① Home의 "Start Service"가 켜져 있는지(Stop Service로 보이는지) ② 설정의 Webhooks에 항목이 있는지 ③ 폰 문자 앱에 시험 문자가 실제로 도착했는지 확인해 주세요.'
+          msg: '시험 문자는 보냈는데, 폰이 받은 문자를 서버로 알려 주지 않았어요. 폰 SMSGate 앱에서 ① Home의 "Start Service"가 켜져 있는지(Stop Service로 보이는지) ② 설정의 Webhooks에 항목이 있는지 ③ 폰 문자 앱에 시험 문자가 실제로 도착했는지 확인해 주세요. ④ 문자 앱의 채팅(RCS) 기능이 꺼져 있는지 확인해 주세요.'
         };
       }
 
@@ -229,6 +229,30 @@ export async function renderAdmin(db, env, publicBase, result = null) {
     <div class="step">
       <div class="num">3</div>
       <div class="body">
+        <h3>문자 앱의 "채팅(RCS)" 기능 끄기 <small>(꼭 해야 해요)</small></h3>
+        <p>갤럭시 폰은 문자가 일반 문자가 아니라 <b>인터넷 채팅 메시지(RCS)</b>로 오는 경우가 있어요.
+           이렇게 오면 SMSGate가 <b>받은 문자를 알아보지 못해요.</b> 이 폰에서는 채팅 기능을 꺼 두세요.</p>
+        <ol>
+          <li><b>메시지</b> 앱(삼성 메시지)을 엽니다.</li>
+          <li>오른쪽 위 <b>점 세 개(⋮)</b> → <b>설정</b>을 누릅니다.</li>
+          <li><b>채팅 설정</b>(또는 <b>채팅 서비스</b>)을 누릅니다.</li>
+          <li><b>채팅 기능</b> 스위치를 <b>끕니다</b>.</li>
+        </ol>
+        <details class="help">
+          <summary>🔧 <b>구글 "메시지" 앱을 쓰고 있다면</b></summary>
+          <ol>
+            <li>앱 오른쪽 위 <b>프로필 사진</b> → <b>메시지 설정</b>을 누릅니다.</li>
+            <li><b>RCS 채팅</b>을 누릅니다.</li>
+            <li><b>RCS 채팅 사용</b>을 <b>끕니다</b>.</li>
+          </ol>
+        </details>
+        <small>끈 뒤 10분쯤 지나면 상대방 폰에서도 이 폰으로 일반 문자가 가요. 삼성 메시지와 구글 메시지가 둘 다 설치되어 있으면 <b>둘 다</b> 끄세요.</small>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">4</div>
+      <div class="body">
         <h3>폰이 꺼지지 않게 설정하기</h3>
         <ol>
           <li><b>설정</b> 앱 → <b>애플리케이션</b> → <b>SMSGate</b> → <b>배터리</b>를 누릅니다.</li>
@@ -239,7 +263,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
     </div>
 
     <div class="step">
-      <div class="num">4</div>
+      <div class="num">5</div>
       <div class="body">
         <h3>앱에 서버 정보 넣기</h3>
         <p>아래 두 개를 차례로 <b>복사</b>해서 앱에 <b>붙여넣어요</b>.</p>
@@ -257,7 +281,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
     </div>
 
     <div class="step">
-      <div class="num">5</div>
+      <div class="num">6</div>
       <div class="body">
         <h3>켜기</h3>
         <ol>
@@ -271,7 +295,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
     </div>
 
     <div class="step">
-      <div class="num">6</div>
+      <div class="num">7</div>
       <div class="body">
         <h3>아이디와 비밀번호 옮겨 적기</h3>
         <ol>
@@ -320,13 +344,13 @@ export async function renderAdmin(db, env, publicBase, result = null) {
           <form method="post" class="inline"><input type="hidden" name="do" value="gw_active"><input type="hidden" name="gateway_id" value="${g.id}">
             <input type="hidden" name="active" value="${g.active ? 0 : 1}"><button>${g.active ? '쓰지 않기' : '다시 쓰기'}</button></form>
         </td></tr>`).join('')}</table>`
-      : '<p>아직 연결된 폰이 없어요. 위 1~6번을 해 주세요.</p>'}`;
+      : '<p>아직 연결된 폰이 없어요. 위 1~7번을 해 주세요.</p>'}`;
 
   const people = `
     <details class="card">
       <summary><b>👥 이 시스템을 쓸 사람 관리하기</b> <small>(부서와 로그인 계정)</small></summary>
       <h3>부서</h3>
-      <p>${deps.length ? deps.map((d) => `<span class="chip">${esc(d.name)}</span>`).join(' ') : '<small>아직 없어요. 위 6번에서 새 부서 이름을 적으면 자동으로 만들어져요.</small>'}</p>
+      <p>${deps.length ? deps.map((d) => `<span class="chip">${esc(d.name)}</span>`).join(' ') : '<small>아직 없어요. 위 7번에서 새 부서 이름을 적으면 자동으로 만들어져요.</small>'}</p>
       <form method="post" class="row"><input type="hidden" name="do" value="dept">
         <input name="name" placeholder="새 부서 이름"><button class="btn">부서 만들기</button></form>
 
