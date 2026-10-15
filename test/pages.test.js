@@ -6,6 +6,8 @@ import { handleRequest } from '../src/worker.js';
 import { createSession } from '../src/auth.js';
 import { hashPassword, encryptText } from '../src/crypto.js';
 
+const visible = (html) => html.replace(/<(style|script)[\s\S]*?<\/\1>/g, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
 async function setup() {
   const db = openSqliteD1(':memory:', fileURLToPath(new URL('../migrations', import.meta.url)));
   const env = {
@@ -67,7 +69,7 @@ test('면접 안내: 명단 올리기 → 보내기 화면 → 숫자 카드', a
   await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'인사팀 폰','u',?, 't')`)
     .bind(await encryptText('k', 'pw')).run();
   const form = await (await call('/campaigns/new')).text();
-  assert.match(form, /명단 파일 고르기/);
+  assert.match(form, /대상자 명단/);
   assert.match(form, /name="gateway_id" value="1"/); // 폰이 하나면 자동 선택
   const done = await (await post('/campaigns/new', {
     name: '면접 안내 10/20', gateway_id: '1', template: '{이름}님 안내', retention_days: '90',
@@ -78,7 +80,7 @@ test('면접 안내: 명단 올리기 → 보내기 화면 → 숫자 카드', a
   assert.match(detail, /지금 바로 보내기 \(2명\)/);
   assert.match(detail, /아직 문자를 보내지 않았어요/);
   const home = await (await call('/')).text();
-  assert.match(home, /문자 관리 시스템/);
+  assert.ok(home.includes('<title>홈 - 문자 관리</title>'));
   assert.ok(home.includes('href="/send"'));
   assert.match(home, /면접 안내/);
 });
@@ -134,7 +136,7 @@ test('문자함: 받은 문자만 보기 탭과 목록', async () => {
   await db.prepare(`INSERT INTO inbound (gateway_id,sender,message,received_at,result) VALUES (1,'01029501868','참석합니다',?, 'unmatched')`).bind(Date.now()).run();
   await db.prepare(`INSERT INTO messages (gateway_id,phone,text,status,at) VALUES (1,'01029501868','안녕',?,?)`).bind('sent', Date.now()).run();
   const inOnly = await (await call('/messages?dir=in')).text();
-  assert.match(inOnly, /받은 문자 \(1\)/);
+  assert.match(visible(inOnly), /받은 문자 1/);
   assert.match(inOnly, /참석합니다/);
   assert.doesNotMatch(inOnly, /<td[^>]*>안녕<\/td>/);
   const outOnly = await (await call('/messages?dir=out')).text();
@@ -157,7 +159,7 @@ test('공개 클라우드 모드: 서버 주소/토큰 대신 암호화 안내, 
   const gw = await db.prepare(`SELECT passphrase, base_url FROM gateways`).first();
   assert.match(gw.passphrase, /^enc\$/);
   assert.equal(gw.base_url, 'https://api.sms-gate.app/3rdparty/v1');
-  assert.match(await (await call('/admin')).text(), /🔒 암호화/);
+  assert.match(await (await call('/admin')).text(), /<span class="badge info">암호화<\/span>/);
 });
 
 test('예약 발송: 명단 올릴 때 예약, 상세에서 변경/취소, 시간 되면 발송', async () => {
@@ -219,7 +221,7 @@ test('문자 보내기: 예약 → 예약 목록 → 취소 → 시간이 되면
   const ok = await (await post('/send', { gateway_id: '1', phones: '010-1111-2222, 010-3333-4444', text: '예약 문자', send_mode: 'schedule', when })).text();
   assert.match(ok, /2명에게 .*에 보내도록 예약했어요/);
   const list = await (await call('/messages?dir=scheduled')).text();
-  assert.match(list, /예약 문자 \(2\)/);
+  assert.match(visible(list), /예약 문자 2/);
   assert.match(list, /예약 취소/);
 
   // 아직 시간이 안 됐으니 큐가 건드리지 않는다
@@ -251,8 +253,8 @@ test('홈: 오늘 보낸/받은 문자 요약과 빠른 실행', async () => {
   await db.prepare(`INSERT INTO messages (gateway_id,phone,text,status,at) VALUES (1,'01011112222','안녕','sent',?)`).bind(Date.now()).run();
   await db.prepare(`INSERT INTO inbound (gateway_id,sender,message,received_at,result) VALUES (1,'01011112222','네',?, 'unmatched')`).bind(Date.now()).run();
   const home = await (await call('/')).text();
-  assert.match(home, /<b>1<\/b>오늘 보낸 문자/);
-  assert.match(home, /<b>1<\/b>오늘 받은 문자/);
+  assert.match(home, /<b>1<\/b><span>오늘 보낸 문자<\/span>/);
+  assert.match(home, /<b>1<\/b><span>오늘 받은 문자<\/span>/);
   for (const href of ['/send', '/messages', '/messages?dir=scheduled', '/campaigns']) assert.ok(home.includes(`href="${href}"`), href);
   const camps = await call('/campaigns');
   assert.equal(camps.status, 200);
@@ -295,8 +297,8 @@ test('면접 안내: 사업장 직접 입력, 미리보기, 사업장별 회신 
   assert.match(detail, /사업장\(원가중심점\)별 회신 현황/);
   assert.match(detail, /1001 강남점/);
   // 보냄 4, 회신 3, 회신율 75%, 참석 2, 불참 1
-  assert.match(detail.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), /1001 강남점 4 3 75% 2 1 0 1 0 0/);
-  assert.match(detail, /보낼 문자 미리보기/);
+  assert.match(visible(detail), /1001 강남점 4 3 75% 2 1 0 1 0\b/);
+  assert.ok(detail.includes('보낸(보낼) 문자 보기'));
 
   const csvOut = await (await call('/campaigns/1/export.csv')).text();
   assert.match(csvOut, /사업장\(원가중심점\)/);

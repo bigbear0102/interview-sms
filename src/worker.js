@@ -11,8 +11,11 @@ import {
 import { all, first, run } from './d1.js';
 import { normalizePhone } from './parser.js';
 import { applyAdminAction, renderAdmin } from './admin.js';
-import { page, esc, STATUS_LABEL, fmtTime, parseKstLocal } from './views.js';
-import { renderHome, renderCampaignList, renderSend, renderMessages, schedulePicker, SCHEDULE_JS } from './pages.js';
+import { page, esc, STATUS_LABEL, fmtTime, parseKstLocal, icon } from './views.js';
+import {
+  renderHome, renderCampaignList, renderCampaignNew, renderCampaignDetail, renderSend, renderMessages,
+  renderLogin, renderPassword, renderAudit
+} from './pages.js';
 
 // 어느 실행 환경이 응답했는지 확인용 (Cloudflare Workers / Node)
 const RUNTIME = typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers' ? 'workers' : 'node';
@@ -38,11 +41,11 @@ async function loadCampaign(db, user, id) {
   return c && canAccessDepartment(user, c.department_id) ? c : null;
 }
 
-const loginForm = (err = '') => `<form method="post" class="stack narrow"><h2>문자 관리 시스템</h2>
-  ${err ? `<p class="err">${esc(err)}</p>` : ''}
-  <input name="username" placeholder="아이디" autofocus required>
-  <input name="password" type="password" placeholder="비밀번호" required>
-  <button class="btn">로그인</button></form>`;
+// 화면 위치(상단/하단 메뉴 강조)
+const navFor = (p) =>
+  p === '/' ? 'home' : p.startsWith('/send') ? 'send' : p.startsWith('/messages') ? 'inbox'
+    : p.startsWith('/campaigns') ? 'interview' : (p.startsWith('/admin') || p.startsWith('/audit')) ? 'settings'
+    : p.startsWith('/password') ? 'account' : '';
 
 async function handle(request, env, ctx) {
   const db = env.DB;
@@ -99,7 +102,7 @@ async function handle(request, env, ctx) {
     if (method === 'POST') {
       const ip = request.headers.get('cf-connecting-ip') || 'unknown';
       const fail = (await first(db, `SELECT * FROM login_fail WHERE ip=?`, ip)) || { n: 0, until: 0 };
-      if (fail.until > Date.now()) return html(page(null, '로그인', '<p class="err narrow">시도 횟수 초과. 잠시 후 다시 시도하세요.</p>'), 429);
+      if (fail.until > Date.now()) return html(page(null, '로그인', renderLogin('시도 횟수가 너무 많아요. 5분 뒤에 다시 시도해 주세요.')), 429);
       await ensureInitialAdmin(db, env);
       const f = form(await request.text());
       const u = await first(db, `SELECT * FROM users WHERE username=? AND active=1`, f.username || '');
@@ -113,13 +116,14 @@ async function handle(request, env, ctx) {
       await run(db, `INSERT INTO login_fail (ip,n,until) VALUES (?,?,?)
         ON CONFLICT(ip) DO UPDATE SET n=excluded.n, until=excluded.until`,
         ip, n >= 5 ? 0 : n, n >= 5 ? Date.now() + 5 * 60000 : 0);
-      return html(page(null, '로그인', loginForm('아이디 또는 비밀번호가 올바르지 않습니다.')), 401);
+      return html(page(null, '로그인', renderLogin('아이디 또는 비밀번호가 올바르지 않습니다.')), 401);
     }
-    return html(page(null, '로그인', loginForm()));
+    return html(page(null, '로그인', renderLogin()));
   }
 
   const user = await getUser(db, getCookie(request, 'sid'));
   if (!user) return redirect('/login');
+  const pg = (title, body, nav) => page(user, title, body, nav || navFor(path));
 
   if (path === '/logout' && method === 'POST') {
     await run(db, `DELETE FROM sessions WHERE token_hash=?`, await sha256Hex(getCookie(request, 'sid')));
@@ -129,13 +133,13 @@ async function handle(request, env, ctx) {
   // 홈: 문자 관리 요약
   if (path === '/' && method === 'GET') {
     const deps = await visibleDepartments(db, user);
-    return html(page(user, '홈', await renderHome(db, user, deps)));
+    return html(pg('홈', await renderHome(db, user, deps)));
   }
 
   // 면접 안내 목록 (문자 관리 안의 한 기능)
   if (path === '/campaigns' && method === 'GET') {
     const deps = await visibleDepartments(db, user);
-    return html(page(user, '면접 안내', await renderCampaignList(db, user, deps)));
+    return html(pg('면접 안내', await renderCampaignList(db, user, deps)));
   }
 
   // 새 캠페인
@@ -143,76 +147,17 @@ async function handle(request, env, ctx) {
     const deps = await visibleDepartments(db, user);
     const gws = (await all(db, `SELECT id,department_id,name FROM gateways WHERE active=1`)).filter((g) => deps.some((d) => d.id === g.department_id));
     if (method === 'GET') {
-      if (!gws.length) return html(page(user, '새 캠페인', `<div class="warn">문자를 보낼 폰이 아직 연결되지 않았습니다. ${user.role === 'super' ? '<a href="/admin">설정</a>에서 폰을 먼저 연결하세요.' : '전체 관리자에게 폰 연결을 요청하세요.'}</div>`));
+      if (!gws.length) return html(pg('면접 안내 만들기', `<div class="notice warn" role="alert">${icon('alert')}<div><b>문자를 보낼 폰이 아직 연결되지 않았어요.</b><br>${user.role === 'super' ? '<a href="/admin">설정에서 폰을 먼저 연결하세요.</a>' : '전체 관리자에게 폰 연결을 부탁하세요.'}</div></div>`));
       const today = fmtTime(Date.now()).slice(5, 10);
-      const body = `<h2>면접 안내 문자 보내기</h2>
-      <p class="lead">3가지만 하면 돼요. <b>1. 명단 파일 고르기</b> → <b>2. 문자 내용 확인</b> → <b>3. 올리기</b>. 올린 다음에 "지금 보내기"를 눌러야 문자가 나가니까 걱정하지 마세요.</p>
-      <form method="post" class="stack">
-        <input type="hidden" name="name" value="면접 안내 ${esc(today)}">
-        <div class="step"><div class="num">1</div><div class="body">
-          <h3>명단 파일 고르기</h3>
-          <p>엑셀에 <b>사업장(원가중심점), 이름, 전화번호, 면접일시</b>를 적고 <b>CSV로 저장</b>한 파일이에요.</p>
-          <p><a class="btn" href="/template.csv">연습용 양식 받기</a></p>
-          <input type="file" id="f" accept=".csv,.txt" class="bigfile">
-          <p id="fname"><small>아직 고른 파일이 없어요.</small></p>
-          <label>사업장(원가중심점) <small>명단에 사업장 열이 있으면 비워 두세요. 한 곳에만 보낸다면 여기에 적으면 전체에 적용돼요. (예: 1001 강남점)</small>
-            <input name="default_site" placeholder="예: 1001 강남점"></label>
-          <small>사업장 이름은 <b>문자에는 들어가지 않고</b>, 사업장별 회신 현황을 모아 볼 때만 쓰여요.</small>
-          <details><summary>파일이 없으면 여기에 직접 붙여넣어도 돼요</summary>
-            <textarea name="csv" id="csv" rows="6" placeholder="사업장,이름,전화번호,면접일시&#10;강남점,홍길동,010-1234-5678,10/20 14:00" required></textarea></details>
-        </div></div>
-        <div class="step"><div class="num">2</div><div class="body">
-          <h3>보낼 문자 확인하기</h3>
-          <p><small>{이름}, {면접일시} 자리에는 각 사람의 정보가 저절로 들어가요. 줄바꿈은 그대로 문자에 반영돼요.</small></p>
-          <textarea name="template" id="template" rows="8">${esc(DEFAULT_TEMPLATE)}</textarea>
-          <p><b>미리보기</b> <small>(홍길동님에게 갈 문자 예시)</small></p>
-          <div id="preview" class="preview"></div>
-        </div></div>
-        <div class="step"><div class="num">3</div><div class="body">
-          <h3>올리기</h3>
-          ${gws.length > 1 ? `<label>어느 폰으로 보낼까요? <select name="gateway_id">${gws.map((g) =>
-            `<option value="${g.id}">${esc(deps.find((d) => d.id === g.department_id).name)} / ${esc(g.name)}</option>`).join('')}</select></label>`
-            : `<input type="hidden" name="gateway_id" value="${gws[0].id}"><p><small>보내는 폰: ${esc(gws[0].name)}</small></p>`}
-          <fieldset class="when-choice">
-            <legend>언제 보낼까요?</legend>
-            <label class="check"><input type="radio" name="send_mode" value="manual" checked> <b>올린 다음에 제가 직접 보낼게요</b></label>
-            <label class="check"><input type="radio" name="send_mode" value="schedule"> <b>예약해서 보낼게요</b></label>
-            <div id="schedule-box">${schedulePicker('when')}</div>
-          </fieldset>
-          <button class="btn big">명단 올리기</button>
-          <details><summary>더 설정하기 (안 해도 돼요)</summary>
-            <label>개인정보를 몇 일 동안 보관할까요? <small>(지나면 이름과 번호가 저절로 지워져요)</small>
-              <input name="retention_days" type="number" value="90" min="1" max="3650"></label></details>
-        </div></div>
-      </form>
-      ${SCHEDULE_JS}
-      <script>
-      (function () {
-        var t = document.getElementById('template'), p = document.getElementById('preview');
-        function show() {
-          var s = t.value.split('{이름}').join('홍길동').split('{면접일시}').join('10/20 14:00').split('{사업장}').join('');
-          p.textContent = s.split('\n').map(function (l) { return l.replace(/[ \t]+/g, ' ').trim(); }).join('\n').replace(/\n{3,}/g, '\n\n').trim();
-        }
-        t.addEventListener('input', show); show();
-      })();
-      document.getElementById('f').addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const buf = await file.arrayBuffer();
-        let t = new TextDecoder('utf-8').decode(buf);
-        if (t.includes('\uFFFD')) t = new TextDecoder('euc-kr').decode(buf);
-        document.getElementById('csv').value = t;
-        document.getElementById('fname').innerHTML = '✅ <b>' + file.name.replace(/[<>&]/g, '') + '</b> 파일을 불러왔어요.';
-      });
-      </script>`;
-      return html(page(user, '새 캠페인', body));
+      const body = renderCampaignNew({ gws, deps, today, defaultTemplate: DEFAULT_TEMPLATE });
+      return html(pg('면접 안내 만들기', body));
     }
     const f = form(await request.text());
     const gw = gws.find((g) => g.id === Number(f.gateway_id));
-    if (!gw) return html(page(user, '오류', '<p>권한이 없습니다.</p>'), 403);
+    if (!gw) return html(pg('오류', '<p>권한이 없습니다.</p>'), 403);
     const defaultSite = String(f.default_site || '').trim();
     const parsed = candidatesFromCsv(f.csv || '', { requireSite: !defaultSite });
-    if (parsed.errors.length) return html(page(user, '오류', `<p>${parsed.errors.map(esc).join('<br>')}</p><p><a href="/campaigns/new">돌아가기</a></p>`), 400);
+    if (parsed.errors.length) return html(pg('오류', `<p>${parsed.errors.map(esc).join('<br>')}</p><p><a href="/campaigns/new">돌아가기</a></p>`), 400);
     const r = await createCampaign(db, {
       departmentId: gw.department_id, gatewayId: gw.id, name: f.name || '무제', template: f.template,
       retentionDays: Number(f.retention_days) || 90, userId: user.id, candidates: parsed.candidates, defaultSite
@@ -231,24 +176,29 @@ async function handle(request, env, ctx) {
       }
     }
     const rej = r.rejected.length
-      ? `<div class="warn"><b>${r.rejected.length}명은 올리지 못했어요.</b> 아래 이유를 고쳐서 다시 올리거나, 그대로 두셔도 돼요.<ul>${r.rejected.slice(0, 50).map((x) => `<li>${x.row}번째 줄: ${esc(x.reason)}</li>`).join('')}</ul></div>` : '';
-    return html(page(user, '올리기 완료',
-      `<h2>명단을 올렸어요</h2><div class="ok big">✅ ${r.accepted}명을 불러왔어요.</div>${rej}
-       ${scheduledAt ? `<div class="ok big">⏰ ${esc(fmtTime(scheduledAt))}에 보내도록 예약했어요.</div><p class="lead">그때까지 컴퓨터나 폰을 만지지 않아도 돼요. 예약은 다음 화면에서 바꾸거나 취소할 수 있어요.</p>` : `${scheduleError ? `<div class="warn">${esc(scheduleError)}</div>` : ''}<p class="lead">아직 문자는 나가지 않았어요. 다음 화면에서 <b>"지금 보내기"</b>를 누르면 문자가 나가요.</p>`}
-       <p><a class="btn big" href="/campaigns/${r.campaignId}">다음: 보내기 화면으로</a></p>`));
+      ? `<div class="notice warn" role="alert">${icon('alert')}<div><b>${r.rejected.length}명은 올리지 못했어요.</b> 아래 이유를 고쳐서 다시 올리거나, 그대로 두셔도 돼요.<ul style="margin:8px 0 0;padding-left:20px">${r.rejected.slice(0, 50).map((x) => `<li>${x.row}번째 줄: ${esc(x.reason)}</li>`).join('')}</ul></div></div>` : '';
+    const nextStep = scheduledAt
+      ? `<div class="notice ok">${icon('clock')}<div><b>${esc(fmtTime(scheduledAt))}에 보내도록 예약했어요.</b><br>그때까지 컴퓨터나 폰을 만지지 않아도 돼요. 예약은 다음 화면에서 바꾸거나 취소할 수 있어요.</div></div>`
+      : `${scheduleError ? `<div class="notice warn" role="alert">${icon('alert')}<div>${esc(scheduleError)}</div></div>` : ''}<div class="notice info">${icon('info')}<div><b>아직 문자는 나가지 않았어요.</b><br>다음 화면에서 "지금 바로 보내기"를 누르면 문자가 나가요.</div></div>`;
+    return html(pg('올리기 완료', `<header class="phead"><div><h1>명단을 올렸어요</h1></div></header>
+      <div class="col">
+        <div class="notice ok">${icon('check')}<div><b>${r.accepted}명을 불러왔어요.</b></div></div>
+        ${rej}${nextStep}
+        <a class="btn big" href="/campaigns/${r.campaignId}">${scheduledAt ? '예약 내용 확인하기' : '다음: 보내기 화면으로'}</a>
+      </div>`, 'interview'));
   }
 
   // 캠페인 상세 / 액션
   if ((m = path.match(/^\/campaigns\/(\d+)(?:\/(send|unschedule|cancel|remind|export\.csv|set))?$/))) {
     const camp = await loadCampaign(db, user, Number(m[1]));
-    if (!camp) return html(page(user, '없음', '<p>캠페인을 찾을 수 없습니다.</p>'), 404);
+    if (!camp) return html(pg('없음', '<p>캠페인을 찾을 수 없습니다.</p>'), 404);
     const action = m[2];
 
     if (method === 'POST' && action) {
       const f = form(await request.text());
       if (action === 'send') {
         const at = f.when ? parseKstLocal(f.when) : Date.now();
-        if (!Number.isFinite(at)) return html(page(user, '오류', '<p>시각 형식 오류</p>'), 400);
+        if (!Number.isFinite(at)) return html(pg('오류', '<p>시각 형식 오류</p>'), 400);
         await scheduleCampaign(db, camp.id, at);
         await audit(db, user, 'campaign.send', `campaign=${camp.id} at=${new Date(at).toISOString()}`);
         if (at <= Date.now()) ctx.waitUntil(processQueue(env).catch(console.error));
@@ -311,78 +261,32 @@ async function handle(request, env, ctx) {
     }, {});
     const waiting = (totals.pending || 0) + (totals.sending || 0);
     const STATE = {
-      draft: ['warn', '아직 문자를 보내지 않았어요. 아래 초록색 버튼을 누르면 보내요.'],
+      draft: ['info', '아직 문자를 보내지 않았어요. 아래에서 지금 보내거나 예약할 수 있어요.'],
       scheduled: ['ok', `${fmtTime(camp.scheduled_at)}에 보낼 예정이에요.`],
-      sending: ['ok', `문자를 보내는 중이에요. (${totals.total - waiting}/${totals.total}명 보냄) 잠시 후 이 화면을 새로고침해 보세요.`],
+      sending: ['info', `문자를 보내는 중이에요. (${totals.total - waiting}/${totals.total}명 보냄) 잠시 후 새로고침해 보세요.`],
       done: ['ok', '모두 보냈어요. 답장이 오면 아래 숫자가 바뀌어요.'],
       cancelled: ['warn', '보내기를 취소했어요.']
     };
-    const [stateClass, stateText] = camp.purged_at ? ['ok', '개인정보 보관 기간이 지나 이름과 전화번호를 지웠어요. 숫자만 남아 있어요.'] : (STATE[camp.status] || ['ok', camp.status]);
+    const [tone, stateText] = camp.purged_at ? ['info', '개인정보 보관 기간이 지나 이름과 전화번호를 지웠어요. 숫자만 남아 있어요.'] : (STATE[camp.status] || ['info', camp.status]);
+    const stateNotice = `<div class="notice ${tone}">${icon(tone === 'ok' ? 'check' : tone === 'warn' ? 'alert' : 'info')}<div>${esc(stateText)}</div></div>`;
     const canSend = !camp.purged_at && ['draft', 'scheduled'].includes(camp.status);
-    const body = `
-      <h2>${esc(camp.name)}</h2>
-      <p><small>${esc(camp.dept)} · 보내는 폰: ${esc(camp.gateway)}</small></p>
-      <div class="${stateClass} big">${esc(stateText)}</div>
-      ${canSend ? `
-      <div class="card">
-        <h3 style="margin-top:0">언제 보낼까요?</h3>
-        <form method="post" action="/campaigns/${camp.id}/send">
-          <button class="btn big go">✉️ 지금 바로 보내기 (${totals.total}명)</button>
-        </form>
-        <p style="text-align:center;margin:14px 0 6px"><small>또는</small></p>
-        <form method="post" action="/campaigns/${camp.id}/send" class="stack">
-          <b>⏰ ${camp.status === 'scheduled' ? '예약 시간 바꾸기' : '예약해서 보내기'}</b>
-          ${schedulePicker('when', true)}
-          <button class="btn">${camp.status === 'scheduled' ? '이 시간으로 바꾸기' : '이 시간에 보내기'}</button>
-        </form>
-        ${camp.status === 'scheduled' ? `<form method="post" action="/campaigns/${camp.id}/unschedule" style="margin-top:10px"><button class="btn danger">예약 취소하기 (보내지 않음)</button></form>` : ''}
-      </div>
-      ${SCHEDULE_JS}` : ''}
-      <div class="counts">
-        <div class="count yes"><b>${totals.attending || 0}</b>참석</div>
-        <div class="count no"><b>${totals.absent || 0}</b>불참</div>
-        <div class="count wait"><b>${totals.sent || 0}</b>답 없음</div>
-        <div class="count check"><b>${totals.unclear || 0}</b>확인 필요</div>
-        ${totals.failed ? `<div class="count bad"><b>${totals.failed}</b>못 보냄</div>` : ''}
-      </div>
-      ${camp.purged_at ? '' : `
-      <div class="row">
-        <form method="post" action="/campaigns/${camp.id}/remind"><button class="btn" title="답이 없거나 못 보낸 사람에게만 다시 보내요">답 없는 사람에게 다시 보내기</button></form>
-        <a class="btn" href="/campaigns/${camp.id}/export.csv">엑셀로 저장하기</a>
-        ${['scheduled', 'sending'].includes(camp.status) ? `<form method="post" action="/campaigns/${camp.id}/cancel"><button class="btn danger">보내기 멈추기</button></form>` : ''}
-      </div>`}
-      ${camp.template ? `<details class="card"><summary><b>보낼 문자 미리보기</b></summary><div class="preview" style="margin-top:10px">${esc(previewText)}</div></details>` : ''}
-      <h3>사업장(원가중심점)별 회신 현황</h3>
-      <table><tr><th>사업장</th><th>보냄</th><th>회신</th><th>회신율</th><th>참석</th><th>불참</th><th>확인 필요</th><th>답 없음</th><th>못 보냄</th><th>보내는 중</th></tr>
-      ${siteRows.map((s) => `<tr><td><a href="?site=${encodeURIComponent(s.site)}">${esc(s.site)}</a></td><td>${s.delivered}</td>
-        <td><b>${s.replied}</b></td><td>${s.rate}</td><td>${s.attending}</td><td>${s.absent}</td><td>${s.unclear}</td>
-        <td>${s.noreply}</td><td>${s.failed}</td><td>${s.waiting}</td></tr>`).join('')}
-      ${siteRows.length > 1 ? `<tr><th>합계</th><th>${siteTotal.delivered}</th><th>${siteTotal.replied}</th><th>${siteTotal.rate}</th><th>${siteTotal.attending}</th><th>${siteTotal.absent}</th><th>${siteTotal.unclear}</th><th>${siteTotal.noreply}</th><th>${siteTotal.failed}</th><th>${siteTotal.waiting}</th></tr>` : ''}</table>
-      <h3>사람별로 보기 ${siteFilter ? `· ${esc(siteFilter)}` : ''} ${statusFilter ? `· ${esc(STATUS_LABEL[statusFilter] || statusFilter)}` : ''}
-        <small><a href="/campaigns/${camp.id}">전체 보기</a> ·
-        ${['attending', 'absent', 'sent', 'unclear', 'failed'].map((s) =>
-          `<a href="?${siteFilter ? `site=${encodeURIComponent(siteFilter)}&` : ''}status=${s}">${STATUS_LABEL[s]}</a>`).join(' · ')}</small></h3>
-      <table><tr><th>사업장(원가중심점)</th><th>이름</th><th>전화</th><th>상태</th><th>받은 답장</th><th>직접 정하기</th></tr>
-      ${cands.map((c) => `<tr><td>${esc(c.site)}</td><td>${esc(c.name)}</td><td>${esc(c.phone)}</td>
-        <td>${esc(STATUS_LABEL[c.status])}${c.manual ? ' (수동)' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
-        <td style="white-space:pre-wrap">${esc(c.reply_text)}</td>
-        <td>${camp.purged_at ? '' : `<form method="post" action="/campaigns/${camp.id}/set" class="inline">
-          <input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(back)}">
-          <button name="status" value="attending">참석</button><button name="status" value="absent">불참</button></form>`}</td></tr>`).join('')}
-      </table>${cands.length >= 500 ? '<p>최대 500건까지 표시됩니다. 필터를 사용하세요.</p>' : ''}`;
-    return html(page(user, camp.name, body));
+    const body = renderCampaignDetail({
+      camp, totals, siteRows, siteTotal, cands, siteFilter, statusFilter, previewText, canSend, stateNotice,
+      backQuery: back, back: { href: '/campaigns', label: '면접 안내' }
+    });
+    return html(pg(camp.name, body));
   }
 
   // 설정 (전체 관리자 전용): 폰 연결, 부서, 관리자 계정
   if (path === '/admin') {
-    if (user.role !== 'super') return html(page(user, '권한 없음', '<p>권한이 없습니다.</p>'), 403);
+    if (user.role !== 'super') return html(pg('권한 없음', '<p>권한이 없습니다.</p>'), 403);
     let result = null;
     if (method === 'POST') {
       const f = form(await request.text());
       result = await applyAdminAction(db, env, f, publicBase);
       await audit(db, user, 'admin.' + (f.do || '?'), result.ok ? 'ok' : 'fail');
     }
-    return html(page(user, '설정', await renderAdmin(db, env, publicBase, result)));
+    return html(pg('설정', await renderAdmin(db, env, publicBase, result)));
   }
 
   // 지원자 명단 양식 내려받기
@@ -393,8 +297,7 @@ async function handle(request, env, ctx) {
 
   if (path === '/audit' && user.role === 'super') {
     const rows = await all(db, `SELECT a.*, u.username FROM audit a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 300`);
-    return html(page(user, '감사 로그', `<h2>감사 로그 <small>최근 300건</small></h2><table><tr><th>시각</th><th>사용자</th><th>동작</th><th>내용</th></tr>${rows.map((r) =>
-      `<tr><td>${fmtTime(r.at)}</td><td>${esc(r.username || '')}</td><td>${esc(r.action)}</td><td>${esc(r.detail)}</td></tr>`).join('')}</table>`));
+    return html(pg('기록', renderAudit(rows)));
   }
 
   // 문자 보내기 / 문자함 (직접 보내는 문자, 예약 포함)
@@ -402,7 +305,7 @@ async function handle(request, env, ctx) {
     const deps = await visibleDepartments(db, user);
     const gws = (await all(db, `SELECT id,department_id,name FROM gateways WHERE active=1`)).filter((g) => deps.some((d) => d.id === g.department_id));
     if (!gws.length) {
-      return html(page(user, '문자 보내기', `<div class="warn big">문자를 보낼 폰이 아직 연결되지 않았어요. ${user.role === 'super' ? '<a href="/admin">설정에서 폰을 먼저 연결하세요.</a>' : '전체 관리자에게 폰 연결을 부탁하세요.'}</div>`));
+      return html(pg('문자 보내기', `<div class="notice warn" role="alert">${icon('alert')}<div><b>문자를 보낼 폰이 아직 연결되지 않았어요.</b><br>${user.role === 'super' ? '<a href="/admin">설정에서 폰을 먼저 연결하세요.</a>' : '전체 관리자에게 폰 연결을 부탁하세요.'}</div></div>`));
     }
 
     if (path === '/messages/cancel' && method === 'POST') {
@@ -432,7 +335,7 @@ async function handle(request, env, ctx) {
         else if (at < Date.now() - 60000) err = '이미 지난 시간이에요. 시간을 다시 정해 주세요.';
       }
       if (err) {
-        notice = `<div class="warn">${esc(err)}</div>`;
+        notice = `<div class="notice warn" role="alert">${icon('alert')}<div>${esc(err)}</div></div>`;
         keep = { toPhone: f.phones, text: f.text };
       } else {
         const r = await queueDirect(db, { gatewayId: gwRow.id, phones, text, userId: user.id, at });
@@ -440,15 +343,15 @@ async function handle(request, env, ctx) {
           `gateway=${gwRow.id} queued=${r.queued} rejected=${r.rejected.length}`);
         if (r.queued && at <= Date.now() + 1000) ctx.waitUntil(processQueue(env).catch(console.error));
         const bad = r.rejected.length
-          ? `<div class="warn">보내지 못한 번호 ${r.rejected.length}건: ${r.rejected.slice(0, 10).map((x) => `${esc(x.phone)} (${esc(x.reason)})`).join(', ')}</div>` : '';
+          ? `<div class="notice warn" role="alert">${icon('alert')}<div>보내지 못한 번호 ${r.rejected.length}건: ${r.rejected.slice(0, 10).map((x) => `${esc(x.phone)} (${esc(x.reason)})`).join(', ')}</div></div>` : '';
         const when = f.send_mode === 'schedule' ? `${fmtTime(at)}에 보내도록 예약했어요` : '보내는 중이에요';
-        notice = (r.queued ? `<div class="ok big">✅ ${r.queued}명에게 ${when}.</div><p><a href="/messages">문자함에서 확인하기</a></p>` : '') + bad;
+        notice = (r.queued ? `<div class="notice ok">${icon('check')}<div><b>${r.queued}명에게 ${when}.</b> <a href="/messages">문자함에서 확인하기</a></div></div>` : '') + bad;
         if (!r.queued) keep = { toPhone: f.phones, text: f.text };
       }
     }
 
     if (path === '/send' || method === 'POST') {
-      return html(page(user, '문자 보내기', renderSend({
+      return html(pg('문자 보내기', renderSend({
         gws, deps,
         gwSel: Number(url.searchParams.get('gw')) || gws[0].id,
         toPhone: keep.toPhone ?? url.searchParams.get('to') ?? '',
@@ -461,7 +364,7 @@ async function handle(request, env, ctx) {
     const dirFilter = ['in', 'out', 'scheduled'].includes(dirParam) ? dirParam : '';
     const body = await renderMessages(db, { gws, dirFilter, phoneFilter: normalizePhone(url.searchParams.get('phone') || '') });
     const live = '<script>setInterval(function(){var a=document.activeElement;if(a&&(a.tagName==="TEXTAREA"||a.tagName==="INPUT"))return;location.reload();},15000);</script>';
-    return html(page(user, '문자함', body + live));
+    return html(pg('문자함', body + live));
   }
 
   // 비밀번호 변경
@@ -470,17 +373,15 @@ async function handle(request, env, ctx) {
       const f = form(await request.text());
       const u = await first(db, `SELECT * FROM users WHERE id=?`, user.id);
       if (!(await verifyPassword(f.current || '', u.pass_hash)) || (f.next || '').length < 8)
-        return html(page(user, '비밀번호 변경', '<p>현재 비밀번호가 틀리거나 새 비밀번호가 8자 미만입니다.</p>'), 400);
+        return html(pg('비밀번호 바꾸기', renderPassword('현재 비밀번호가 틀리거나, 새 비밀번호가 8글자보다 짧아요.')), 400);
       await run(db, `UPDATE users SET pass_hash=? WHERE id=?`, await hashPassword(f.next), user.id);
       await audit(db, user, 'password.change');
       return redirect('/');
     }
-    return html(page(user, '비밀번호 변경', `<form method="post" class="stack">
-      <input type="password" name="current" placeholder="현재 비밀번호" required>
-      <input type="password" name="next" placeholder="새 비밀번호(8자 이상)" required><button class="btn">변경</button></form>`));
+    return html(pg('비밀번호 바꾸기', renderPassword()));
   }
 
-  return html(page(user, '없음', '<p>페이지를 찾을 수 없습니다.</p>'), 404);
+  return html(pg('없음', '<p>페이지를 찾을 수 없습니다.</p>'), 404);
 }
 
 // 주기 작업: 발송 큐 처리 + 매 시 정각 파기/세션 정리 (Workers Cron, Node 서버 공용)

@@ -37,7 +37,8 @@ npm test                  # 단위 테스트
 | 문서 | 내용 |
 |---|---|
 | [AGENTS.md](AGENTS.md) | AI/개발자 작업 규칙 (먼저 읽을 것) |
-| [DESIGN.md](DESIGN.md) | 화면 디자인 기준(Apple 스타일 토큰). UI 를 바꿀 때 참고 |
+| [docs/UX.md](docs/UX.md) | UX/UI 설계 기준: 정보 구조, 용어, 화면 패턴, 접근성, 점검 방법 |
+| [DESIGN.md](DESIGN.md) | 시각 디자인 참고(Apple 스타일 토큰) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 구조, 데이터 모델, 처리 흐름, 한도 |
 | [docs/GUIDE.md](docs/GUIDE.md) | **처음 쓰는 분을 위한 사용 안내** (폰 연결, 발송, 결과 확인) |
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | 설치, 운영, 장애 대응 (관리자/개발자용) |

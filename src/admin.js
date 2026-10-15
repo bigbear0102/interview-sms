@@ -1,6 +1,7 @@
 // 설정 화면: 문자 보내는 폰 연결, 부서, 관리자. 처음 쓰는 사람도 순서대로 누르기만 하면 되도록 만든다.
 import { all, first, run } from './d1.js';
-import { esc, fmtTime } from './views.js';
+import { esc, fmtTime, icon } from './views.js';
+import { fmtPhone, fmtWhen, pageHeader, tableWrap, emptyState } from './ui.js';
 import { encryptText, decryptText, randomToken, hashPassword } from './crypto.js';
 import { registerWebhook, checkGateway, sendSms, unlockGateway } from './gateway.js';
 import { normalizePhone, isValidMobile } from './parser.js';
@@ -177,11 +178,11 @@ export async function renderAdmin(db, env, publicBase, result = null) {
   const pub = isPublicCloud(env);
   const hasPhone = gws.some((g) => g.active);
 
-  const notice = result ? `<div class="${result.ok ? 'ok' : 'warn'}">${esc(result.msg)}</div>` : '';
+  const notice = result ? `<div class="notice ${result.ok ? 'ok' : 'warn'}" role="${result.ok ? 'status' : 'alert'}">${icon(result.ok ? 'check' : 'alert')}<div>${esc(result.msg)}</div></div>` : '';
 
   const status = hasPhone
-    ? '<div class="ok big">🟢 문자를 보낼 폰이 연결되어 있어요.</div>'
-    : '<div class="warn big">🔴 아직 문자를 보낼 폰이 연결되지 않았어요. 아래 1번부터 차례로 해 주세요.</div>';
+    ? ''
+    : `<div class="notice warn" role="alert">${icon('alert')}<div><b>아직 문자를 보낼 폰이 연결되지 않았어요.</b><br>아래 1번부터 차례로 해 주세요.</div></div>`;
 
   const copyBox = (label, value) => `
     <div class="copybox">
@@ -343,63 +344,100 @@ export async function renderAdmin(db, env, publicBase, result = null) {
       </div>
     </div>`;
 
-  const phones = `
-    <h2>연결된 폰</h2>
-    ${gws.length ? `<table><tr><th>부서</th><th>폰 이름</th><th>상태</th><th>할 수 있는 일</th></tr>
-      ${gws.map((g) => `<tr${g.active ? '' : ' class="off"'}>
-        <td>${esc(g.dept)}</td><td>${esc(g.name)}</td><td>${g.active ? '쓰는 중' : '쓰지 않음'}${g.locked ? ' · 🔒 암호화' : ''}</td>
-        <td class="actions">
+  const phoneCard = (g) => `
+    <div class="card pcard${g.active ? '' : ' off'}">
+      <div class="prow">
+        <div class="pinfo">
+          <div class="ptitle"><b>${esc(g.name)}</b>
+            <span class="badge ${g.active ? 'ok' : ''}">${g.active ? '쓰는 중' : '쓰지 않음'}</span>
+            ${g.locked ? '<span class="badge info">암호화</span>' : ''}</div>
+          <div class="muted">${esc(g.dept)}${g.own_number ? ' · ' + esc(fmtPhone(g.own_number)) : ''}</div>
+        </div>
+        ${g.active ? `<div class="pbtns">
+          <form method="post" class="inline"><input type="hidden" name="do" value="gw_check"><input type="hidden" name="gateway_id" value="${g.id}">
+            <button class="btn secondary small">${icon('check', 16)}연결 확인</button></form>
+        </div>` : ''}
+      </div>
+      <details class="pmore">
+        <summary>더 보기</summary>
+        <div class="pgrid">
           ${g.active ? `
-          <form method="post" class="inline"><input type="hidden" name="do" value="gw_check"><input type="hidden" name="gateway_id" value="${g.id}"><button class="btn">잘 연결됐는지 확인</button></form>
-          <form method="post" class="inline row"><input type="hidden" name="do" value="gw_selftest"><input type="hidden" name="gateway_id" value="${g.id}">
-            <input name="number" value="${esc(g.own_number)}" placeholder="이 폰의 전화번호 010..." style="width:190px;padding:7px 12px;font-size:14px">
-            <button class="btn">받기 시험</button></form>
-          <form method="post" class="inline"><input type="hidden" name="do" value="gw_hook"><input type="hidden" name="gateway_id" value="${g.id}"><button>답장 받기 다시 설정</button></form>
-          <details class="inline"><summary>폰을 다시 설치했어요</summary>
-            <form method="post" class="stack small-form"><input type="hidden" name="do" value="gw_update"><input type="hidden" name="gateway_id" value="${g.id}">
+          <form method="post" class="stack">
+            <input type="hidden" name="do" value="gw_selftest"><input type="hidden" name="gateway_id" value="${g.id}">
+            <label>받기 시험 <small>이 폰의 번호로 시험 문자를 보내고, 폰이 받은 문자를 알려 주는지 확인해요.</small>
+              <input name="number" value="${esc(g.own_number)}" placeholder="이 폰의 전화번호 010..." inputmode="tel"></label>
+            <div class="form-actions"><button class="btn secondary small">받기 시험</button></div>
+          </form>
+          <form method="post" class="inline"><input type="hidden" name="do" value="gw_hook"><input type="hidden" name="gateway_id" value="${g.id}">
+            <p class="muted" style="margin-bottom:8px">받은 문자가 화면에 안 들어오면 눌러 보세요.</p>
+            <button class="btn secondary small">답장 받기 다시 설정</button></form>
+          <details><summary>폰을 다시 설치했어요</summary>
+            <form method="post" class="stack small-form">
+              <input type="hidden" name="do" value="gw_update"><input type="hidden" name="gateway_id" value="${g.id}">
               <small>앱을 지우고 다시 설치하면 아이디와 비밀번호가 바뀌어요. 새로 보이는 값을 적어 주세요.</small>
               <input name="username" placeholder="새 Username" required autocomplete="off">
               <input name="password" placeholder="새 Password" required autocomplete="off">
               <input name="passphrase" placeholder="암호화 비밀번호 (바꿀 때만)" autocomplete="off">
-              <button>저장</button></form></details>` : ''}
+              <div class="form-actions"><button class="btn small">저장</button></div></form></details>` : ''}
           <form method="post" class="inline"><input type="hidden" name="do" value="gw_active"><input type="hidden" name="gateway_id" value="${g.id}">
-            <input type="hidden" name="active" value="${g.active ? 0 : 1}"><button>${g.active ? '쓰지 않기' : '다시 쓰기'}</button></form>
-        </td></tr>`).join('')}</table>`
-      : '<p>아직 연결된 폰이 없어요. 위 1~7번을 해 주세요.</p>'}`;
+            <input type="hidden" name="active" value="${g.active ? 0 : 1}">
+            <button class="btn ${g.active ? 'danger' : 'secondary'} small">${g.active ? '이 폰 쓰지 않기' : '다시 쓰기'}</button></form>
+        </div>
+      </details>
+    </div>`;
+
+  const phones = `
+    <section class="section">
+      <div class="shead"><h2>문자 보내는 폰</h2></div>
+      ${gws.length ? gws.map(phoneCard).join('') : emptyState({ title: '아직 연결된 폰이 없어요', desc: '아래 "폰 연결하기"의 1~7번을 차례로 해 주세요.' })}
+    </section>`;
 
   const people = `
-    <details class="card">
-      <summary><b>👥 이 시스템을 쓸 사람 관리하기</b> <small>(부서와 로그인 계정)</small></summary>
-      <h3>부서</h3>
-      <p>${deps.length ? deps.map((d) => `<span class="chip">${esc(d.name)}</span>`).join(' ') : '<small>아직 없어요. 위 7번에서 새 부서 이름을 적으면 자동으로 만들어져요.</small>'}</p>
-      <form method="post" class="row"><input type="hidden" name="do" value="dept">
-        <input name="name" placeholder="새 부서 이름"><button class="btn">부서 만들기</button></form>
+    <section class="section">
+      <div class="shead"><h2>사용자와 부서</h2></div>
+      <div class="card">
+        <h3 style="margin-bottom:12px">부서</h3>
+        <div class="chip-list">${deps.length ? deps.map((d) => `<span class="chip">${esc(d.name)}</span>`).join('') : '<small>아직 없어요. 폰을 연결할 때 새 부서 이름을 적으면 자동으로 만들어져요.</small>'}</div>
+        <form method="post" class="row" style="margin-top:14px"><input type="hidden" name="do" value="dept">
+          <div class="grow"><input name="name" placeholder="새 부서 이름" aria-label="새 부서 이름"></div><button class="btn secondary">부서 만들기</button></form>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:12px">로그인할 수 있는 사람</h3>
+        ${users.map((u) => `<div class="urow${u.active ? '' : ' off'}">
+          <div><b>${esc(u.username)}</b> <span class="badge ${u.role === 'super' ? 'info' : ''}">${u.role === 'super' ? '전체 관리자' : '일반 관리자'}</span>
+            ${u.active ? '' : '<span class="badge">쓰지 않음</span>'}
+            <div class="muted">${esc(u.role === 'super' ? '모든 부서' : u.deps || '맡은 부서 없음')}</div></div>
+          <div class="pbtns">
+            <details class="pop"><summary class="btn secondary small">비밀번호 바꿔주기</summary>
+              <form method="post" class="stack small-form"><input type="hidden" name="do" value="user_reset"><input type="hidden" name="user_id" value="${u.id}">
+                <input name="password" type="password" placeholder="새 비밀번호(8글자 이상)" minlength="8" required autocomplete="new-password">
+                <div class="form-actions"><button class="btn small">저장</button></div></form></details>
+            <form method="post" class="inline"><input type="hidden" name="do" value="user_active"><input type="hidden" name="user_id" value="${u.id}">
+              <input type="hidden" name="active" value="${u.active ? 0 : 1}"><button class="btn ${u.active ? 'danger' : 'secondary'} small">${u.active ? '쓰지 못하게 하기' : '다시 쓰게 하기'}</button></form>
+          </div></div>`).join('')}
+        <details style="margin-top:16px"><summary><b>사람 추가하기</b></summary>
+          <form method="post" class="stack" style="margin-top:12px;max-width:420px">
+            <input type="hidden" name="do" value="user">
+            <label>아이디<input name="username" required autocomplete="off"></label>
+            <label>비밀번호 <small>8글자 이상</small><input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
+            <label>권한 <select name="role"><option value="admin">일반 관리자 (고른 부서만 볼 수 있어요)</option><option value="super">전체 관리자 (모든 것을 볼 수 있어요)</option></select></label>
+            <fieldset><legend>맡을 부서 <small>일반 관리자만 해당</small></legend>
+              ${deps.length ? deps.map((d) => `<label class="check"><input type="checkbox" name="dep_${d.id}" value="1"> ${esc(d.name)}</label>`).join('') : '<small>부서가 아직 없어요.</small>'}
+            </fieldset>
+            <div class="form-actions"><button class="btn">사람 추가하기</button></div>
+          </form>
+        </details>
+      </div>
+    </section>`;
 
-      <h3>로그인할 수 있는 사람</h3>
-      <table><tr><th>아이디</th><th>권한</th><th>맡은 부서</th><th>할 수 있는 일</th></tr>
-      ${users.map((u) => `<tr${u.active ? '' : ' class="off"'}><td>${esc(u.username)}</td>
-        <td>${u.role === 'super' ? '전체 관리자' : '일반 관리자'}</td><td>${esc(u.role === 'super' ? '전체' : u.deps || '(없음)')}</td>
-        <td class="actions">
-          <details class="inline"><summary>비밀번호 바꿔주기</summary>
-            <form method="post" class="stack small-form"><input type="hidden" name="do" value="user_reset"><input type="hidden" name="user_id" value="${u.id}">
-              <input name="password" type="password" placeholder="새 비밀번호(8글자 이상)" minlength="8" required>
-              <button>저장</button></form></details>
-          <form method="post" class="inline"><input type="hidden" name="do" value="user_active"><input type="hidden" name="user_id" value="${u.id}">
-            <input type="hidden" name="active" value="${u.active ? 0 : 1}"><button>${u.active ? '쓰지 못하게 하기' : '다시 쓰게 하기'}</button></form>
-        </td></tr>`).join('')}</table>
+  const connect = `
+    <section class="section">
+      <details class="card" ${hasPhone ? '' : 'open'}>
+        <summary><b>폰 연결하기</b> <span class="muted">새 폰을 연결할 때 열어서 1~7번을 차례로 해요</span></summary>
+        <div style="margin-top:16px">${steps}</div>
+      </details>
+    </section>`;
 
-      <h3>사람 추가하기</h3>
-      <form method="post" class="stack">
-        <input type="hidden" name="do" value="user">
-        <label>아이디 <input name="username" required autocomplete="off"></label>
-        <label>비밀번호 <small>(8글자 이상)</small><input name="password" type="password" minlength="8" required></label>
-        <label>권한 <select name="role"><option value="admin">일반 관리자 (고른 부서만 볼 수 있어요)</option><option value="super">전체 관리자 (모든 것을 볼 수 있어요)</option></select></label>
-        <fieldset><legend>맡을 부서 <small>(일반 관리자만 해당)</small></legend>
-          ${deps.length ? deps.map((d) => `<label class="check"><input type="checkbox" name="dep_${d.id}" value="1"> ${esc(d.name)}</label>`).join('') : '<small>부서가 아직 없어요.</small>'}
-        </fieldset>
-        <button class="btn">사람 추가하기</button>
-      </form>
-    </details>`;
-
-  return `${status}${notice}${hasPhone ? phones + `<details class="card"><summary><b>📱 폰을 새로 연결하려면</b> (눌러서 열기)</summary>${steps}</details>` : steps + phones}${people}${COPY_JS}`;
+  return `${pageHeader({ title: '설정', desc: '문자를 보내는 폰과, 이 시스템을 쓰는 사람을 관리해요.' })}
+    ${status}${notice}${phones}${connect}${people}${COPY_JS}`;
 }

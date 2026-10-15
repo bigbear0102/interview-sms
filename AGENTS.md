@@ -30,6 +30,7 @@ npm start                # Node 서버 (회사 서버 이전용, .env 필요)
 | `src/auth.js` / `src/crypto.js` | 세션/권한, PBKDF2·AES-GCM·HMAC (WebCrypto) |
 | `src/csv.js` / `src/views.js` / `src/d1.js` | CSV, HTML·KST 시각, D1 헬퍼 |
 | `src/admin.js` | 설정 화면(폰 연결 마법사, 부서, 관리자). 초보자용 문구는 `docs/GUIDE.md` 와 맞춘다 |
+| `src/ui.js` | 화면 공통 요소: 뱃지, 응답 막대, 숫자 카드, 머리말, 전화번호/시각 형식, 아이콘 |
 | `src/pages.js` | 홈 요약, 문자 보내기, 문자함(받은/보낸/예약), 면접 안내 목록 화면 |
 | `/send`, `/messages` (worker.js) | 직접 보내는 문자: `queueDirect`(큐/예약) → Cron `processQueue` 가 발송, `cancelDirect`(예약 취소) |
 | `migrations/*.sql` | D1 스키마 (번호 순서 적용) |
@@ -44,7 +45,7 @@ npm start                # Node 서버 (회사 서버 이전용, .env 필요)
 6. **두 런타임 호환**: `src/worker.js`/`core.js`는 Node 전용 API(`node:*`)를 쓰지 않는다(WebCrypto, fetch만). Workers 한도(호출당 서브리퀘스트)를 고려해 발송은 `SEND_BATCH`건씩 나누고, 건별 D1 호출 대신 `db.batch`를 쓴다.
 7. 시각은 **KST 고정**(`views.js` `fmtTime`/`parseKstLocal`). Worker 는 UTC 이므로 직접 `new Date(문자열)` 하지 않는다.
 8. **사용자 화면 문구는 초보자 기준**으로 쓴다(전문용어 대신 쉬운 말, 오류는 "무엇을 하면 되는지"까지). 화면을 바꾸면 `docs/GUIDE.md`도 함께 고친다.
-9. **화면 디자인은 `DESIGN.md`(Apple 스타일)를 기준**으로 한다: 포인트 색은 파랑 하나, 흰색/연회색 면, 그림자 없음, 알약 버튼. 단 초보자용이라 글자 크기와 버튼은 일부러 크게 유지한다. 색은 `src/views.js` 의 CSS 변수로만 정의한다.
+9. **화면은 `docs/UX.md`(IA·용어·패턴·접근성)와 `DESIGN.md`(Apple 스타일 토큰)를 따른다.** 새 화면은 `src/ui.js` 의 뱃지/숫자 카드/머리말을 쓰고, 전화번호·시각은 `fmtPhone`/`fmtWhen` 으로 표시한다. 색은 `src/views.js` 의 CSS 변수만 쓴다. 화면을 바꾸면 `node deploy/dev/render-preview.mjs`로 데스크톱·모바일(390px)을 직접 확인한다.
 10. 변경 후 `docs/DECISIONS.md`의 결정/로드맵을 최신으로 유지한다.
 
 ## 알려진 사항
