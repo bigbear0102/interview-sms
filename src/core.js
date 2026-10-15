@@ -49,6 +49,10 @@ export async function createCampaign(db, { departmentId, gatewayId, name, templa
 export const scheduleCampaign = (db, campaignId, at) =>
   run(db, `UPDATE campaigns SET scheduled_at=?, status='scheduled' WHERE id=? AND status IN ('draft','scheduled')`, at, campaignId);
 
+// 예약을 취소하고 '아직 안 보냄' 상태로 되돌린다
+export const unscheduleCampaign = (db, campaignId) =>
+  run(db, `UPDATE campaigns SET scheduled_at=NULL, status='draft' WHERE id=? AND status='scheduled'`, campaignId);
+
 export const cancelCampaign = (db, campaignId) =>
   run(db, `UPDATE campaigns SET status='cancelled' WHERE id=? AND status IN ('draft','scheduled','sending')`, campaignId);
 

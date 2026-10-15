@@ -124,6 +124,10 @@ details.help{background:var(--help-bg);border-radius:14px;padding:14px 16px;marg
 .tabs{display:flex;gap:8px;margin:18px 0 6px;flex-wrap:wrap}
 .tabs a{padding:8px 18px;border-radius:999px;background:var(--chip);color:var(--ink)}
 .tabs a.on{background:var(--ink);color:var(--canvas)}
+.schedule{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+.quick{display:flex;gap:8px;flex-wrap:wrap}
+.quick button{background:var(--chip);color:var(--ink);padding:7px 14px;font-size:14px}
+.when-choice{margin:14px 0}.when-choice legend{font-weight:600;padding:0 6px}
 .bigfile{font-size:17px;padding:22px;width:100%;border:2px dashed var(--hairline);border-radius:18px;background:var(--parchment)}
 @media (max-width:640px){main{padding:20px 14px 48px}.step{flex-direction:column;padding:18px}h2{font-size:28px}header a{padding:6px 8px}}
 `;

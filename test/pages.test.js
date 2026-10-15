@@ -154,3 +154,48 @@ test('공개 클라우드 모드: 서버 주소/토큰 대신 암호화 안내, 
   assert.equal(gw.base_url, 'https://api.sms-gate.app/3rdparty/v1');
   assert.match(await (await call('/admin')).text(), /🔒 암호화/);
 });
+
+test('예약 발송: 명단 올릴 때 예약, 상세에서 변경/취소, 시간 되면 발송', async () => {
+  const { db, env, call, post } = await setup();
+  await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
+  await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'인사팀 폰','u',?, 't')`)
+    .bind(await encryptText('k', 'pw')).run();
+  const { processQueue } = await import('../src/core.js');
+  const csv = '사업장,이름,전화번호\nA점,홍길동,010-1111-2222\n';
+
+  // 1) 올리면서 예약 (한국시간으로 해석됨): 내일 09:00 KST
+  const t = new Date(Date.now() + 9 * 3600000 + 86400000);
+  const pad = (n) => String(n).padStart(2, '0');
+  const when = `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}T09:00`;
+  const done = await (await post('/campaigns/new', {
+    name: '예약 시험', gateway_id: '1', template: '{이름}님', retention_days: '90', csv, send_mode: 'schedule', when
+  })).text();
+  assert.match(done, /에 보내도록 예약했어요/);
+  const c = await db.prepare(`SELECT status, scheduled_at FROM campaigns WHERE id=1`).first();
+  assert.equal(c.status, 'scheduled');
+  assert.equal(new Date(c.scheduled_at).toISOString().slice(11, 16), '00:00'); // 09:00 KST = 00:00 UTC
+
+  // 2) 상세 화면: 예약 변경/취소 버튼
+  const detail = await (await call('/campaigns/1')).text();
+  assert.match(detail, /예약 시간 바꾸기/);
+  assert.match(detail, /예약 취소하기/);
+
+  // 3) 예약 취소 → 다시 '아직 안 보냄'
+  await post('/campaigns/1/unschedule', {});
+  assert.equal((await db.prepare(`SELECT status FROM campaigns WHERE id=1`).first()).status, 'draft');
+
+  // 4) 지난 시간으로 예약하면 안내
+  const past = await (await post('/campaigns/new', {
+    name: '지난 시간', gateway_id: '1', template: 'x', csv, send_mode: 'schedule', when: '2020-01-01T09:00'
+  })).text();
+  assert.match(past, /이미 지난 시간/);
+
+  // 5) 시간이 되면 큐가 발송한다 (게이트웨이 호출은 가짜로)
+  await db.prepare(`UPDATE campaigns SET status='scheduled', scheduled_at=? WHERE id=1`).bind(Date.now() - 1000).run();
+  const sent = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body).phoneNumbers[0]); return new Response('{}', { status: 202 }); };
+  try { await processQueue(env, { batchSize: 5 }); } finally { globalThis.fetch = originalFetch; }
+  assert.deepEqual(sent, ['+821011112222']);
+  assert.equal((await db.prepare(`SELECT status FROM campaigns WHERE id=1`).first()).status, 'done');
+});

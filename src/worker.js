@@ -5,7 +5,7 @@ import { registerWebhook, verifySignature, unlockGateway } from './gateway.js';
 import { encryptText, decryptText, randomToken, sha256Hex } from './crypto.js';
 import {
   DEFAULT_TEMPLATE, createCampaign, scheduleCampaign, cancelCampaign, remindCampaign,
-  processQueue, handleInbound, setManualStatus, purgeExpired, campaignStats, sendDirect
+  processQueue, handleInbound, setManualStatus, purgeExpired, campaignStats, sendDirect, unscheduleCampaign
 } from './core.js';
 import { all, first, run } from './d1.js';
 import { normalizePhone } from './parser.js';
@@ -35,6 +35,32 @@ async function loadCampaign(db, user, id) {
     JOIN departments d ON d.id=k.department_id JOIN gateways g ON g.id=k.gateway_id WHERE k.id=?`, id);
   return c && canAccessDepartment(user, c.department_id) ? c : null;
 }
+
+// 예약 시간 입력(한국 시간) + 빠른 선택 버튼
+const schedulePicker = (name = 'when', required = false) => `
+  <div class="schedule">
+    <input type="datetime-local" name="${name}" id="${name}-input"${required ? ' required' : ''}>
+    <div class="quick">
+      <button type="button" data-plus="60">1시간 뒤</button>
+      <button type="button" data-tomorrow="9">내일 오전 9시</button>
+      <button type="button" data-tomorrow="14">내일 오후 2시</button>
+    </div>
+    <small>한국 시간 기준이에요. 문자는 정해진 시간 <b>1분 안</b>에 나가요.</small>
+  </div>`;
+const SCHEDULE_JS = `<script>
+(function () {
+  function fmt(d) { var p = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()); }
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('.quick button'); if (!b) return;
+    var input = b.closest('.schedule').querySelector('input[type=datetime-local]'); var d = new Date();
+    if (b.dataset.plus) d = new Date(d.getTime() + Number(b.dataset.plus) * 60000);
+    if (b.dataset.tomorrow) { d.setDate(d.getDate() + 1); d.setHours(Number(b.dataset.tomorrow), 0, 0, 0); }
+    input.value = fmt(d); input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  document.querySelectorAll('input[type=datetime-local]').forEach(function (i) { i.min = fmt(new Date()); });
+})();
+</script>`;
 
 const loginForm = (err = '') => `<form method="post" class="stack narrow"><h2>면접 참석 확인 시스템</h2>
   ${err ? `<p class="err">${esc(err)}</p>` : ''}
@@ -191,12 +217,19 @@ async function handle(request, env, ctx) {
           ${gws.length > 1 ? `<label>어느 폰으로 보낼까요? <select name="gateway_id">${gws.map((g) =>
             `<option value="${g.id}">${esc(deps.find((d) => d.id === g.department_id).name)} / ${esc(g.name)}</option>`).join('')}</select></label>`
             : `<input type="hidden" name="gateway_id" value="${gws[0].id}"><p><small>보내는 폰: ${esc(gws[0].name)}</small></p>`}
+          <fieldset class="when-choice">
+            <legend>언제 보낼까요?</legend>
+            <label class="check"><input type="radio" name="send_mode" value="manual" checked> <b>올린 다음에 제가 직접 보낼게요</b></label>
+            <label class="check"><input type="radio" name="send_mode" value="schedule"> <b>예약해서 보낼게요</b></label>
+            <div id="schedule-box">${schedulePicker('when')}</div>
+          </fieldset>
           <button class="btn big">명단 올리기</button>
           <details><summary>더 설정하기 (안 해도 돼요)</summary>
             <label>개인정보를 몇 일 동안 보관할까요? <small>(지나면 이름과 번호가 저절로 지워져요)</small>
               <input name="retention_days" type="number" value="90" min="1" max="3650"></label></details>
         </div></div>
       </form>
+      ${SCHEDULE_JS}
       <script>
       document.getElementById('f').addEventListener('change', async (e) => {
         const file = e.target.files[0];
@@ -220,16 +253,28 @@ async function handle(request, env, ctx) {
       retentionDays: Number(f.retention_days) || 90, userId: user.id, candidates: parsed.candidates
     });
     await audit(db, user, 'campaign.create', `campaign=${r.campaignId} accepted=${r.accepted} rejected=${r.rejected.length}`);
+    let scheduledAt = null;
+    let scheduleError = '';
+    if (f.send_mode === 'schedule') {
+      const at = f.when ? parseKstLocal(f.when) : NaN;
+      if (!Number.isFinite(at)) scheduleError = '예약 시간을 적지 않아서 예약하지 못했어요. 다음 화면에서 시간을 정해 주세요.';
+      else if (at < Date.now() - 60000) scheduleError = '이미 지난 시간이라 예약하지 못했어요. 다음 화면에서 시간을 다시 정해 주세요.';
+      else {
+        await scheduleCampaign(db, r.campaignId, at);
+        scheduledAt = at;
+        await audit(db, user, 'campaign.schedule', `campaign=${r.campaignId} at=${new Date(at).toISOString()}`);
+      }
+    }
     const rej = r.rejected.length
       ? `<div class="warn"><b>${r.rejected.length}명은 올리지 못했어요.</b> 아래 이유를 고쳐서 다시 올리거나, 그대로 두셔도 돼요.<ul>${r.rejected.slice(0, 50).map((x) => `<li>${x.row}번째 줄: ${esc(x.reason)}</li>`).join('')}</ul></div>` : '';
     return html(page(user, '올리기 완료',
       `<h2>명단을 올렸어요</h2><div class="ok big">✅ ${r.accepted}명을 불러왔어요.</div>${rej}
-       <p class="lead">아직 문자는 나가지 않았어요. 다음 화면에서 <b>"지금 보내기"</b>를 누르면 문자가 나가요.</p>
+       ${scheduledAt ? `<div class="ok big">⏰ ${esc(fmtTime(scheduledAt))}에 보내도록 예약했어요.</div><p class="lead">그때까지 컴퓨터나 폰을 만지지 않아도 돼요. 예약은 다음 화면에서 바꾸거나 취소할 수 있어요.</p>` : `${scheduleError ? `<div class="warn">${esc(scheduleError)}</div>` : ''}<p class="lead">아직 문자는 나가지 않았어요. 다음 화면에서 <b>"지금 보내기"</b>를 누르면 문자가 나가요.</p>`}
        <p><a class="btn big" href="/campaigns/${r.campaignId}">다음: 보내기 화면으로</a></p>`));
   }
 
   // 캠페인 상세 / 액션
-  if ((m = path.match(/^\/campaigns\/(\d+)(?:\/(send|cancel|remind|export\.csv|set))?$/))) {
+  if ((m = path.match(/^\/campaigns\/(\d+)(?:\/(send|unschedule|cancel|remind|export\.csv|set))?$/))) {
     const camp = await loadCampaign(db, user, Number(m[1]));
     if (!camp) return html(page(user, '없음', '<p>캠페인을 찾을 수 없습니다.</p>'), 404);
     const action = m[2];
@@ -242,6 +287,9 @@ async function handle(request, env, ctx) {
         await scheduleCampaign(db, camp.id, at);
         await audit(db, user, 'campaign.send', `campaign=${camp.id} at=${new Date(at).toISOString()}`);
         if (at <= Date.now()) ctx.waitUntil(processQueue(env).catch(console.error));
+      } else if (action === 'unschedule') {
+        await unscheduleCampaign(db, camp.id);
+        await audit(db, user, 'campaign.unschedule', `campaign=${camp.id}`);
       } else if (action === 'cancel') {
         await cancelCampaign(db, camp.id);
         await audit(db, user, 'campaign.cancel', `campaign=${camp.id}`);
@@ -298,14 +346,19 @@ async function handle(request, env, ctx) {
       <div class="${stateClass} big">${esc(stateText)}</div>
       ${canSend ? `
       <div class="card">
+        <h3 style="margin-top:0">언제 보낼까요?</h3>
         <form method="post" action="/campaigns/${camp.id}/send">
           <button class="btn big go">✉️ 지금 바로 보내기 (${totals.total}명)</button>
         </form>
-        <details><summary>나중 시간에 보내고 싶어요</summary>
-          <form method="post" action="/campaigns/${camp.id}/send" class="row">
-            <input type="datetime-local" name="when" required> <button class="btn">이 시간에 보내기</button>
-          </form><small>한국 시간 기준이에요.</small></details>
-      </div>` : ''}
+        <p style="text-align:center;margin:14px 0 6px"><small>또는</small></p>
+        <form method="post" action="/campaigns/${camp.id}/send" class="stack">
+          <b>⏰ ${camp.status === 'scheduled' ? '예약 시간 바꾸기' : '예약해서 보내기'}</b>
+          ${schedulePicker('when', true)}
+          <button class="btn">${camp.status === 'scheduled' ? '이 시간으로 바꾸기' : '이 시간에 보내기'}</button>
+        </form>
+        ${camp.status === 'scheduled' ? `<form method="post" action="/campaigns/${camp.id}/unschedule" style="margin-top:10px"><button class="btn danger">예약 취소하기 (보내지 않음)</button></form>` : ''}
+      </div>
+      ${SCHEDULE_JS}` : ''}
       <div class="counts">
         <div class="count yes"><b>${totals.attending || 0}</b>참석</div>
         <div class="count no"><b>${totals.absent || 0}</b>불참</div>
