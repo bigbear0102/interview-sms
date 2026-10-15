@@ -23,6 +23,8 @@ import {
   ALLOWED_DOMAIN, normalizeEmail, signUp, verifyEmail, resendVerification, requestReset, completeReset, peekToken
 } from './accounts.js';
 import { mailConfigured } from './mailer.js';
+import { monitorPhones, recordError } from './monitor.js';
+import { rateLimit } from './accounts.js';
 
 // 어느 실행 환경이 응답했는지 확인용 (Cloudflare Workers / Node)
 const RUNTIME = typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers' ? 'workers' : 'node';
@@ -92,7 +94,14 @@ async function handle(request, env, ctx) {
     return html('ok');
   }
 
-  if (path === '/healthz') return html('ok');
+  if (path === '/healthz') {
+    try {
+      await first(db, `SELECT 1 AS ok`);
+      return new Response(JSON.stringify({ ok: true, db: true, runtime: RUNTIME }), { headers: { 'Content-Type': 'application/json' } });
+    } catch (e) {
+      return new Response(JSON.stringify({ ok: false, db: false }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
 
   // CSRF 방어: 브라우저가 보낸 POST는 Origin 호스트가 현재 호스트와 같아야 한다
   if (method === 'POST') {
@@ -453,7 +462,17 @@ async function handle(request, env, ctx) {
 
 // 주기 작업: 발송 큐 처리 + 매 시 정각 파기/세션 정리 (Workers Cron, Node 서버 공용)
 export async function runScheduled(env, whenMs = Date.now()) {
-  await processQueue(env);
+  try {
+    await processQueue(env);
+  } catch (e) {
+    await recordError(env, 'cron', e, 'processQueue');
+  }
+  try {
+    // 폰 상태 점검은 5분에 한 번 (실행 환경과 무관하게 호출 간격으로 제한)
+    if (await rateLimit(env.DB, 'monitor:phones', 1, 4 * 60000)) await monitorPhones(env);
+  } catch (e) {
+    await recordError(env, 'monitor', e, 'monitorPhones');
+  }
   if (new Date(whenMs).getUTCMinutes() === 0) {
     await run(env.DB, `DELETE FROM sessions WHERE expires_at<?`, Date.now());
     await run(env.DB, `DELETE FROM login_fail WHERE until<?`, Date.now());
@@ -466,7 +485,9 @@ export async function handleRequest(request, env, ctx) {
   try {
     return await handle(request, env, ctx);
   } catch (e) {
-    console.error(e);
+    let p = '';
+    try { p = new URL(request.url).pathname; } catch { /* ignore */ }
+    await recordError(env, 'request', e, p);
     return html('internal error', 500);
   }
 }

@@ -1,0 +1,19 @@
+name: Deploy
+# 수동 실행(Actions 탭 → Deploy → Run workflow). 테스트 → 마이그레이션 → 배포 → 상태 확인 순서는 scripts/deploy.mjs 가 보장한다.
+# 필요한 저장소 시크릿: CLOUDFLARE_API_TOKEN (Workers 편집 + D1 편집 권한), CLOUDFLARE_ACCOUNT_ID
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

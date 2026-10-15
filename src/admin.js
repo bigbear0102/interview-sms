@@ -4,6 +4,7 @@ import { esc, fmtTime, icon } from './views.js';
 import { fmtPhone, fmtWhen, pageHeader, tableWrap, emptyState } from './ui.js';
 import { encryptText, decryptText, randomToken, hashPassword } from './crypto.js';
 import { registerWebhook, checkGateway, sendSms, unlockGateway } from './gateway.js';
+import { monitorPhones, recentErrors } from './monitor.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import { listUsers, normalizeEmail } from './accounts.js';
 import { sortDepartments } from './pages-auth.js';
@@ -108,6 +109,12 @@ export async function applyAdminAction(db, env, f, publicBase) {
           ok: false,
           msg: '시험 문자는 보냈는데, 폰이 받은 문자를 서버로 알려 주지 않았어요. 폰 SMSGate 앱에서 ① Home의 "Start Service"가 켜져 있는지(Stop Service로 보이는지) ② 설정의 Webhooks에 항목이 있는지 ③ 폰 문자 앱에 시험 문자가 실제로 도착했는지 확인해 주세요. ④ 문자 앱의 채팅(RCS) 기능이 꺼져 있는지 확인해 주세요.'
         };
+      }
+
+      case 'monitor_now': {
+        const res = await monitorPhones(env);
+        const bad = res.filter((r) => r.health === 'down').length;
+        return { ok: bad === 0, msg: res.length ? `폰 ${res.length}대를 점검했어요. ${bad ? `확인이 필요한 폰 ${bad}대가 있어요.` : '모두 정상이에요.'}` : '점검할 폰이 없어요.' };
       }
 
       case 'gw_hook': {
@@ -236,7 +243,7 @@ document.addEventListener('click', function (e) {
 export async function renderAdmin(db, env, publicBase, result = null) {
   const deps = await all(db, `SELECT * FROM departments ORDER BY name`);
   const gws = await all(db,
-    `SELECT g.id,g.name,g.username,g.active,g.own_number,g.department_id,(g.passphrase != '') AS locked,d.name dept FROM gateways g JOIN departments d ON d.id=g.department_id ORDER BY g.active DESC, g.id`);
+    `SELECT g.id,g.name,g.username,g.active,g.own_number,g.department_id,g.health,g.health_note,g.last_seen_at,g.health_checked_at,(g.passphrase != '') AS locked,d.name dept FROM gateways g JOIN departments d ON d.id=g.department_id ORDER BY g.active DESC, g.id`);
   const users = await listUsers(db);
   const orderedDeps = sortDepartments(deps);
   const apiUrl = phoneApiUrl(env);
@@ -416,8 +423,10 @@ export async function renderAdmin(db, env, publicBase, result = null) {
         <div class="pinfo">
           <div class="ptitle"><b>${esc(g.name)}</b>
             <span class="badge ${g.active ? 'ok' : ''}">${g.active ? '쓰는 중' : '쓰지 않음'}</span>
-            ${g.locked ? '<span class="badge info">암호화</span>' : ''}</div>
+            ${g.locked ? '<span class="badge info">암호화</span>' : ''}
+            ${g.active ? { ok: '<span class="badge ok">정상</span>', warn: '<span class="badge wait">응답 늦음</span>', down: '<span class="badge fail">확인 필요</span>' }[g.health] || '' : ''}</div>
           <div class="muted">${esc(g.dept)}${g.own_number ? ' · ' + esc(fmtPhone(g.own_number)) : ''}</div>
+          ${g.active && g.health !== 'unknown' ? `<div class="muted" style="font-size:14px">${g.last_seen_at ? '마지막 응답 ' + fmtWhen(g.last_seen_at) : ''}${g.health_note ? ' · ' + esc(g.health_note) : ''}</div>` : ''}
         </div>
         ${g.active ? `<div class="pbtns">
           <form method="post" class="inline"><input type="hidden" name="do" value="gw_check"><input type="hidden" name="gateway_id" value="${g.id}">
@@ -540,6 +549,17 @@ export async function renderAdmin(db, env, publicBase, result = null) {
       </div>
     </section>`;
 
+  const errs = await recentErrors(db, 8);
+  const system = `
+    <section class="section">
+      <div class="shead"><h2>시스템 상태</h2>
+        <form method="post" class="inline"><input type="hidden" name="do" value="monitor_now"><button class="btn secondary small">지금 점검하기</button></form></div>
+      <div class="card">
+        <p class="muted" style="margin-bottom:12px">폰은 5분마다 자동으로 점검하고, 문제가 있으면 관리자 메일로 알려요. 오류가 계속 나면 메일이 가요.</p>
+        ${errs.length ? `<h3 style="margin-bottom:8px">최근 오류</h3><ul class="mlist">${errs.map((e) => `<li class="mrow"><div class="mtop"><span class="badge fail">${esc(e.scope)}</span><span class="when">${fmtWhen(e.at)}</span></div><div class="mtext" style="font-size:14px">${esc(e.path)} ${esc(e.message)}</div></li>`).join('')}</ul>` : '<p>✓ 최근 오류가 없어요.</p>'}
+      </div>
+    </section>`;
+
   const connect = `
     <section class="section">
       <details class="card" ${hasPhone ? '' : 'open'}>
@@ -549,5 +569,5 @@ export async function renderAdmin(db, env, publicBase, result = null) {
     </section>`;
 
   return `${pageHeader({ title: '설정', desc: '문자를 보내는 폰과, 이 시스템을 쓰는 사람을 관리해요.' })}
-    ${status}${notice}${phones}${connect}${people}${COPY_JS}`;
+    ${status}${notice}${phones}${system}${connect}${people}${COPY_JS}`;
 }

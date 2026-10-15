@@ -101,12 +101,13 @@ export async function renderHome(db, user, deps) {
   const depIds = deps.map((d) => d.id);
   const today = kstDayStart();
   let sentToday = 0, recvToday = 0, scheduled = 0, review = 0, gwCount = 0;
-  let recent = [], camps = [];
+  let recent = [], camps = [], phones = [];
 
   if (depIds.length) {
     const dph = idList(depIds);
     const gwIds = (await all(db, `SELECT id FROM gateways WHERE active=1 AND department_id IN (${dph})`, ...depIds)).map((r) => r.id);
     gwCount = gwIds.length;
+    phones = await all(db, `SELECT name, health, health_note, last_seen_at FROM gateways WHERE active=1 AND department_id IN (${dph})`, ...depIds);
     if (gwIds.length) {
       const g = idList(gwIds);
       const m = await first(db, `SELECT COUNT(*) n FROM messages WHERE gateway_id IN (${g}) AND status='sent' AND at>=?`, ...gwIds, today);
@@ -142,6 +143,7 @@ export async function renderHome(db, user, deps) {
   return `${pageHeader({ title: '홈', desc: `${kstDateLabel()} 현황이에요.`,
     actions: `<a class="btn" href="/send">${icon('send', 18)}문자 보내기</a><a class="btn secondary" href="/campaigns/new">${icon('clipboard', 18)}면접 안내 만들기</a>` })}
     ${phoneNotice}
+    ${phoneHealthNotices(phones)}
     <div class="stats">
       ${stat({ value: sentToday, label: '오늘 보낸 문자' })}
       ${stat({ value: recvToday, label: '오늘 받은 문자', href: '/messages?dir=in' })}
@@ -169,6 +171,21 @@ export async function renderHome(db, user, deps) {
               action: `<p style="margin-top:16px"><a class="btn" href="/campaigns/new">면접 안내 만들기</a></p>` })}
       </div>
     </section>`;
+}
+
+// 폰 상태 알림: 문제가 있을 때만 눈에 띄게, 정상이면 한 줄로
+function phoneHealthNotices(phones) {
+  if (!phones.length) return '';
+  const bad = phones.filter((p) => p.health === 'down');
+  const warn = phones.filter((p) => p.health === 'warn');
+  const out = [];
+  for (const p of bad) out.push(`<div class="notice warn" role="alert">${icon('alert')}<div><b>${esc(p.name)} 상태를 확인해 주세요.</b><br>${esc(p.health_note || '폰이 응답하지 않아요.')}</div></div>`);
+  for (const p of warn) out.push(`<div class="notice info">${icon('info')}<div><b>${esc(p.name)}</b> ${esc(p.health_note || '응답이 늦어요.')}${p.last_seen_at ? ` <span class="muted">(마지막 응답 ${fmtWhen(p.last_seen_at)})</span>` : ''}</div></div>`);
+  if (!out.length) {
+    const seen = phones.map((p) => p.last_seen_at).filter(Boolean).sort().pop();
+    if (phones.every((p) => p.health === 'ok')) out.push(`<p class="muted" style="margin:-8px 0 16px;font-size:14px">${icon('check', 14)} 문자 보내는 폰 정상${seen ? ' · 마지막 응답 ' + fmtWhen(seen) : ''}</p>`);
+  }
+  return out.join('');
 }
 
 function campaignCard(r) {

@@ -13,7 +13,8 @@
 ```bash
 npm test                 # 반드시 통과 후 커밋
 npm run db:migrate       # 원격 D1 마이그레이션 (스키마 변경 시)
-npm run deploy           # 운영 배포 (Cloudflare Worker)
+npm run deploy           # 안전 배포(테스트→마이그레이션→배포→/healthz). 직접 `wrangler deploy` 하지 말 것
+npm run backup           # 운영 DB 내보내기(개인정보 포함, git 제외)
 npm start                # Node 서버 (회사 서버 이전용, .env 필요)
 # 게이트웨이(PC) 재시작: powershell -File deploywindowsestart.ps1  (웹 작업은 비활성화됨)
 ```
@@ -46,7 +47,8 @@ npm start                # Node 서버 (회사 서버 이전용, .env 필요)
 7. 시각은 **KST 고정**(`views.js` `fmtTime`/`parseKstLocal`). Worker 는 UTC 이므로 직접 `new Date(문자열)` 하지 않는다.
 8. **사용자 화면 문구는 초보자 기준**으로 쓴다(전문용어 대신 쉬운 말, 오류는 "무엇을 하면 되는지"까지). 화면을 바꾸면 `docs/GUIDE.md`도 함께 고친다.
 9. **화면은 `docs/UX.md`(IA·용어·패턴·접근성)와 `DESIGN.md`(Apple 스타일 토큰)를 따른다.** 새 화면은 `src/ui.js` 의 뱃지/숫자 카드/머리말을 쓰고, 전화번호·시각은 `fmtPhone`/`fmtWhen` 으로 표시한다. 색은 `src/views.js` 의 CSS 변수만 쓴다. 화면을 바꾸면 `node deploy/dev/render-preview.mjs`로 데스크톱·모바일(390px)을 직접 확인한다.
-10. 변경 후 `docs/DECISIONS.md`의 결정/로드맵을 최신으로 유지한다.
+10. **운영 감시 코드**(`src/monitor.js`)를 바꾸면 `test/monitor.test.js` 와 `docs/OPERATIONS.md`(판정 기준/알림 주기)를 함께 고친다. 새 Cron 작업은 `runScheduled` 안에서 `rateLimit` 으로 주기를 제한하고, 실패는 `recordError` 로 남긴다.
+11. 변경 후 `docs/DECISIONS.md`의 결정/로드맵을 최신으로 유지한다.
 
 ## 알려진 사항
 - 게이트웨이 API 경로(`/messages`, `/webhooks`)와 웹훅 payload 는 공식 문서 기준이며 **실제 폰으로 종단 시험 전**이다.

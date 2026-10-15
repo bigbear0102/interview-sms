@@ -4,14 +4,18 @@
   "private": true,
   "description": "면접 참석 여부 확인 문자 시스템 (Cloudflare Workers + D1, android-sms-gateway 기반)",
   "type": "module",
-  "engines": { "node": ">=22.5" },
+  "engines": {
+    "node": ">=22.5"
+  },
   "scripts": {
     "start": "node --env-file=.env src/node/server.js",
     "test": "node --test",
     "dev": "wrangler dev --test-scheduled",
     "db:migrate:local": "wrangler d1 migrations apply interview-sms --local",
     "db:migrate": "wrangler d1 migrations apply interview-sms --remote",
-    "deploy": "wrangler deploy"
+    "deploy": "node scripts/deploy.mjs",
+    "deploy:raw": "wrangler deploy",
+    "backup": "node scripts/backup.mjs"
   },
   "devDependencies": {
     "wrangler": "^4"
