@@ -135,6 +135,7 @@ details.help{background:var(--help-bg);border-radius:14px;padding:14px 16px;marg
 .tile .ico{font-size:30px;display:block;margin-bottom:6px}.tile b{font-size:20px;display:block;letter-spacing:-.02em}
 .tile small{display:block;margin-top:4px;font-size:15px}
 a.count{display:block;color:var(--ink)}a.count:hover{background:var(--pearl);text-decoration:none}
+.preview{white-space:pre-wrap;background:var(--parchment);border:1px solid var(--hairline);border-radius:14px;padding:14px 16px;line-height:1.6}
 .bigfile{font-size:17px;padding:22px;width:100%;border:2px dashed var(--hairline);border-radius:18px;background:var(--parchment)}
 @media (max-width:640px){main{padding:20px 14px 48px}.step{flex-direction:column;padding:18px}h2{font-size:28px}header a{padding:6px 8px}}
 `;

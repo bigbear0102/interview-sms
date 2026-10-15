@@ -3,24 +3,43 @@ import { parseReply, normalizePhone, isValidMobile } from './parser.js';
 import { sendSms, unlockGateway } from './gateway.js';
 import { all, first, run, stmt } from './d1.js';
 
-export const DEFAULT_TEMPLATE =
-  '[{사업장}] {이름}님, 면접 안내드립니다. 일시: {면접일시}. 참석 가능하시면 "참석", 어려우시면 "불참"이라고 답장해 주세요.';
+// 면접 안내 기본 문구. 사업장 이름은 넣지 않는다. (줄바꿈은 그대로 문자에 반영된다)
+export const DEFAULT_TEMPLATE = [
+  '안녕하세요, {이름}님.',
+  '면접 일정을 안내드립니다.',
+  '',
+  '일시: {면접일시}',
+  '',
+  '참석 가능하시면 "참석", 어려우시면 "불참"이라고 답장해 주세요.',
+  '감사합니다.'
+].join('\n');
+
+// 문자 본문 정리: 줄바꿈 통일, 줄 끝 공백 제거, 연속 공백 1칸, 빈 줄은 최대 1줄, 앞뒤 공백 제거
+export function cleanMessage(text) {
+  return String(text ?? '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t\u3000]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 export function renderTemplate(tpl, c) {
-  return tpl
-    .replaceAll('{사업장}', c.site)
+  return cleanMessage(String(tpl ?? '')
+    .replaceAll('{사업장}', c.site || '')
     .replaceAll('{이름}', c.name || '지원자')
-    .replaceAll('{면접일시}', c.interview_at || '추후 안내');
+    .replaceAll('{면접일시}', c.interview_at || '추후 안내'));
 }
 
 // candidates: [{site,name,phone,interview_at}]
-export async function createCampaign(db, { departmentId, gatewayId, name, template, retentionDays, userId, candidates }) {
+export async function createCampaign(db, { departmentId, gatewayId, name, template, retentionDays, userId, candidates, defaultSite = '' }) {
   const seen = new Set();
   const rejected = [];
   const accepted = [];
   candidates.forEach((c, i) => {
     const phone = normalizePhone(c.phone);
-    const site = (c.site || '').trim();
+    const site = (c.site || '').trim() || String(defaultSite || '').trim();
     if (!site) return rejected.push({ row: i + 2, reason: '사업장 없음' });
     if (!isValidMobile(phone)) return rejected.push({ row: i + 2, reason: `휴대폰 번호 오류(${c.phone})` });
     const key = `${site}|${phone}`;
@@ -31,7 +50,7 @@ export async function createCampaign(db, { departmentId, gatewayId, name, templa
   const ins = await run(db,
     `INSERT INTO campaigns (department_id, gateway_id, name, template, retention_days, created_by, created_at)
      VALUES (?,?,?,?,?,?,?)`,
-    departmentId, gatewayId, name, template || DEFAULT_TEMPLATE, retentionDays || 90, userId ?? null, Date.now());
+    departmentId, gatewayId, name, String(template || '').replace(/\r\n?/g, '\n').trim() || DEFAULT_TEMPLATE, retentionDays || 90, userId ?? null, Date.now());
   const campaignId = Number(ins.meta.last_row_id);
 
   // D1 은 쿼리당 바인딩 100개 제한 → 행 19개(5컬럼)씩 묶어 한 번의 batch 로 실행
@@ -200,7 +219,8 @@ export async function campaignStats(db, campaignId) {
 
 // 문자 보내기 화면: 받는 사람마다 큐에 넣는다. at 이 지금이면 곧바로, 미래면 그 시각에 발송된다.
 // 반환: { queued, rejected: [{phone, reason}] }
-export async function queueDirect(db, { gatewayId, phones, text, userId, at = Date.now() }) {
+export async function queueDirect(db, { gatewayId, phones, text: rawText, userId, at = Date.now() }) {
+  const text = cleanMessage(rawText);
   const seen = new Set();
   const rejected = [];
   const stmts = [];

@@ -4,7 +4,7 @@ import { candidatesFromCsv, toCsv } from './csv.js';
 import { registerWebhook, verifySignature, unlockGateway } from './gateway.js';
 import { encryptText, decryptText, randomToken, sha256Hex } from './crypto.js';
 import {
-  DEFAULT_TEMPLATE, createCampaign, scheduleCampaign, cancelCampaign, remindCampaign,
+  DEFAULT_TEMPLATE, renderTemplate, createCampaign, scheduleCampaign, cancelCampaign, remindCampaign,
   processQueue, handleInbound, setManualStatus, purgeExpired, campaignStats, sendDirect, unscheduleCampaign,
   queueDirect, cancelDirect
 } from './core.js';
@@ -151,17 +151,22 @@ async function handle(request, env, ctx) {
         <input type="hidden" name="name" value="면접 안내 ${esc(today)}">
         <div class="step"><div class="num">1</div><div class="body">
           <h3>명단 파일 고르기</h3>
-          <p>엑셀에 <b>사업장, 이름, 전화번호, 면접일시</b> 4가지를 적고 <b>CSV로 저장</b>한 파일이에요.</p>
+          <p>엑셀에 <b>사업장(원가중심점), 이름, 전화번호, 면접일시</b>를 적고 <b>CSV로 저장</b>한 파일이에요.</p>
           <p><a class="btn" href="/template.csv">연습용 양식 받기</a></p>
           <input type="file" id="f" accept=".csv,.txt" class="bigfile">
           <p id="fname"><small>아직 고른 파일이 없어요.</small></p>
+          <label>사업장(원가중심점) <small>명단에 사업장 열이 있으면 비워 두세요. 한 곳에만 보낸다면 여기에 적으면 전체에 적용돼요. (예: 1001 강남점)</small>
+            <input name="default_site" placeholder="예: 1001 강남점"></label>
+          <small>사업장 이름은 <b>문자에는 들어가지 않고</b>, 사업장별 회신 현황을 모아 볼 때만 쓰여요.</small>
           <details><summary>파일이 없으면 여기에 직접 붙여넣어도 돼요</summary>
             <textarea name="csv" id="csv" rows="6" placeholder="사업장,이름,전화번호,면접일시&#10;강남점,홍길동,010-1234-5678,10/20 14:00" required></textarea></details>
         </div></div>
         <div class="step"><div class="num">2</div><div class="body">
           <h3>보낼 문자 확인하기</h3>
-          <p><small>{이름}, {사업장}, {면접일시} 자리에는 각 사람의 정보가 저절로 들어가요.</small></p>
-          <textarea name="template" rows="5">${esc(DEFAULT_TEMPLATE)}</textarea>
+          <p><small>{이름}, {면접일시} 자리에는 각 사람의 정보가 저절로 들어가요. 줄바꿈은 그대로 문자에 반영돼요.</small></p>
+          <textarea name="template" id="template" rows="8">${esc(DEFAULT_TEMPLATE)}</textarea>
+          <p><b>미리보기</b> <small>(홍길동님에게 갈 문자 예시)</small></p>
+          <div id="preview" class="preview"></div>
         </div></div>
         <div class="step"><div class="num">3</div><div class="body">
           <h3>올리기</h3>
@@ -182,6 +187,14 @@ async function handle(request, env, ctx) {
       </form>
       ${SCHEDULE_JS}
       <script>
+      (function () {
+        var t = document.getElementById('template'), p = document.getElementById('preview');
+        function show() {
+          var s = t.value.split('{이름}').join('홍길동').split('{면접일시}').join('10/20 14:00').split('{사업장}').join('');
+          p.textContent = s.split('\n').map(function (l) { return l.replace(/[ \t]+/g, ' ').trim(); }).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+        }
+        t.addEventListener('input', show); show();
+      })();
       document.getElementById('f').addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -197,11 +210,12 @@ async function handle(request, env, ctx) {
     const f = form(await request.text());
     const gw = gws.find((g) => g.id === Number(f.gateway_id));
     if (!gw) return html(page(user, '오류', '<p>권한이 없습니다.</p>'), 403);
-    const parsed = candidatesFromCsv(f.csv || '');
+    const defaultSite = String(f.default_site || '').trim();
+    const parsed = candidatesFromCsv(f.csv || '', { requireSite: !defaultSite });
     if (parsed.errors.length) return html(page(user, '오류', `<p>${parsed.errors.map(esc).join('<br>')}</p><p><a href="/campaigns/new">돌아가기</a></p>`), 400);
     const r = await createCampaign(db, {
       departmentId: gw.department_id, gatewayId: gw.id, name: f.name || '무제', template: f.template,
-      retentionDays: Number(f.retention_days) || 90, userId: user.id, candidates: parsed.candidates
+      retentionDays: Number(f.retention_days) || 90, userId: user.id, candidates: parsed.candidates, defaultSite
     });
     await audit(db, user, 'campaign.create', `campaign=${r.campaignId} accepted=${r.accepted} rejected=${r.rejected.length}`);
     let scheduledAt = null;
@@ -261,7 +275,7 @@ async function handle(request, env, ctx) {
     if (action === 'export.csv') {
       await audit(db, user, 'campaign.export', `campaign=${camp.id}`);
       const rows = await all(db, `SELECT * FROM candidates WHERE campaign_id=? ORDER BY site, id`, camp.id);
-      const out = [['사업장', '이름', '전화번호', '면접일시', '상태', '답장', '발송시각', '응답시각']].concat(
+      const out = [['사업장(원가중심점)', '이름', '전화번호', '면접일시', '상태', '답장', '발송시각', '응답시각']].concat(
         rows.map((r) => [r.site, r.name, r.phone, r.interview_at, STATUS_LABEL[r.status] || r.status, r.reply_text,
           r.status === 'pending' ? '' : fmtTime(r.sent_at), fmtTime(r.replied_at)]));
       return new Response(toCsv(out), {
@@ -272,6 +286,20 @@ async function handle(request, env, ctx) {
     const siteFilter = url.searchParams.get('site') || '';
     const statusFilter = url.searchParams.get('status') || '';
     const stats = await campaignStats(db, camp.id);
+    const siteRows = stats.map((s) => {
+      const attending = s.attending || 0, absent = s.absent || 0, unclear = s.unclear || 0, noreply = s.sent || 0;
+      const failed = s.failed || 0, waiting = (s.pending || 0) + (s.sending || 0);
+      const replied = attending + absent + unclear;
+      const delivered = replied + noreply;
+      return { site: s.site, delivered, replied, rate: delivered ? Math.round((replied / delivered) * 100) + '%' : '-', attending, absent, unclear, noreply, failed, waiting };
+    });
+    const siteTotal = siteRows.reduce((t, r) => {
+      for (const k of ['delivered', 'replied', 'attending', 'absent', 'unclear', 'noreply', 'failed', 'waiting']) t[k] = (t[k] || 0) + r[k];
+      return t;
+    }, {});
+    siteTotal.rate = siteTotal.delivered ? Math.round((siteTotal.replied / siteTotal.delivered) * 100) + '%' : '-';
+    const firstCand = camp.template ? await first(db, `SELECT * FROM candidates WHERE campaign_id=? ORDER BY id LIMIT 1`, camp.id) : null;
+    const previewText = camp.template ? renderTemplate(camp.template, firstCand || { site: '', name: '홍길동', interview_at: '' }) : '';
     const where = ['campaign_id=?']; const args = [camp.id];
     if (siteFilter) { where.push('site=?'); args.push(siteFilter); }
     if (statusFilter) { where.push('status=?'); args.push(statusFilter); }
@@ -323,19 +351,21 @@ async function handle(request, env, ctx) {
         <a class="btn" href="/campaigns/${camp.id}/export.csv">엑셀로 저장하기</a>
         ${['scheduled', 'sending'].includes(camp.status) ? `<form method="post" action="/campaigns/${camp.id}/cancel"><button class="btn danger">보내기 멈추기</button></form>` : ''}
       </div>`}
-      <h3>사업장별로 보기</h3>
-      <table><tr><th>사업장</th><th>전체</th><th>참석</th><th>불참</th><th>답 없음</th><th>확인 필요</th><th>못 보냄</th><th>보내는 중</th></tr>
-      ${stats.map((s) => `<tr><td><a href="?site=${encodeURIComponent(s.site)}">${esc(s.site)}</a></td><td>${s.total}</td>
-        <td>${s.attending || 0}</td><td>${s.absent || 0}</td><td>${s.sent || 0}</td><td>${s.unclear || 0}</td>
-        <td>${s.failed || 0}</td><td>${(s.pending || 0) + (s.sending || 0)}</td></tr>`).join('')}</table>
+      ${camp.template ? `<details class="card"><summary><b>보낼 문자 미리보기</b></summary><div class="preview" style="margin-top:10px">${esc(previewText)}</div></details>` : ''}
+      <h3>사업장(원가중심점)별 회신 현황</h3>
+      <table><tr><th>사업장</th><th>보냄</th><th>회신</th><th>회신율</th><th>참석</th><th>불참</th><th>확인 필요</th><th>답 없음</th><th>못 보냄</th><th>보내는 중</th></tr>
+      ${siteRows.map((s) => `<tr><td><a href="?site=${encodeURIComponent(s.site)}">${esc(s.site)}</a></td><td>${s.delivered}</td>
+        <td><b>${s.replied}</b></td><td>${s.rate}</td><td>${s.attending}</td><td>${s.absent}</td><td>${s.unclear}</td>
+        <td>${s.noreply}</td><td>${s.failed}</td><td>${s.waiting}</td></tr>`).join('')}
+      ${siteRows.length > 1 ? `<tr><th>합계</th><th>${siteTotal.delivered}</th><th>${siteTotal.replied}</th><th>${siteTotal.rate}</th><th>${siteTotal.attending}</th><th>${siteTotal.absent}</th><th>${siteTotal.unclear}</th><th>${siteTotal.noreply}</th><th>${siteTotal.failed}</th><th>${siteTotal.waiting}</th></tr>` : ''}</table>
       <h3>사람별로 보기 ${siteFilter ? `· ${esc(siteFilter)}` : ''} ${statusFilter ? `· ${esc(STATUS_LABEL[statusFilter] || statusFilter)}` : ''}
         <small><a href="/campaigns/${camp.id}">전체 보기</a> ·
         ${['attending', 'absent', 'sent', 'unclear', 'failed'].map((s) =>
           `<a href="?${siteFilter ? `site=${encodeURIComponent(siteFilter)}&` : ''}status=${s}">${STATUS_LABEL[s]}</a>`).join(' · ')}</small></h3>
-      <table><tr><th>사업장</th><th>이름</th><th>전화</th><th>상태</th><th>받은 답장</th><th>직접 정하기</th></tr>
+      <table><tr><th>사업장(원가중심점)</th><th>이름</th><th>전화</th><th>상태</th><th>받은 답장</th><th>직접 정하기</th></tr>
       ${cands.map((c) => `<tr><td>${esc(c.site)}</td><td>${esc(c.name)}</td><td>${esc(c.phone)}</td>
         <td>${esc(STATUS_LABEL[c.status])}${c.manual ? ' (수동)' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
-        <td>${esc(c.reply_text)}</td>
+        <td style="white-space:pre-wrap">${esc(c.reply_text)}</td>
         <td>${camp.purged_at ? '' : `<form method="post" action="/campaigns/${camp.id}/set" class="inline">
           <input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(back)}">
           <button name="status" value="attending">참석</button><button name="status" value="absent">불참</button></form>`}</td></tr>`).join('')}
@@ -357,7 +387,7 @@ async function handle(request, env, ctx) {
 
   // 지원자 명단 양식 내려받기
   if (path === '/template.csv') {
-    const csv = toCsv([['사업장', '이름', '전화번호', '면접일시'], ['강남점', '홍길동', '010-1234-5678', '10/20 14:00'], ['서초점', '김철수', '010-2345-6789', '10/20 15:00']]);
+    const csv = toCsv([['사업장(원가중심점)', '이름', '전화번호', '면접일시'], ['1001 강남점', '홍길동', '010-1234-5678', '10/20 14:00'], ['1002 서초점', '김철수', '010-2345-6789', '10/20 15:00']]);
     return new Response(csv, { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="candidates-template.csv"; filename*=UTF-8''${encodeURIComponent('지원자명단-양식.csv')}` } });
   }
 

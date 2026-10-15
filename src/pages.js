@@ -102,7 +102,7 @@ export async function renderHome(db, user, deps) {
     <h3>최근 받은 문자 <small><a href="/messages?dir=in">전체 보기</a></small></h3>
     ${recent.length ? `<table><tr><th>시각</th><th>보낸 사람</th><th>내용</th><th></th></tr>
       ${recent.map((r) => `<tr><td>${fmtTime(r.received_at)}</td><td>${esc(r.sender)}</td>
-        <td style="white-space:normal;min-width:200px">${esc(r.message)}</td>
+        <td style="white-space:pre-wrap;min-width:200px">${esc(r.message)}</td>
         <td><a href="/send?to=${encodeURIComponent(r.sender)}">답장</a></td></tr>`).join('')}</table>`
       : '<p><small>아직 받은 문자가 없어요.</small></p>'}
 
@@ -207,7 +207,7 @@ export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice =
       ${rows.length ? '' : '<tr><td colspan="6">아직 없어요.</td></tr>'}
       ${rows.map((r) => `<tr><td>${fmtTime(r.at)}</td><td>${r.dir === 'in' ? '받음' : '보냄'}</td>
         <td><a href="/messages?phone=${encodeURIComponent(r.phone)}">${esc(r.phone)}</a></td>
-        <td style="white-space:normal;min-width:200px">${esc(r.text)}</td><td>${esc(MESSAGE_RESULT[r.result] || r.result)}</td>
+        <td style="white-space:pre-wrap;min-width:200px">${esc(r.text)}</td><td>${esc(MESSAGE_RESULT[r.result] || r.result)}</td>
         <td>${r.dir === 'out' && r.result === 'scheduled'
           ? `<form method="post" action="/messages/cancel" class="inline"><input type="hidden" name="id" value="${r.id}"><button>예약 취소</button></form>`
           : `<a href="/send?to=${encodeURIComponent(r.phone)}&gw=${r.gateway_id}">답장</a>`}</td></tr>`).join('')}</table>`;

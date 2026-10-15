@@ -34,7 +34,7 @@ test('화면이 오류 없이 열리고 안내가 보인다', async () => {
   assert.match(admin, /https:\/\/sms\.example\.test\/api\/mobile\/v1/); // 폰 앱에 입력할 주소
   assert.match(admin, /tok-123/);                                       // 비밀 토큰
   const tpl = await call('/template.csv');
-  assert.match(await tpl.text(), /사업장,이름,전화번호,면접일시/);
+  assert.match(await tpl.text(), /사업장\(원가중심점\),이름,전화번호,면접일시/);
 });
 
 test('폰 연결 마법사: 새 부서 생성 + 게이트웨이 등록 + 사용 중지', async () => {
@@ -256,4 +256,49 @@ test('홈: 오늘 보낸/받은 문자 요약과 빠른 실행', async () => {
   for (const href of ['/send', '/messages', '/messages?dir=scheduled', '/campaigns']) assert.ok(home.includes(`href="${href}"`), href);
   const camps = await call('/campaigns');
   assert.equal(camps.status, 200);
+});
+
+test('면접 안내: 사업장 직접 입력, 미리보기, 사업장별 회신 현황', async () => {
+  const { db, env, call, post } = await setup();
+  const setupEnvFor = async () => env;
+  await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
+  await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'폰','u',?, 't')`)
+    .bind(await encryptText('k', 'pw')).run();
+  const { handleInbound, processQueue } = await import('../src/core.js');
+
+  // 화면: 사업장 입력 칸, 기본 문구에 사업장 없음, 미리보기
+  const form = await (await call('/campaigns/new')).text();
+  assert.match(form, /name="default_site"/);
+  assert.match(form, /id="preview"/);
+  const tplText = (form.match(/<textarea name="template"[^>]*>([\s\S]*?)<\/textarea>/) || [])[1] || '';
+  assert.ok(tplText.length > 0 && !tplText.includes('사업장'), '기본 문구에 사업장 없음');
+
+  // 사업장 열 없이 올리고, 사업장은 화면에서 입력 (4명)
+  const csv = '이름,전화번호,면접일시\n가,010-1000-0001,10/20 14:00\n나,010-1000-0002,10/20 14:00\n다,010-1000-0003,10/20 14:00\n라,010-1000-0004,10/20 14:00\n';
+  const done = await (await post('/campaigns/new', { name: '시험', gateway_id: '1', csv, default_site: '1001 강남점', template: '' })).text();
+  assert.match(done, /4명을 불러왔어요/);
+
+  // 발송 → 회신 (참석 2, 불참 1, 무응답 1)
+  await db.prepare(`UPDATE campaigns SET status='scheduled', scheduled_at=? WHERE id=1`).bind(Date.now() - 1000).run();
+  const originalFetch = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (url, init) => { bodies.push(JSON.parse(init.body)); return new Response('{}', { status: 202 }); };
+  try { await processQueue({ ...(await setupEnvFor(db)) }, { batchSize: 10 }); } finally { globalThis.fetch = originalFetch; }
+  assert.equal(bodies.length, 4);
+  assert.ok(!bodies[0].textMessage.text.includes('강남점'));
+  assert.match(bodies[0].textMessage.text, /\n/);
+  await handleInbound(db, 1, { sender: '010-1000-0001', message: '참석합니다' });
+  await handleInbound(db, 1, { sender: '010-1000-0002', message: '참석' });
+  await handleInbound(db, 1, { sender: '010-1000-0003', message: '불참합니다' });
+
+  const detail = await (await call('/campaigns/1')).text();
+  assert.match(detail, /사업장\(원가중심점\)별 회신 현황/);
+  assert.match(detail, /1001 강남점/);
+  // 보냄 4, 회신 3, 회신율 75%, 참석 2, 불참 1
+  assert.match(detail.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), /1001 강남점 4 3 75% 2 1 0 1 0 0/);
+  assert.match(detail, /보낼 문자 미리보기/);
+
+  const csvOut = await (await call('/campaigns/1/export.csv')).text();
+  assert.match(csvOut, /사업장\(원가중심점\)/);
+  assert.match(csvOut, /1001 강남점/);
 });

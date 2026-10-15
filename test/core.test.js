@@ -4,7 +4,7 @@ import { createHmac } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { openSqliteD1 } from '../src/node/d1-sqlite.js';
 const createTestDb = () => openSqliteD1(':memory:', fileURLToPath(new URL('../migrations', import.meta.url)));
-import { createCampaign, scheduleCampaign, processQueue, handleInbound, purgeExpired, campaignStats, remindCampaign } from '../src/core.js';
+import { createCampaign, scheduleCampaign, processQueue, handleInbound, purgeExpired, campaignStats, remindCampaign, cleanMessage, renderTemplate, DEFAULT_TEMPLATE } from '../src/core.js';
 import { candidatesFromCsv } from '../src/csv.js';
 import { verifySignature, toE164 } from '../src/gateway.js';
 import { hashPassword, verifyPassword, encryptText, decryptText } from '../src/crypto.js';
@@ -49,7 +49,9 @@ test('발송 배치 처리 → 답장 매칭 → 상태 갱신 → 리마인드'
   assert.equal((await db.prepare(`SELECT status FROM campaigns`).first()).status, 'sending');
   await processQueue(env, { batchSize: 1, send });
   assert.equal(sent.length, 2);
-  assert.match(sent[0][1], /A점/);
+  assert.ok(!sent[0][1].includes('A점'), '문자에는 사업장 이름이 들어가지 않는다');
+  assert.match(sent[0][1], /홍길동님/);
+  assert.match(sent[0][1], /\n/, '줄바꿈이 유지된다');
   assert.equal((await db.prepare(`SELECT status FROM campaigns`).first()).status, 'done');
 
   assert.equal((await handleInbound(db, 1, { sender: '+821011112222', message: '불참합니다' })).result, 'absent');
@@ -137,4 +139,32 @@ test('종단간 암호화: 앱 규격(passphrase) 형식으로 암호화되고 �
   assert.equal(enc.isEncrypted, true);
   assert.match(enc.phoneNumbers[0], /^\$aes-256-cbc\/pbkdf2-sha1\$i=1000\$/);
   assert.match(enc.textMessage.text, /^\$aes-256-cbc\/pbkdf2-sha1\$i=1000\$/);
+});
+
+test('문자 서식: 사업장 이름 없음, 줄바꿈/띄어쓰기 정리', () => {
+  assert.ok(!DEFAULT_TEMPLATE.includes('{사업장}'));
+  const msg = renderTemplate(DEFAULT_TEMPLATE, { site: '1001 강남점', name: '홍길동', interview_at: '10/20  14:00' });
+  assert.ok(!msg.includes('강남점'));
+  assert.equal(msg.split('\n')[0], '안녕하세요, 홍길동님.');
+  assert.match(msg, /일시: 10\/20 14:00/);
+  assert.ok(!msg.includes('  '), '연속 공백 없음');
+  assert.ok(!/\n{3,}/.test(msg), '빈 줄은 최대 한 줄');
+  // 이름/일시가 비어도 어색하지 않게
+  assert.match(renderTemplate(DEFAULT_TEMPLATE, { site: 'x', name: '', interview_at: '' }), /지원자님[\s\S]*일시: 추후 안내/);
+  // 윈도우 줄바꿈, 줄 끝 공백, 과한 빈 줄
+  assert.equal(cleanMessage('가나다  \r\n\r\n\r\n\r\n라마바   \r\n'), '가나다\n\n라마바');
+});
+
+test('사업장(원가중심점): 열 이름 별칭, 화면에서 직접 입력, 사업장별 집계', async () => {
+  const { db } = await setup();
+  // 1) 원가중심점 열 이름 인식
+  const withCol = candidatesFromCsv('원가중심점,성명,휴대폰,면접일시\n1001,홍길동,010-1111-2222,10/20\n1002,김철수,010-3333-4444,10/20\n');
+  assert.deepEqual(withCol.candidates.map((x) => x.site), ['1001', '1002']);
+  // 2) 사업장 열이 없어도 화면에서 입력하면 전체에 적용
+  assert.ok(candidatesFromCsv('이름,전화번호\n홍길동,010-1111-2222\n').errors.length > 0);
+  const noCol = candidatesFromCsv('이름,전화번호\n홍길동,010-1111-2222\n김철수,010-3333-4444\n', { requireSite: false });
+  assert.equal(noCol.errors.length, 0);
+  const r = await createCampaign(db, { departmentId: 1, gatewayId: 1, name: 't', candidates: noCol.candidates, userId: null, defaultSite: '1001 강남점' });
+  assert.equal(r.accepted, 2);
+  assert.deepEqual((await campaignStats(db, r.campaignId)).map((s) => s.site), ['1001 강남점']);
 });
