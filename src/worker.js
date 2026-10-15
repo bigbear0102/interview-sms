@@ -25,6 +25,7 @@ import {
 import { mailConfigured } from './mailer.js';
 import { renderPhoneHelp } from './pages-help.js';
 import { renderPeople } from './people.js';
+import { renderLanding } from './landing.js';
 import { OUTCOMES, setOutcome, queueAutoReminders } from './reminders.js';
 import { phoneApiUrl, isPublicCloud } from './admin.js';
 import { monitorPhones, recordError } from './monitor.js';
@@ -213,6 +214,8 @@ async function handle(request, env, ctx) {
   }
 
   const user = await getUser(db, getCookie(request, 'sid'));
+  // 소개 페이지: 로그인 전 첫 화면(누구나), 로그인 후에는 /intro 로 다시 볼 수 있다
+  if (method === 'GET' && ((path === '/' && !user) || path === '/intro')) return html(renderLanding({ loggedIn: !!user }));
   if (!user) return redirect('/login');
   let unread = 0;
   if (method === 'GET' && path !== '/logout') unread = await unreadCount(db, user).catch(() => 0);

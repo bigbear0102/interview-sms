@@ -336,3 +336,20 @@ test('면접 안내: 한 명에게만 보내기, 홈 현황판(사업장·날짜
   assert.ok(home.includes('1001 강남점'));
   assert.ok(home.includes('합계'));
 });
+
+test('소개 페이지: 로그인 전 첫 화면은 누구나, 로그인 버튼과 장표가 있다', async () => {
+  const { db, env } = await setup();
+  const anon = await handleRequest(new Request('https://example.test/'), env, { waitUntil() {} });
+  assert.equal(anon.status, 200);
+  const html = await anon.text();
+  assert.match(html, /href="\/login"/);
+  assert.match(html, /발표 모드/);
+  assert.match(html, /noindex/);
+  assert.equal((html.match(/class="slide"/g) || []).length, 12);
+  assert.doesNotMatch(html, /tok-123|SMSGate|Cloudflare|sms\.example/); // 내부 정보 비노출
+  const login = await handleRequest(new Request('https://example.test/login'), env, { waitUntil() {} });
+  assert.equal(login.status, 200);
+  const other = await handleRequest(new Request('https://example.test/campaigns'), env, { waitUntil() {} });
+  assert.equal(other.status, 303);
+  void db;
+});

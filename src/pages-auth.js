@@ -25,7 +25,8 @@ export function renderLogin(err = '', info = '', email = '') {
       <button class="btn big block">로그인</button>
     </form>
     <p class="muted" style="margin-top:20px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
-      <a href="/forgot">비밀번호를 잊으셨나요?</a><span>처음이세요? <a href="/signup"><b>회원가입</b></a></span></p>`);
+      <a href="/forgot">비밀번호를 잊으셨나요?</a><span>처음이세요? <a href="/signup"><b>회원가입</b></a></span></p>
+      <p class="muted" style="text-align:center;margin-top:12px"><a href="/">시스템 소개 보기</a></p>`);
 }
 
 // 로그인했는데 이메일 인증 전일 때
