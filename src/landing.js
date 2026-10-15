@@ -58,7 +58,7 @@ const mockWindow = (inner) => `<div class="mock"><div class="bar"><i></i><i></i>
 
 const SLIDES = [
   // 1 표지
-  `<p class="kicker">면접 안내 문자 관리 시스템</p>
+  `<p class="kicker">문자 관리 시스템</p>
    <h1>면접 연락,<br>한 화면에서 끝내요.</h1>
    <p class="lead">현업 담당자가 직접 연락하고, 확인하고, 다시 알려 주던 일을 시스템이 대신 챙깁니다.</p>
    <p><span class="pill">명단 올리기</span><span class="pill">한 번에 보내기</span><span class="pill">답장 자동 집계</span><span class="pill">당일 아침 자동 리마인드</span></p>`,

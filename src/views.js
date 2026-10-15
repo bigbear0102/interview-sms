@@ -318,7 +318,7 @@ export const NAV = [
 
 // nav: 현재 위치(home|send|inbox|interview|settings|account)
 export function page(user, title, body, nav = '', badges = {}) {
-  const head = `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - 문자 관리</title>${HEAD_ASSETS}<style>${CSS}</style>`;
+  const head = `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - 문자 관리 시스템</title>${HEAD_ASSETS}<style>${CSS}</style>`;
   if (!user) return `<!doctype html><html lang="ko"><head>${head}</head><body><main id="main" class="auth">${body}</main></body></html>`;
 
   const items = NAV.filter((n) => !n.superOnly || user.role === 'super');
