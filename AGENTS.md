@@ -41,7 +41,8 @@ npm start                # Node 서버 (.env 필요, 마이그레이션은 시�
 6. **두 런타임 호환**: `src/worker.js`/`core.js`는 Node 전용 API(`node:*`)를 쓰지 않는다(WebCrypto, fetch만). Workers 한도(호출당 서브리퀘스트)를 고려해 발송은 `SEND_BATCH`건씩 나누고, 건별 D1 호출 대신 `db.batch`를 쓴다.
 7. 시각은 **KST 고정**(`views.js` `fmtTime`/`parseKstLocal`). Worker 는 UTC 이므로 직접 `new Date(문자열)` 하지 않는다.
 8. **사용자 화면 문구는 초보자 기준**으로 쓴다(전문용어 대신 쉬운 말, 오류는 "무엇을 하면 되는지"까지). 화면을 바꾸면 `docs/GUIDE.md`도 함께 고친다.
-9. 변경 후 `docs/DECISIONS.md`의 결정/로드맵을 최신으로 유지한다.
+9. **화면 디자인은 `DESIGN.md`(Apple 스타일)를 기준**으로 한다: 포인트 색은 파랑 하나, 흰색/연회색 면, 그림자 없음, 알약 버튼. 단 초보자용이라 글자 크기와 버튼은 일부러 크게 유지한다. 색은 `src/views.js` 의 CSS 변수로만 정의한다.
+10. 변경 후 `docs/DECISIONS.md`의 결정/로드맵을 최신으로 유지한다.
 
 ## 알려진 사항
 - 게이트웨이 API 경로(`/messages`, `/webhooks`)와 웹훅 payload 는 공식 문서 기준이며 **실제 폰으로 종단 시험 전**이다.
