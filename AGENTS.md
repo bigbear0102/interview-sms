@@ -12,6 +12,7 @@
 ## 명령어
 ```bash
 npm test                 # 반드시 통과 후 커밋
+# 운영 PC 재시작: powershell -File deploywindowsestart.ps1
 npm start                # Node 서버 (.env 필요, 마이그레이션은 시작 시 자동 적용)
 # Workers 배포 시: npm run db:migrate && npm run deploy
 ```

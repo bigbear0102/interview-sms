@@ -21,8 +21,8 @@ cloudflared tunnel route dns --overwrite-dns <터널UUID> <도메인>   # 도메
 powershell -ExecutionPolicy Bypass -File deploy\windows\install-tasks.ps1   # 로그온 시 자동 시작
 ```
 수동 실행: `npm start` (웹), `cloudflared tunnel --config <설정> run` (터널).
-**재시작은 작업 스케줄러로 한다**: `Stop-ScheduledTask interview-sms-web; Start-ScheduledTask interview-sms-web`
-(node 프로세스를 직접 `Stop-Process` 하면 같은 콘솔의 터널 작업이 함께 종료될 수 있다.)
+**코드를 바꾼 뒤에는 `powershell -ExecutionPolicy Bypass -File deploywindowsestart.ps1`** 로 재시작한다.
+(`Stop-ScheduledTask`만 쓰면 자식 node 프로세스가 남아 옛 코드가 계속 서비스될 수 있다. 재시작 후 `curl https://interview.bigbears.me/login` 에 새 CSS 가 보이는지 확인한다.)
 로그: `data/web.log`, `data/tunnel.log`, `docker compose logs`.
 
 ## 2. 폰 연결 (부서마다 1대)
