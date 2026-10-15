@@ -6,7 +6,7 @@
 |---|---|---|
 | **면접 웹** | **Cloudflare Workers + D1** (`interview-sms`) | https://interview.bigbears.me |
 | **SMS 게이트웨이** | **공개 클라우드 `api.sms-gate.app`** (문자 내용/번호는 앱의 종단간 암호화로 보호) | `https://api.sms-gate.app/3rdparty/v1` |
-| (이전 방식) 자체 게이트웨이 서버 (Docker) | 이 PC — 폰이 공개 서버로 옮겨 간 뒤 중지 | https://sms.bigbears.me (Cloudflare Tunnel `interview-sms`) |
+| (이전 방식) 자체 게이트웨이 서버 (Docker) | 이 PC — **2026-10-15 중지함** (데이터 볼륨은 보존) | https://sms.bigbears.me (터널도 중지, DNS 레코드는 남아 있음) |
 | 폰 (SMSGate 앱) | 부서 폰 | — |
 
 - 공개 클라우드를 쓰면 **PC/서버가 필요 없다.** (웹=Cloudflare, 게이트웨이=공개 서버, 폰만 켜져 있으면 됨)
@@ -17,6 +17,13 @@
 - Worker 설정: `wrangler.jsonc`. 시크릿: `ENCRYPTION_KEY`, `GATEWAY_PRIVATE_TOKEN` (`deploy/cloudflare/put-secrets.mjs`).
 - 접속 경로: DNS(`interview`)는 기존 터널 CNAME 그대로 두고, Worker **경로(route) `interview.bigbears.me/*`** 가 요청을 가로챈다.
   응답 헤더 `X-Runtime: workers` 로 어느 쪽이 응답했는지 확인할 수 있다 (`node` 이면 PC 가 응답한 것).
+
+### PC 게이트웨이 중지 상태와 되돌리기
+- 중지한 것: Docker 컨테이너 3개(`docker compose stop`), 작업 `interview-sms-tunnel`/`interview-sms-web` 비활성화.
+- **PC 는 꺼도 된다.** 웹/발송/수신은 Cloudflare + 공개 서버 + 폰만으로 동작한다 (중지 후 연결 확인/받기 시험 통과).
+- 자체 서버 방식으로 되돌리려면: `cd deploy/gateway && docker compose --env-file .env start`, 작업 `interview-sms-tunnel` 사용 설정,
+  `wrangler.jsonc` 의 `GATEWAY_URL` 을 `https://sms.bigbears.me/api/3rdparty/v1` 로 바꿔 배포, 폰 앱 서버 주소/토큰을 되돌리고 설정 화면에서 계정을 다시 연결한다.
+- 더 이상 필요 없으면 `docker compose down -v`(데이터 삭제)와 Cloudflare DNS 의 `sms` 레코드, 터널 `interview-sms` 를 삭제한다.
 
 ### 배포/변경 (Worker)
 ```bash
