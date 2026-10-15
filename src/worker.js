@@ -5,9 +5,10 @@ import { registerWebhook, verifySignature } from './gateway.js';
 import { encryptText, decryptText, randomToken, sha256Hex } from './crypto.js';
 import {
   DEFAULT_TEMPLATE, createCampaign, scheduleCampaign, cancelCampaign, remindCampaign,
-  processQueue, handleInbound, setManualStatus, purgeExpired, campaignStats
+  processQueue, handleInbound, setManualStatus, purgeExpired, campaignStats, sendDirect
 } from './core.js';
 import { all, first, run } from './d1.js';
+import { normalizePhone } from './parser.js';
 import { page, esc, STATUS_LABEL, fmtTime, parseKstLocal } from './views.js';
 
 const html = (body, status = 200, headers = {}) =>
@@ -325,6 +326,63 @@ async function handle(request, env, ctx) {
     const rows = await all(db, `SELECT a.*, u.username FROM audit a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 300`);
     return html(page(user, '감사 로그', `<h2>감사 로그 <small>최근 300건</small></h2><table><tr><th>시각</th><th>사용자</th><th>동작</th><th>내용</th></tr>${rows.map((r) =>
       `<tr><td>${fmtTime(r.at)}</td><td>${esc(r.username || '')}</td><td>${esc(r.action)}</td><td>${esc(r.detail)}</td></tr>`).join('')}</table>`));
+  }
+
+  // 문자함: 임의 번호로 직접 발송 + 송수신 내역
+  if (path === '/messages') {
+    const deps = await visibleDepartments(db, user);
+    const gws = (await all(db, `SELECT id,department_id,name FROM gateways`)).filter((g) => deps.some((d) => d.id === g.department_id));
+    if (!gws.length) return html(page(user, '문자함', '<p>사용 가능한 게이트웨이(폰)가 없습니다.</p>'));
+    let notice = '';
+    if (method === 'POST') {
+      const f = form(await request.text());
+      const gwRow = gws.find((g) => g.id === Number(f.gateway_id));
+      const phones = String(f.phones || '').split(/[s,;]+/).filter(Boolean);
+      const text = String(f.text || '').trim();
+      if (!gwRow || !phones.length || !text) {
+        notice = '<p class="err">폰, 받는 번호, 내용을 모두 입력하세요.</p>';
+      } else if (phones.length > 20) {
+        notice = '<p class="err">한 번에 최대 20명까지 보낼 수 있습니다. 대량 발송은 캠페인을 사용하세요.</p>';
+      } else {
+        const full = await first(db, `SELECT * FROM gateways WHERE id=?`, gwRow.id);
+        const gw = { ...full, password: await decryptText(env.ENCRYPTION_KEY, full.password) };
+        const res = await sendDirect(db, gw, phones, text, user.id);
+        await audit(db, user, 'message.send', `gateway=${gw.id} count=${res.length} ok=${res.filter((r) => r.ok).length}`);
+        const ok = res.filter((r) => r.ok).length;
+        notice = `<p>${ok}건 발송 요청 완료${res.length - ok ? `, <span class="err">${res.length - ok}건 실패</span>` : ''}.</p>` +
+          res.filter((r) => !r.ok).map((r) => `<p class="err">${esc(r.phone)}: ${esc(r.error)}</p>`).join('');
+      }
+    }
+    const ids = gws.map((g) => g.id);
+    const ph = ids.map(() => '?').join(',');
+    const filter = normalizePhone(url.searchParams.get('phone') || '');
+    const phoneCond = filter ? ' AND phone=?' : '';
+    const phoneArgs = filter ? [filter] : [];
+    const rows = await all(db,
+      `SELECT * FROM (
+         SELECT 'out' dir, phone, text, status result, at, gateway_id FROM messages WHERE gateway_id IN (${ph})${phoneCond}
+         UNION ALL
+         SELECT 'in' dir, sender phone, message text, result, received_at at, gateway_id FROM inbound WHERE gateway_id IN (${ph})${filter ? ' AND sender=?' : ''}
+       ) ORDER BY at DESC LIMIT 100`, ...ids, ...phoneArgs, ...ids, ...phoneArgs);
+    const RES = { sent: '발송요청', failed: '실패', attending: '참석', absent: '불참', unclear: '확인필요', unmatched: '캠페인 외' };
+    const toPhone = url.searchParams.get('to') || '';
+    const gwSel = Number(url.searchParams.get('gw')) || gws[0].id;
+    const body = `<h2>문자함</h2>${notice}
+      <form method="post" class="stack">
+        <label>보낼 폰 <select name="gateway_id">${gws.map((g) =>
+          `<option value="${g.id}"${g.id === gwSel ? ' selected' : ''}>${esc(deps.find((d) => d.id === g.department_id).name)} / ${esc(g.name)}</option>`).join('')}</select></label>
+        <label>받는 번호 <small>여러 명은 쉼표/줄바꿈으로 구분 (최대 20명)</small>
+          <textarea name="phones" rows="2" placeholder="010-1234-5678">${esc(toPhone)}</textarea></label>
+        <label>내용 <textarea name="text" rows="3" required></textarea></label>
+        <button class="btn">문자 보내기</button>
+      </form>
+      <h3>송수신 내역 <small>최근 100건${filter ? ` · ${esc(filter)} <a href="/messages">전체 보기</a>` : ''}</small></h3>
+      <table><tr><th>시각</th><th>구분</th><th>번호</th><th>내용</th><th>결과</th><th></th></tr>
+      ${rows.map((r) => `<tr><td>${fmtTime(r.at)}</td><td>${r.dir === 'in' ? '수신' : '발신'}</td>
+        <td><a href="/messages?phone=${encodeURIComponent(r.phone)}">${esc(r.phone)}</a></td>
+        <td style="white-space:normal;min-width:200px">${esc(r.text)}</td><td>${esc(RES[r.result] || r.result)}</td>
+        <td><a href="/messages?to=${encodeURIComponent(r.phone)}&gw=${r.gateway_id}">답장</a></td></tr>`).join('')}</table>`;
+    return html(page(user, '문자함', body));
   }
 
   // 비밀번호 변경

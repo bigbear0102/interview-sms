@@ -27,6 +27,7 @@ npm start                # Node 서버 (.env 필요, 마이그레이션은 시�
 | `src/gateway.js` | 게이트웨이 API 호출, 웹훅 등록, HMAC 서명 검증 |
 | `src/auth.js` / `src/crypto.js` | 세션/권한, PBKDF2·AES-GCM·HMAC (WebCrypto) |
 | `src/csv.js` / `src/views.js` / `src/d1.js` | CSV, HTML·KST 시각, D1 헬퍼 |
+| `/messages` (worker.js) | 문자함: 임의 번호 직접 발송(`sendDirect`) + 송수신 내역(`messages`, `inbound`) |
 | `migrations/*.sql` | D1 스키마 (번호 순서 적용) |
 | `test/` | 단위 테스트. `src/node/d1-sqlite.js`(node:sqlite 기반 D1 어댑터)를 사용 |
 

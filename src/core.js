@@ -151,6 +151,8 @@ export async function purgeExpired(db, now = Date.now()) {
   }
   // 매칭되지 않은 수신 문자도 90일 후 삭제
   await run(db, `DELETE FROM inbound WHERE candidate_id IS NULL AND received_at < ?`, now - 90 * 86400000);
+  // 직접 발송 기록도 90일 후 삭제
+  await run(db, `DELETE FROM messages WHERE at < ?`, now - 90 * 86400000);
   return due.length;
 }
 
@@ -165,4 +167,25 @@ export async function campaignStats(db, campaignId) {
     s.total += r.n;
   }
   return [...bySite.values()].sort((a, b) => a.site.localeCompare(b.site, 'ko'));
+}
+
+// 캠페인과 무관하게 임의 번호로 문자를 보낸다. gw.password 는 복호화된 상태여야 한다.
+export async function sendDirect(db, gw, phones, text, userId, send = sendSms) {
+  const results = [];
+  const stmts = [];
+  for (const raw of phones) {
+    const phone = normalizePhone(raw);
+    if (!isValidMobile(phone)) { results.push({ phone: raw, ok: false, error: '휴대폰 번호 형식 오류' }); continue; }
+    try {
+      await send(gw, phone, text);
+      results.push({ phone, ok: true });
+      stmts.push(stmt(db, `INSERT INTO messages (gateway_id,phone,text,status,user_id,at) VALUES (?,?,?,?,?,?)`, gw.id, phone, text, 'sent', userId ?? null, Date.now()));
+    } catch (e) {
+      const error = String(e.message).slice(0, 300);
+      results.push({ phone, ok: false, error });
+      stmts.push(stmt(db, `INSERT INTO messages (gateway_id,phone,text,status,error,user_id,at) VALUES (?,?,?,?,?,?,?)`, gw.id, phone, text, 'failed', error, userId ?? null, Date.now()));
+    }
+  }
+  if (stmts.length) await db.batch(stmts);
+  return results;
 }

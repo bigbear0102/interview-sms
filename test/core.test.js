@@ -100,3 +100,15 @@ test('KST 시각 파싱/표시', () => {
   assert.equal(new Date(ms).toISOString(), '2026-10-20T05:00:00.000Z');
   assert.equal(fmtTime(ms), '2026-10-20 14:00');
 });
+
+test('직접 발송: 번호 검증, 기록, 실패 처리', async () => {
+  const { db } = await setup();
+  const { sendDirect } = await import('../src/core.js');
+  const ok = [];
+  const res = await sendDirect(db, { id: 1, password: 'pw' }, ['010-1111-2222', '123', '01033334444'], '안녕',
+    null, async (gw, phone, text) => { if (phone === '01033334444') throw new Error('offline'); ok.push([phone, text]); });
+  assert.deepEqual(res.map((r) => r.ok), [true, false, false]);
+  assert.deepEqual(ok, [['01011112222', '안녕']]);
+  const rows = (await db.prepare(`SELECT status FROM messages ORDER BY id`).all()).results.map((r) => r.status);
+  assert.deepEqual(rows, ['sent', 'failed']);
+});
