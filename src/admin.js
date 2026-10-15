@@ -172,7 +172,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
               <small>파일이 여러 개이면 이름에 <b>insecure</b>가 들어간 것은 고르지 마세요.</small></li>
           <li>다운로드가 끝나면 <b>열기</b>를 누르고, <b>설치</b>를 누릅니다.<br>
               <small>"이 출처 허용" 같은 화면이 나오면 스위치를 켜고 뒤로 가서 다시 <b>설치</b>를 누르세요.</small></li>
-          <li>설치가 끝나면 <b>열기</b>를 눌러 앱(<b>SMS Gateway</b>)을 엽니다.</li>
+          <li>설치가 끝나면 <b>열기</b>를 눌러 앱(<b>SMSGate</b>)을 엽니다.</li>
         </ol>
       </div>
     </div>
@@ -189,7 +189,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
           <summary>🔧 <b>허용 버튼이 회색이라 눌리지 않아요</b> (갤럭시 폴드 등에서 자주 생겨요)</summary>
           <ol>
             <li>안 눌리는 <b>허용</b> 버튼을 <b>한 번 눌러 보고</b> 나옵니다.</li>
-            <li><b>설정</b> 앱 → <b>애플리케이션</b>(또는 <b>앱</b>) → <b>SMS Gateway</b>를 누릅니다.</li>
+            <li><b>설정</b> 앱 → <b>애플리케이션</b>(또는 <b>앱</b>) → <b>SMSGate</b>를 누릅니다.</li>
             <li>화면 <b>오른쪽 위의 점 세 개(⋮)</b>를 누릅니다.</li>
             <li><b>제한된 설정 허용</b>을 누르고, 지문이나 비밀번호로 확인합니다.</li>
             <li>뒤로 가서 <b>권한</b> → <b>문자(SMS)</b> → <b>허용</b>을 누릅니다.</li>
@@ -204,7 +204,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
       <div class="body">
         <h3>폰이 꺼지지 않게 설정하기</h3>
         <ol>
-          <li><b>설정</b> 앱 → <b>애플리케이션</b> → <b>SMS Gateway</b> → <b>배터리</b>를 누릅니다.</li>
+          <li><b>설정</b> 앱 → <b>애플리케이션</b> → <b>SMSGate</b> → <b>배터리</b>를 누릅니다.</li>
           <li><b>제한 없음</b>을 선택합니다.</li>
           <li>이 폰은 <b>충전기에 계속 꽂아 두고</b> 전원을 켜 두세요.</li>
         </ol>
