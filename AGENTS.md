@@ -27,6 +27,7 @@ npm start                # Node 서버 (.env 필요, 마이그레이션은 시�
 | `src/gateway.js` | 게이트웨이 API 호출, 웹훅 등록, HMAC 서명 검증 |
 | `src/auth.js` / `src/crypto.js` | 세션/권한, PBKDF2·AES-GCM·HMAC (WebCrypto) |
 | `src/csv.js` / `src/views.js` / `src/d1.js` | CSV, HTML·KST 시각, D1 헬퍼 |
+| `src/admin.js` | 설정 화면(폰 연결 마법사, 부서, 관리자). 초보자용 문구는 `docs/GUIDE.md` 와 맞춘다 |
 | `/messages` (worker.js) | 문자함: 임의 번호 직접 발송(`sendDirect`) + 송수신 내역(`messages`, `inbound`) |
 | `migrations/*.sql` | D1 스키마 (번호 순서 적용) |
 | `test/` | 단위 테스트. `src/node/d1-sqlite.js`(node:sqlite 기반 D1 어댑터)를 사용 |
@@ -39,7 +40,8 @@ npm start                # Node 서버 (.env 필요, 마이그레이션은 시�
 5. 권한: 캠페인/지원자 접근은 `canAccessDepartment`를 거친다. 새 화면에서 누락하지 않는다.
 6. **두 런타임 호환**: `src/worker.js`/`core.js`는 Node 전용 API(`node:*`)를 쓰지 않는다(WebCrypto, fetch만). Workers 한도(호출당 서브리퀘스트)를 고려해 발송은 `SEND_BATCH`건씩 나누고, 건별 D1 호출 대신 `db.batch`를 쓴다.
 7. 시각은 **KST 고정**(`views.js` `fmtTime`/`parseKstLocal`). Worker 는 UTC 이므로 직접 `new Date(문자열)` 하지 않는다.
-8. 변경 후 `docs/DECISIONS.md`의 결정/로드맵을 최신으로 유지한다.
+8. **사용자 화면 문구는 초보자 기준**으로 쓴다(전문용어 대신 쉬운 말, 오류는 "무엇을 하면 되는지"까지). 화면을 바꾸면 `docs/GUIDE.md`도 함께 고친다.
+9. 변경 후 `docs/DECISIONS.md`의 결정/로드맵을 최신으로 유지한다.
 
 ## 알려진 사항
 - 게이트웨이 API 경로(`/messages`, `/webhooks`)와 웹훅 payload 는 공식 문서 기준이며 **실제 폰으로 종단 시험 전**이다.

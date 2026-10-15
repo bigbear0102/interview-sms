@@ -37,7 +37,8 @@ npm test                  # 단위 테스트
 |---|---|
 | [AGENTS.md](AGENTS.md) | AI/개발자 작업 규칙 (먼저 읽을 것) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 구조, 데이터 모델, 처리 흐름, 한도 |
-| [docs/RUNBOOK.md](docs/RUNBOOK.md) | 폰 연결, 최초 설정, 운영, 장애 대응 |
+| [docs/GUIDE.md](docs/GUIDE.md) | **처음 쓰는 분을 위한 사용 안내** (폰 연결, 발송, 결과 확인) |
+| [docs/RUNBOOK.md](docs/RUNBOOK.md) | 설치, 운영, 장애 대응 (관리자/개발자용) |
 | [docs/PARSING_RULES.md](docs/PARSING_RULES.md) | 답장 해석 규칙과 한계 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | 설계 결정 기록과 로드맵 |
 

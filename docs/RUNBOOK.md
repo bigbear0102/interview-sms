@@ -21,6 +21,8 @@ cloudflared tunnel route dns --overwrite-dns <터널UUID> <도메인>   # 도메
 powershell -ExecutionPolicy Bypass -File deploy\windows\install-tasks.ps1   # 로그온 시 자동 시작
 ```
 수동 실행: `npm start` (웹), `cloudflared tunnel --config <설정> run` (터널).
+**재시작은 작업 스케줄러로 한다**: `Stop-ScheduledTask interview-sms-web; Start-ScheduledTask interview-sms-web`
+(node 프로세스를 직접 `Stop-Process` 하면 같은 콘솔의 터널 작업이 함께 종료될 수 있다.)
 로그: `data/web.log`, `data/tunnel.log`, `docker compose logs`.
 
 ## 2. 폰 연결 (부서마다 1대)
@@ -34,6 +36,7 @@ powershell -ExecutionPolicy Bypass -File deploy\windows\install-tasks.ps1   # �
 6. (QR 스캔 화면이 나오면 위 URL/토큰을 입력하는 다른 방법일 수 있다. 수동 입력이 가능하면 수동으로 한다)
 
 ## 3. 웹에서 설정 (전체 관리자)
+(자세한 화면 안내는 [GUIDE.md](GUIDE.md). 웹의 **설정** 화면이 같은 순서로 안내한다.)
 1. https://interview.bigbears.me 로그인 (`admin` / `.env` 의 `ADMIN_PASSWORD`) → **`/password`에서 변경**
 2. 관리 → 부서 추가
 3. 관리 → 게이트웨이 추가: 앱에 표시된 Username/Password 입력 (API 주소는 기본값 유지)

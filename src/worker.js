@@ -9,6 +9,7 @@ import {
 } from './core.js';
 import { all, first, run } from './d1.js';
 import { normalizePhone } from './parser.js';
+import { applyAdminAction, renderAdmin } from './admin.js';
 import { page, esc, STATUS_LABEL, fmtTime, parseKstLocal } from './views.js';
 
 const html = (body, status = 200, headers = {}) =>
@@ -121,7 +122,18 @@ async function handle(request, env, ctx) {
           FROM campaigns k JOIN departments d ON d.id=k.department_id
           WHERE k.department_id IN (${deps.map(() => '?').join(',')}) ORDER BY k.id DESC LIMIT 200`, ...deps)
       : [];
+    const gwCount = (await first(db, `SELECT COUNT(*) n FROM gateways WHERE active=1`)).n;
+    const guide = `<div class="card guide">
+        <h3>시작하기</h3>
+        <ol class="steps">
+          <li>${gwCount ? '✅' : '👉'} <b>문자 보낼 폰 연결</b> — ${user.role === 'super' ? '<a href="/admin">설정</a>에서 안내에 따라 진행합니다.' : '전체 관리자에게 폰 연결을 요청하세요.'}</li>
+          <li>${rows.length ? '✅' : '👉'} <b>지원자 명단으로 캠페인 만들기</b> — <a href="/template.csv">명단 양식 내려받기</a> 후 <a href="/campaigns/new">새 캠페인</a>에서 올립니다.</li>
+          <li>👉 <b>발송 후 결과 확인</b> — 캠페인을 열면 사업장별 참석/불참 현황이 보입니다.</li>
+        </ol>
+        <p><small>그냥 문자를 보내거나 받은 문자를 보려면 <a href="/messages">문자함</a>을 이용하세요.</small></p>
+      </div>`;
     const body = `<h2>면접 참석 확인 캠페인</h2>
+      ${rows.length && gwCount ? '' : guide}
       <p><a class="btn" href="/campaigns/new">+ 새 캠페인</a></p>
       <table><tr><th>ID</th><th>부서</th><th>이름</th><th>상태</th><th>예약</th><th>전체</th><th>참석</th><th>불참</th><th>미응답/확인필요</th></tr>
       ${rows.map((r) => `<tr><td>${r.id}</td><td>${esc(r.dept)}</td><td><a href="/campaigns/${r.id}">${esc(r.name)}</a></td>
@@ -134,9 +146,9 @@ async function handle(request, env, ctx) {
   // 새 캠페인
   if (path === '/campaigns/new') {
     const deps = await visibleDepartments(db, user);
-    const gws = (await all(db, `SELECT id,department_id,name FROM gateways`)).filter((g) => deps.some((d) => d.id === g.department_id));
+    const gws = (await all(db, `SELECT id,department_id,name FROM gateways WHERE active=1`)).filter((g) => deps.some((d) => d.id === g.department_id));
     if (method === 'GET') {
-      if (!gws.length) return html(page(user, '새 캠페인', '<p>등록된 게이트웨이(폰)가 없습니다. 관리 메뉴에서 먼저 등록하세요.</p>'));
+      if (!gws.length) return html(page(user, '새 캠페인', `<div class="warn">문자를 보낼 폰이 아직 연결되지 않았습니다. ${user.role === 'super' ? '<a href="/admin">설정</a>에서 폰을 먼저 연결하세요.' : '전체 관리자에게 폰 연결을 요청하세요.'}</div>`));
       const body = `<h2>새 캠페인</h2>
       <form method="post" class="stack">
         <label>캠페인 이름 <input name="name" required placeholder="예: 10월 3주차 면접"></label>
@@ -145,7 +157,7 @@ async function handle(request, env, ctx) {
         <label>메시지 템플릿 <small>{사업장} {이름} {면접일시} 사용 가능</small>
           <textarea name="template" rows="4">${esc(DEFAULT_TEMPLATE)}</textarea></label>
         <label>개인정보 보관기간(일) <input name="retention_days" type="number" value="90" min="1" max="3650"></label>
-        <label>지원자 명단 CSV <small>컬럼: 사업장, 이름, 전화번호, 면접일시</small>
+        <label>지원자 명단 CSV <small>컬럼: 사업장, 이름, 전화번호, 면접일시 — <a href="/template.csv">양식 내려받기</a>. 엑셀에서 "CSV로 저장"하면 됩니다.</small>
           <input type="file" id="f" accept=".csv,.txt"></label>
         <textarea name="csv" id="csv" rows="6" placeholder="CSV를 붙여넣어도 됩니다" required></textarea>
         <button class="btn">생성</button>
@@ -258,69 +270,22 @@ async function handle(request, env, ctx) {
     return html(page(user, camp.name, body));
   }
 
-  // 관리 (super 전용)
+  // 설정 (전체 관리자 전용): 폰 연결, 부서, 관리자 계정
   if (path === '/admin') {
     if (user.role !== 'super') return html(page(user, '권한 없음', '<p>권한이 없습니다.</p>'), 403);
+    let result = null;
     if (method === 'POST') {
       const f = form(await request.text());
-      try {
-        if (f.do === 'dept') await run(db, `INSERT INTO departments (name) VALUES (?)`, f.name.trim());
-        if (f.do === 'gw') {
-          if (!Number(f.department_id)) throw new Error('부서를 먼저 추가한 뒤 선택하세요.');
-          await run(db,
-            `INSERT INTO gateways (department_id,name,base_url,username,password,send_path,signing_key,hook_token)
-             VALUES (?,?,?,?,?,?,?,?)`, Number(f.department_id), f.name,
-            (f.base_url || env.GATEWAY_URL || 'https://api.sms-gate.app/3rdparty/v1').trim(), f.username.trim(),
-            await encryptText(env.ENCRYPTION_KEY, f.password), (f.send_path || '/messages').trim(),
-            (f.signing_key || '').trim(), randomToken(18));
-        }
-        if (f.do === 'user') {
-          const r = await run(db, `INSERT INTO users (username,pass_hash,role) VALUES (?,?,?)`,
-            f.username.trim(), await hashPassword(f.password), f.role === 'super' ? 'super' : 'admin');
-          for (const d of (f.department_ids || '').split(',')) {
-            if (d.trim()) await run(db, `INSERT OR IGNORE INTO user_departments VALUES (?,?)`, Number(r.meta.last_row_id), Number(d));
-          }
-        }
-        if (f.do === 'hook') {
-          const gwRow = await first(db, `SELECT * FROM gateways WHERE id=?`, Number(f.gateway_id));
-          await registerWebhook({ ...gwRow, password: await decryptText(env.ENCRYPTION_KEY, gwRow.password) }, publicBase);
-        }
-        await audit(db, user, `admin.${f.do}`, f.do === 'user' ? `username=${f.username}` : `name=${f.name ?? f.gateway_id ?? ''}`);
-      } catch (e) {
-        return html(page(user, '오류', `<p>${esc(e.message)}</p><p><a href="/admin">돌아가기</a></p>`), 400);
-      }
-      return redirect('/admin');
+      result = await applyAdminAction(db, env, f, publicBase);
+      await audit(db, user, 'admin.' + (f.do || '?'), result.ok ? 'ok' : 'fail');
     }
-    const deps = await all(db, `SELECT * FROM departments ORDER BY name`);
-    const gws = await all(db, `SELECT g.id,g.name,g.base_url,g.send_path,g.hook_token,d.name dept FROM gateways g JOIN departments d ON d.id=g.department_id`);
-    const users = await all(db, `SELECT u.*, (SELECT group_concat(department_id) FROM user_departments WHERE user_id=u.id) deps FROM users u`);
-    const body = `<h2>관리</h2>
-      <p>웹훅 공개 주소: <code>${esc(publicBase)}</code></p>
-      <h3>부서</h3>
-      <ul>${deps.map((d) => `<li>#${d.id} ${esc(d.name)}</li>`).join('')}</ul>
-      <form method="post" class="row"><input type="hidden" name="do" value="dept"><input name="name" placeholder="부서명" required><button class="btn">부서 추가</button></form>
-      <h3>게이트웨이(폰)</h3>
-      <table><tr><th>ID</th><th>부서</th><th>이름</th><th>API 주소</th><th>웹훅</th></tr>
-      ${gws.map((g) => `<tr><td>${g.id}</td><td>${esc(g.dept)}</td><td>${esc(g.name)}</td><td>${esc(g.base_url)}</td>
-        <td><form method="post"><input type="hidden" name="do" value="hook"><input type="hidden" name="gateway_id" value="${g.id}"><button>웹훅 등록</button></form></td></tr>`).join('')}</table>
-      <form method="post" class="stack"><input type="hidden" name="do" value="gw">
-        <select name="department_id">${deps.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select>
-        <input name="name" placeholder="이름 (예: 인사팀 폰)" required>
-        <input name="base_url" value="${esc(env.GATEWAY_URL || 'https://api.sms-gate.app/3rdparty/v1')}" required>
-        <input name="username" placeholder="앱 Cloud Server 화면의 Username" required>
-        <input name="password" placeholder="앱 Cloud Server 화면의 Password" required>
-        <input name="send_path" value="/messages">
-        <input name="signing_key" placeholder="웹훅 Signing Key (선택)">
-        <button class="btn">게이트웨이 추가</button></form>
-      <h3>관리자 계정</h3>
-      <table><tr><th>아이디</th><th>권한</th><th>담당 부서 ID</th></tr>
-      ${users.map((u) => `<tr><td>${esc(u.username)}</td><td>${esc(u.role)}</td><td>${esc(u.deps || '')}</td></tr>`).join('')}</table>
-      <form method="post" class="stack"><input type="hidden" name="do" value="user">
-        <input name="username" placeholder="아이디" required><input name="password" type="password" placeholder="비밀번호(8자 이상)" minlength="8" required>
-        <input name="department_ids" placeholder="담당 부서 ID (쉼표로 구분, 예: 1,2)">
-        <select name="role"><option value="admin">일반 관리자</option><option value="super">전체 관리자</option></select>
-        <button class="btn">계정 추가</button></form>`;
-    return html(page(user, '관리', body));
+    return html(page(user, '설정', await renderAdmin(db, env, publicBase, result)));
+  }
+
+  // 지원자 명단 양식 내려받기
+  if (path === '/template.csv') {
+    const csv = toCsv([['사업장', '이름', '전화번호', '면접일시'], ['강남점', '홍길동', '010-1234-5678', '10/20 14:00'], ['서초점', '김철수', '010-2345-6789', '10/20 15:00']]);
+    return new Response(csv, { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="candidates-template.csv"; filename*=UTF-8''${encodeURIComponent('지원자명단-양식.csv')}` } });
   }
 
   if (path === '/audit' && user.role === 'super') {
@@ -332,7 +297,7 @@ async function handle(request, env, ctx) {
   // 문자함: 임의 번호로 직접 발송 + 송수신 내역
   if (path === '/messages') {
     const deps = await visibleDepartments(db, user);
-    const gws = (await all(db, `SELECT id,department_id,name FROM gateways`)).filter((g) => deps.some((d) => d.id === g.department_id));
+    const gws = (await all(db, `SELECT id,department_id,name FROM gateways WHERE active=1`)).filter((g) => deps.some((d) => d.id === g.department_id));
     if (!gws.length) return html(page(user, '문자함', '<p>사용 가능한 게이트웨이(폰)가 없습니다.</p>'));
     let notice = '';
     if (method === 'POST') {

@@ -16,6 +16,7 @@ const env = {
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
   PUBLIC_BASE_URL: process.env.PUBLIC_BASE_URL,
   GATEWAY_URL: process.env.GATEWAY_URL,
+  GATEWAY_PRIVATE_TOKEN: process.env.GATEWAY_PRIVATE_TOKEN,
   SEND_BATCH: process.env.SEND_BATCH || '20'
 };
 if (!env.ENCRYPTION_KEY) {

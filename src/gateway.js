@@ -46,3 +46,29 @@ export async function verifySignature(key, rawBody, signature, timestamp, now = 
   if (Math.abs(now / 1000 - Number(timestamp)) > 300) return false;
   return safeEqual(await hmacSha256Hex(key, rawBody + timestamp), String(signature));
 }
+
+// 서버에 등록된 기기 목록으로 연결 상태를 확인한다. (마지막 응답이 15분 이내면 online)
+export async function checkGateway(gw) {
+  try {
+    const res = await fetch(`${baseUrl(gw)}/devices`, {
+      headers: { Authorization: authHeader(gw) },
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!res.ok) return { reachable: false, error: `응답 ${res.status}` };
+    const body = await res.json();
+    const list = Array.isArray(body) ? body : body.devices || [];
+    let last = 0;
+    for (const d of list) {
+      const t = Date.parse(d.lastSeen ?? d.last_seen ?? d.updatedAt ?? '');
+      if (Number.isFinite(t) && t > last) last = t;
+    }
+    return {
+      reachable: true,
+      count: list.length,
+      lastSeen: last ? new Date(last).toISOString() : null,
+      online: last > 0 && Date.now() - last < 15 * 60000
+    };
+  } catch (e) {
+    return { reachable: false, error: String(e.message || e).slice(0, 120) };
+  }
+}
