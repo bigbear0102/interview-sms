@@ -32,6 +32,10 @@ const cookies = (req) =>
 const send = (res, code, body, headers = {}) => { res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', ...headers }); res.end(body); };
 const redirect = (res, to, headers = {}) => { res.writeHead(303, { Location: to, ...headers }); res.end(); };
 
+const audit = (user, action, detail = '') =>
+  db.prepare(`INSERT INTO audit (at,user_id,action,detail) VALUES (?,?,?,?)`).run(Date.now(), user?.id ?? null, action, detail);
+const isHttps = (req) => req.headers['x-forwarded-proto'] === 'https' || process.env.COOKIE_SECURE === '1';
+
 const loginAttempts = new Map(); // ip -> {n, until}
 
 function visibleDepartments(user) {
@@ -72,6 +76,13 @@ async function handle(req, res) {
 
   if (path === '/healthz') return send(res, 200, 'ok');
 
+  // CSRF 방어: 브라우저가 보낸 POST는 Origin 호스트가 Host와 같아야 한다
+  if (method === 'POST' && req.headers.origin) {
+    let ok = false;
+    try { ok = new URL(req.headers.origin).host === req.headers.host; } catch {}
+    if (!ok) return send(res, 403, 'forbidden');
+  }
+
   // 로그인
   if (path === '/login') {
     if (method === 'POST') {
@@ -82,8 +93,9 @@ async function handle(req, res) {
       const u = db.prepare(`SELECT * FROM users WHERE username=? AND active=1`).get(f.username || '');
       if (u && verifyPassword(f.password || '', u.pass_hash)) {
         loginAttempts.delete(ip);
+        audit({ id: u.id }, 'login');
         const token = createSession(db, u.id);
-        return redirect(res, '/', { 'Set-Cookie': `sid=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200` });
+        return redirect(res, '/', { 'Set-Cookie': `sid=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${isHttps(req) ? '; Secure' : ''}` });
       }
       a.n++; if (a.n >= 5) { a.until = Date.now() + 5 * 60000; a.n = 0; }
       loginAttempts.set(ip, a);
@@ -160,6 +172,7 @@ async function handle(req, res) {
       departmentId: gw.department_id, gatewayId: gw.id, name: f.name || '무제', template: f.template,
       retentionDays: Number(f.retention_days) || 90, userId: user.id, candidates: parsed.candidates
     });
+    audit(user, 'campaign.create', `campaign=${r.campaignId} accepted=${r.accepted} rejected=${r.rejected.length}`);
     const rej = r.rejected.length
       ? `<p>제외된 행 ${r.rejected.length}건:</p><ul>${r.rejected.slice(0, 50).map((x) => `<li>${x.row}행: ${esc(x.reason)}</li>`).join('')}</ul>` : '';
     return send(res, 200, page(user, '생성 완료',
@@ -178,16 +191,18 @@ async function handle(req, res) {
         const at = f.when ? new Date(f.when).getTime() : Date.now();
         if (!Number.isFinite(at)) return send(res, 400, page(user, '오류', '<p>시각 형식 오류</p>'));
         scheduleCampaign(db, camp.id, at);
-      } else if (action === 'cancel') cancelCampaign(db, camp.id);
-      else if (action === 'remind') remindCampaign(db, camp.id);
+        audit(user, 'campaign.send', `campaign=${camp.id} at=${new Date(at).toISOString()}`);
+      } else if (action === 'cancel') { cancelCampaign(db, camp.id); audit(user, 'campaign.cancel', `campaign=${camp.id}`); }
+      else if (action === 'remind') { const n = remindCampaign(db, camp.id); audit(user, 'campaign.remind', `campaign=${camp.id} n=${n}`); }
       else if (action === 'set') {
         const cand = db.prepare(`SELECT id FROM candidates WHERE id=? AND campaign_id=?`).get(Number(f.id), camp.id);
-        if (cand) setManualStatus(db, cand.id, f.status);
+        if (cand) { setManualStatus(db, cand.id, f.status); audit(user, 'candidate.manual', `campaign=${camp.id} candidate=${cand.id} status=${f.status}`); }
       }
       return redirect(res, `/campaigns/${camp.id}${f.back || ''}`);
     }
 
     if (action === 'export.csv') {
+      audit(user, 'campaign.export', `campaign=${camp.id}`);
       const rows = db.prepare(`SELECT * FROM candidates WHERE campaign_id=? ORDER BY site, id`).all(camp.id);
       const out = [['사업장', '이름', '전화번호', '면접일시', '상태', '답장', '발송시각', '응답시각']].concat(
         rows.map((r) => [r.site, r.name, r.phone, r.interview_at, STATUS_LABEL[r.status] || r.status, r.reply_text,
@@ -260,6 +275,7 @@ async function handle(req, res) {
           const gw = db.prepare(`SELECT * FROM gateways WHERE id=?`).get(Number(f.gateway_id));
           await registerWebhook(gw, PUBLIC_BASE_URL);
         }
+        audit(user, `admin.${f.do}`, f.do === 'user' ? `username=${f.username}` : `name=${f.name ?? f.gateway_id ?? ''}`);
       } catch (e) {
         return send(res, 400, page(user, '오류', `<p>${esc(e.message)}</p><p><a href="/admin">돌아가기</a></p>`));
       }
@@ -295,6 +311,11 @@ async function handle(req, res) {
         <select name="role"><option value="admin">일반 관리자</option><option value="super">전체 관리자</option></select>
         <button class="btn">계정 추가</button></form>`;
     return send(res, 200, page(user, '관리', body));
+  }
+
+  if (path === '/audit' && user.role === 'super') {
+    const rows = db.prepare(`SELECT a.*, u.username FROM audit a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 300`).all();
+    return send(res, 200, page(user, '감사 로그', `<h2>감사 로그 <small>최근 300건</small></h2><table><tr><th>시각</th><th>사용자</th><th>동작</th><th>내용</th></tr>${rows.map((r) => `<tr><td>${fmtTime(r.at)}</td><td>${esc(r.username || '')}</td><td>${esc(r.action)}</td><td>${esc(r.detail)}</td></tr>`).join('')}</table>`));
   }
 
   // 비밀번호 변경

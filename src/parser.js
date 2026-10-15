@@ -24,6 +24,8 @@ function normalize(text) {
 export function parseReply(text, extra = {}) {
   const t = normalize(text);
   if (!t) return 'unclear';
+  // 질문형 문의("변경 가능한가요?")는 긍정으로 오인하지 않도록 부정 검사 후 unclear 처리
+  const isQuestion = /[?？]|한가요|인가요|되나요|있나요|할까요|될까요|하나요|가요$/.test(String(text ?? '').replace(/\s/g, ''));
 
   const negative = [...NEGATIVE, ...(extra.negative ?? [])];
   const positive = [...POSITIVE, ...(extra.positive ?? [])];
@@ -33,6 +35,7 @@ export function parseReply(text, extra = {}) {
 
   // 부정 표현을 먼저 검사한다. ("불참"에 "참"이 들어있기 때문)
   if (negative.some((k) => t.includes(k))) return 'absent';
+  if (isQuestion) return 'unclear';
   if (positive.some((k) => t.includes(k))) return 'attending';
   if (/^(ㅇㅇ|ㅇㅋ|ok|okay|yes|y)$/.test(t)) return 'attending';
   if (/^(ㄴㄴ|no|n)$/.test(t)) return 'absent';

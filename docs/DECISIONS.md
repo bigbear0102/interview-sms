@@ -13,13 +13,13 @@
 
 ## 미검증/주의
 - **실제 폰 연동 미검증**: 발송 API 경로(`/message`), 웹훅 payload 필드는 공식 문서 기준으로 작성. 실제 폰으로 1차 시험 필요.
-- 쿠키 `Secure` 플래그 미적용(HTTP 로컬 운영 기준). HTTPS 프록시/터널 뒤에서 운영하면 추가할 것.
 - 법정 보관기간 기본값은 법무 확인 필요.
 
 ## 로드맵
 - [ ] 실제 폰 연동 시험 및 API 경로 보정
-- [ ] Windows 서비스/자동 시작(NSSM 또는 작업 스케줄러)
-- [ ] 쿠키 Secure/CSRF 토큰 보강, 감사 로그(누가 언제 무엇을 조회/발송)
-- [ ] 질문형 답장을 `unclear`로 보내는 규칙 보강
+- [x] Windows 자동 시작 스크립트 `scripts/install-windows-task.ps1` (작업 스케줄러, 로그온 시 시작)
+- [x] 쿠키 Secure(HTTPS 프록시 `x-forwarded-proto` 또는 `COOKIE_SECURE=1`), Origin 검사 기반 CSRF 방어, 감사 로그(`/audit`)
+- [ ] 감사 로그에 지원자 목록 조회 기록 추가, 감사 로그 보관기간 정책
+- [x] 질문형 답장을 `unclear`로 분류
 - [ ] 면접 일정 변경 요청 처리, 문자 수신 상태(전달 확인 `sms:delivered`) 반영
 - [ ] Cloudflare Workers + D1 이전 (ARCHITECTURE.md 참고), 게이트웨이를 클라우드/프라이빗 서버 모드로 전환

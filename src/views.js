@@ -35,7 +35,7 @@ export function page(user, title, body) {
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - 면접 참석 확인</title>
 <style>${CSS}</style></head><body>
 ${user ? `<header><a href="/"><b>면접 참석 확인</b></a><a href="/campaigns/new">새 캠페인</a>
-${user.role === 'super' ? '<a href="/admin">관리</a>' : ''}<span class="sp"></span>
+${user.role === 'super' ? '<a href="/admin">관리</a><a href="/audit">감사로그</a>' : ''}<span class="sp"></span>
 <span>${esc(user.username)}</span><a href="/password">비밀번호</a>
 <form method="post" action="/logout" class="inline"><button>로그아웃</button></form></header>` : ''}
 <main>${body}</main></body></html>`;

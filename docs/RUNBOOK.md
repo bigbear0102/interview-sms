@@ -31,6 +31,13 @@ cloudflared tunnel --url http://localhost:3000     # 임시 주소(trycloudflare
 2. 문자를 받고 "참석"/"불참"으로 답장 → 대시보드에서 상태 확인
 3. 상태가 바뀌지 않으면: 폰 앱 로그, 웹훅 등록 여부, `PUBLIC_BASE_URL`, 서명 키 불일치(401)를 확인
 
+## 4-1. PC 부팅 시 자동 시작 (Windows)
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-windows-task.ps1
+```
+작업 스케줄러에 `interview-sms`가 등록된다. Cloudflare Tunnel(`cloudflared service install`)도 서비스로 등록해 둘 것.
+HTTPS 터널 뒤에서 운영하면 쿠키에 Secure가 자동 적용된다(`x-forwarded-proto`).
+
 ## 5. 백업/복구
 - 중지 후 `data/app.db`(+ `-wal`, `-shm`) 복사. 개인정보가 들어 있으므로 암호화된 저장소에 보관하고 보관기간 정책을 따른다.
 

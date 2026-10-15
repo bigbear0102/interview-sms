@@ -30,7 +30,8 @@ inbound: 수신 문자 로그 (매칭 여부 포함)
 ## 인증/권한
 - 아이디+비밀번호(scrypt), 세션 쿠키(HttpOnly, SameSite=Strict, 12시간), 로그인 5회 실패 시 5분 잠금(IP 기준)
 - `super`: 전체 + 관리 메뉴 / `admin`: 배정된 부서의 캠페인만
-- 외부 노출 시 반드시 HTTPS 뒤에 둔다(쿠키 `Secure` 플래그는 프록시 환경에 맞게 추가 필요 — 로드맵 참고).
+- 외부 노출 시 반드시 HTTPS 뒤에 둔다. `x-forwarded-proto: https` 또는 `COOKIE_SECURE=1`이면 쿠키에 Secure 적용.
+- CSRF: POST의 `Origin` 호스트가 `Host`와 다르면 403. 주요 동작은 `audit` 테이블에 기록(개인정보 미포함, ID만).
 
 ## Cloudflare 이전 시 (로드맵)
 - 로직(`core.js`, `parser.js`, `gateway.js`)은 Node 전용 API가 `node:sqlite`, `node:crypto` 정도이므로
