@@ -7,7 +7,8 @@ const CSS = `
 @media (prefers-color-scheme:dark){:root{--bg:#000;--surface:#1c1c1e;--ink:#f5f5f7;--muted:#a1a1a6;--line:#3a3a3c;--blue:#2997ff;--blue-bg:#0c2a45;
   --green:#30d158;--green-bg:#102a18;--red:#ff453a;--red-bg:#3a1618;--amber:#ffb340;--amber-bg:#332508;--purple:#b39dff;--purple-bg:#241d3d}}
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-snap-type:y proximity}
-body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.65 "Pretendard Variable",Pretendard,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.65 "Pretendard Variable",Pretendard,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;letter-spacing:-.01em;-webkit-font-smoothing:antialiased;word-break:keep-all;overflow-wrap:break-word}
+.mock .body{overflow-x:auto}.mock th,.mock td{white-space:nowrap}
 a{color:var(--blue)}
 .top{position:fixed;inset:0 0 auto 0;z-index:10;display:flex;align-items:center;gap:12px;padding:10px max(16px,calc((100vw - 1120px)/2));background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
 .top .brand{font-weight:700;margin-right:auto;display:flex;align-items:center;gap:8px;color:var(--ink);text-decoration:none}
