@@ -194,7 +194,7 @@ export function renderLanding({ loggedIn = false } = {}) {
     ? '<a class="btn" href="/">대시보드로 가기</a>'
     : '<a class="btn" href="/login">로그인</a>';
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow"><title>면접 안내 문자 관리 - 소개</title>
+<meta name="robots" content="noindex,nofollow"><title>문자 관리 시스템</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%230066cc%27/%3E%3Cpath d=%27M8 11h16v9H14l-4 4v-4H8z%27 fill=%27white%27/%3E%3C/svg%3E"><link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>${CSS}</style></head><body>
