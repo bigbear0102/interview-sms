@@ -304,3 +304,18 @@ test('면접 안내: 사업장 직접 입력, 미리보기, 사업장별 회신 
   assert.match(csvOut, /사업장\(원가중심점\)/);
   assert.match(csvOut, /1001 강남점/);
 });
+
+test('폰 설치 안내: Obtainium으로 처음부터 설치, 막힘 해결 안내, 설정 단계 번호', async () => {
+  const { call } = await setup();
+  const r = await call('/help/phone');
+  assert.equal(r.status, 200);
+  const html = await r.text();
+  const text = visible(html);
+  for (const w of ['Obtainium', 'app-release.apk', 'app-insecure.apk', '자동 차단', '제한된 설정 허용', '채팅']) {
+    assert.ok(text.includes(w), w);
+  }
+  assert.match(html, /tok-123/); // 관리자에게는 토큰 표시
+  const admin = visible(await (await call('/admin')).text());
+  assert.ok(admin.includes('Obtainium'));
+  assert.ok(admin.includes('1~9번'));
+});

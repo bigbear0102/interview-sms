@@ -115,3 +115,6 @@ data/app.db  data/app.db-wal  data/app.db-shm  .env
 
 ## 8. (참고) Cloudflare Workers 배포
 같은 코드가 Workers+D1 에서도 동작한다(`wrangler.jsonc`, `npm run deploy`). 현재는 PC 운영이므로 사용하지 않는다.
+
+## 새 폰 설치 시 "접근 차단" 이 뜰 때
+`/help/phone` 의 "이런 화면이 나오면" 표를 따른다. 핵심: 자동 차단 끄기, 앱 정보 → ⋮ → **제한된 설정 허용**, 충돌 시 기존 SMSGate 삭제 후 Obtainium 으로 재설치.

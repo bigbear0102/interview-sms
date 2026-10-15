@@ -23,6 +23,8 @@ import {
   ALLOWED_DOMAIN, normalizeEmail, signUp, verifyEmail, resendVerification, requestReset, completeReset, peekToken
 } from './accounts.js';
 import { mailConfigured } from './mailer.js';
+import { renderPhoneHelp } from './pages-help.js';
+import { phoneApiUrl, isPublicCloud } from './admin.js';
 import { monitorPhones, recordError } from './monitor.js';
 import { applyDeliveryEvent, pollDelivery, notifyNewReply, unreadCount, markAllRead } from './delivery.js';
 import { rateLimit } from './accounts.js';
@@ -378,6 +380,14 @@ async function handle(request, env, ctx) {
       await audit(db, user, 'admin.' + (f.do || '?'), result.ok ? 'ok' : 'fail');
     }
     return html(pg('설정', await renderAdmin(db, env, publicBase, result)));
+  }
+
+  // 폰 설치 안내 (로그인한 모두)
+  if (path === '/help/phone') {
+    const isAdmin = user.role === 'super';
+    return html(pg('폰 설치 안내', renderPhoneHelp({
+      pub: isPublicCloud(env), apiUrl: phoneApiUrl(env), token: isAdmin ? (env.GATEWAY_PRIVATE_TOKEN || '') : '', isAdmin
+    }), 'settings'));
   }
 
   // 지원자 명단 양식 내려받기

@@ -7,6 +7,7 @@ import { registerWebhook, checkGateway, sendSms, unlockGateway } from './gateway
 import { monitorPhones, recentErrors } from './monitor.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import { listUsers, normalizeEmail } from './accounts.js';
+import { phoneSetupSteps } from './pages-help.js';
 import { sortDepartments } from './pages-auth.js';
 
 // 폰 앱에 입력할 주소: .../api/3rdparty/v1 → .../api/mobile/v1
@@ -265,130 +266,10 @@ export async function renderAdmin(db, env, publicBase, result = null) {
     </div>`;
 
   const steps = `
-    <h2>폰 연결하기</h2>
-    <p class="lead">문자를 보낼 <b>안드로이드 폰</b>에서 하는 일이에요. 폰 1대당 <b>한 번만</b> 하면 돼요. 약 10분 걸려요.</p>
+    ${phoneSetupSteps({ pub, apiUrl, token, copyBox })}
 
     <div class="step">
-      <div class="num">1</div>
-      <div class="body">
-        <h3>앱 설치하기</h3>
-        <ol>
-          <li>폰에서 <b>인터넷(크롬)</b>을 엽니다.</li>
-          <li>위쪽 주소 칸에 아래 주소를 입력하고 이동합니다.<br>
-              <code>github.com/capcom6/android-sms-gateway/releases</code></li>
-          <li>맨 위에 있는 최신 버전에서 <b>Assets</b>(에셋)를 눌러 펼칩니다.</li>
-          <li>이름이 <b>.apk</b>로 끝나는 파일을 누릅니다.<br>
-              <small>파일이 여러 개이면 이름에 <b>insecure</b>가 들어간 것은 고르지 마세요.</small></li>
-          <li>다운로드가 끝나면 <b>열기</b>를 누르고, <b>설치</b>를 누릅니다.<br>
-              <small>"이 출처 허용" 같은 화면이 나오면 스위치를 켜고 뒤로 가서 다시 <b>설치</b>를 누르세요.</small></li>
-          <li>설치가 끝나면 <b>열기</b>를 눌러 앱(<b>SMSGate</b>)을 엽니다.</li>
-        </ol>
-      </div>
-    </div>
-
-    <div class="step">
-      <div class="num">2</div>
-      <div class="body">
-        <h3>문자 보내기 허용하기</h3>
-        <ol>
-          <li>앱을 열면 "문자를 보내도록 허용할까요?" 같은 창이 나와요. <b>허용</b>을 누릅니다.</li>
-          <li>"전화 걸기/관리" 허용 창이 나오면 그것도 <b>허용</b>을 누릅니다.</li>
-        </ol>
-        <details class="help">
-          <summary>🔧 <b>허용 버튼이 회색이라 눌리지 않아요</b> (갤럭시 폴드 등에서 자주 생겨요)</summary>
-          <ol>
-            <li>안 눌리는 <b>허용</b> 버튼을 <b>한 번 눌러 보고</b> 나옵니다.</li>
-            <li><b>설정</b> 앱 → <b>애플리케이션</b>(또는 <b>앱</b>) → <b>SMSGate</b>를 누릅니다.</li>
-            <li>화면 <b>오른쪽 위의 점 세 개(⋮)</b>를 누릅니다.</li>
-            <li><b>제한된 설정 허용</b>을 누르고, 지문이나 비밀번호로 확인합니다.</li>
-            <li>뒤로 가서 <b>권한</b> → <b>문자(SMS)</b> → <b>허용</b>을 누릅니다.</li>
-          </ol>
-          <small>점 세 개(⋮)가 안 보이면 1번을 다시 한 뒤, 이 화면을 닫았다가 다시 열어 보세요.</small>
-        </details>
-      </div>
-    </div>
-
-    <div class="step">
-      <div class="num">3</div>
-      <div class="body">
-        <h3>문자 앱의 "채팅(RCS)" 기능 끄기 <small>(꼭 해야 해요)</small></h3>
-        <p>갤럭시 폰은 문자가 일반 문자가 아니라 <b>인터넷 채팅 메시지(RCS)</b>로 오는 경우가 있어요.
-           이렇게 오면 SMSGate가 <b>받은 문자를 알아보지 못해요.</b> 이 폰에서는 채팅 기능을 꺼 두세요.</p>
-        <ol>
-          <li><b>메시지</b> 앱(삼성 메시지)을 엽니다.</li>
-          <li>오른쪽 위 <b>점 세 개(⋮)</b> → <b>설정</b>을 누릅니다.</li>
-          <li><b>채팅 설정</b>(또는 <b>채팅 서비스</b>)을 누릅니다.</li>
-          <li><b>채팅 기능</b> 스위치를 <b>끕니다</b>.</li>
-        </ol>
-        <details class="help">
-          <summary>🔧 <b>구글 "메시지" 앱을 쓰고 있다면</b></summary>
-          <ol>
-            <li>앱 오른쪽 위 <b>프로필 사진</b> → <b>메시지 설정</b>을 누릅니다.</li>
-            <li><b>RCS 채팅</b>을 누릅니다.</li>
-            <li><b>RCS 채팅 사용</b>을 <b>끕니다</b>.</li>
-          </ol>
-        </details>
-        <small>끈 뒤 10분쯤 지나면 상대방 폰에서도 이 폰으로 일반 문자가 가요. 삼성 메시지와 구글 메시지가 둘 다 설치되어 있으면 <b>둘 다</b> 끄세요.</small>
-      </div>
-    </div>
-
-    <div class="step">
-      <div class="num">4</div>
-      <div class="body">
-        <h3>폰이 꺼지지 않게 설정하기</h3>
-        <ol>
-          <li><b>설정</b> 앱 → <b>애플리케이션</b> → <b>SMSGate</b> → <b>배터리</b>를 누릅니다.</li>
-          <li><b>제한 없음</b>을 선택합니다.</li>
-          <li>이 폰은 <b>충전기에 계속 꽂아 두고</b> 전원을 켜 두세요.</li>
-        </ol>
-      </div>
-    </div>
-
-    ${pub ? `<div class="step">
-      <div class="num">5</div>
-      <div class="body">
-        <h3>문자 내용 암호화 켜기 <small>(꼭 하세요)</small></h3>
-        <p>이 시스템은 <b>공개 문자 서버</b>를 거쳐 문자를 보내요. 서버가 문자 내용과 전화번호를 볼 수 없도록 <b>암호 비밀번호</b>를 정해 두 곳에 똑같이 넣어요.</p>
-        <ol>
-          <li>폰 SMSGate 앱 → <b>Settings</b> → <b>Encryption</b>(암호화)을 엽니다.</li>
-          <li><b>Passphrase</b> 칸에 <b>길고 아무도 모르는 문장</b>(예: 12자 이상)을 적고 저장합니다.</li>
-          <li>그 문장을 <b>아래 7번 칸의 "암호화 비밀번호"</b>에도 똑같이 적습니다.</li>
-        </ol>
-        <small>서버 주소와 토큰은 따로 넣지 않아요. 앱의 <b>Cloud Server</b> 서버 주소 칸은 <b>기본값 그대로</b> 두세요.</small>
-      </div>
-    </div>` : `<div class="step">
-      <div class="num">5</div>
-      <div class="body">
-        <h3>앱에 서버 정보 넣기</h3>
-        <p>아래 두 개를 차례로 <b>복사</b>해서 앱에 <b>붙여넣어요</b>.</p>
-        ${copyBox('① 서버 주소 (앱에서는 "API URL"이라고 써 있어요)', apiUrl)}
-        ${copyBox('② 비밀 번호표 (앱에서는 "Private Token"이라고 써 있어요)', token)}
-        <ol>
-          <li>폰의 앱에서 아래쪽 메뉴의 <b>Settings</b>(설정)를 누릅니다.</li>
-          <li>아래로 내려 <b>Cloud Server</b>를 찾아 누릅니다.</li>
-          <li><b>API URL</b> 칸을 길게 눌러 <b>붙여넣기</b>를 누릅니다.</li>
-          <li><b>Private Token</b> 칸도 같은 방법으로 붙여넣습니다.</li>
-          <li>저장(✔) 버튼이 있으면 누릅니다.</li>
-        </ol>
-      </div>
-    </div>`}
-
-    <div class="step">
-      <div class="num">6</div>
-      <div class="body">
-        <h3>켜기</h3>
-        <ol>
-          <li>앱 아래쪽 메뉴에서 <b>Home</b>을 누릅니다.</li>
-          <li><b>Cloud server</b> 스위치를 <b>켭니다</b>.</li>
-          <li><b>Offline</b> 버튼을 누릅니다.</li>
-          <li>버튼이 <b>Online</b>으로 바뀔 때까지 기다립니다. (몇 초 걸려요)</li>
-        </ol>
-        <small>Online이 안 되면: 서버 주소(①)에 빠진 글자가 없는지, 폰이 인터넷에 연결되어 있는지 확인하세요.</small>
-      </div>
-    </div>
-
-    <div class="step">
-      <div class="num">7</div>
+      <div class="num">9</div>
       <div class="body">
         <h3>아이디와 비밀번호 옮겨 적기</h3>
         <ol>
@@ -470,7 +351,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
   const phones = `
     <section class="section">
       <div class="shead"><h2>문자 보내는 폰</h2></div>
-      ${gws.length ? gws.map(phoneCard).join('') : emptyState({ title: '아직 연결된 폰이 없어요', desc: '아래 "폰 연결하기"의 1~7번을 차례로 해 주세요.' })}
+      ${gws.length ? gws.map(phoneCard).join('') : emptyState({ title: '아직 연결된 폰이 없어요', desc: '아래 "폰 연결하기"의 1~9번을 차례로 해 주세요.' })}
     </section>`;
 
   const depChecks = (selectedIds = []) => orderedDeps.map((d) =>
@@ -563,7 +444,8 @@ export async function renderAdmin(db, env, publicBase, result = null) {
   const connect = `
     <section class="section">
       <details class="card" ${hasPhone ? '' : 'open'}>
-        <summary><b>폰 연결하기</b> <span class="muted">새 폰을 연결할 때 열어서 1~7번을 차례로 해요</span></summary>
+        <summary><b>폰 연결하기</b> <span class="muted">새 폰을 연결할 때 열어서 1~9번을 차례로 해요</span></summary>
+        <p class="muted" style="margin-top:10px">직원에게 보여 주려면 <a href="/help/phone">폰 설치 안내 페이지</a>를 열어 주세요. (Obtainium으로 설치하면 "접근 차단"을 피할 수 있어요)</p>
         <div style="margin-top:16px">${steps}</div>
       </details>
     </section>`;

@@ -146,7 +146,7 @@ export async function renderHome(db, user, deps) {
   const phoneNotice = gwCount
     ? ''
     : `<div class="notice warn" role="alert">${icon('alert')}<div><b>문자를 보낼 폰이 아직 연결되지 않았어요.</b><br>${
-      user.role === 'super' ? '<a href="/admin">설정에서 폰을 연결하세요.</a>' : '전체 관리자에게 폰 연결을 부탁하세요.'}</div></div>`;
+      user.role === 'super' ? '<a href="/admin">설정에서 폰을 연결하세요.</a> · <a href="/help/phone">폰 설치 안내</a>' : '관리자에게 폰 연결을 부탁하세요. · <a href="/help/phone">폰 설치 안내</a>'}</div></div>`;
 
   return `${pageHeader({ title: '홈', desc: `${kstDateLabel()} 현황이에요.`,
     actions: `<a class="btn" href="/send">${icon('send', 18)}문자 보내기</a><a class="btn secondary" href="/campaigns/new">${icon('clipboard', 18)}면접 안내 만들기</a>` })}

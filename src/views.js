@@ -333,6 +333,7 @@ export function page(user, title, body, nav = '', badges = {}) {
     <div class="menu">
       <div class="who">${esc(user.name || user.username)}${user.email ? `<br>${esc(user.email)}` : ''}<br>${user.role === 'super' ? '관리자' : '일반 사용자'}</div>
       <a href="/password">내 계정</a>
+      <a href="/help/phone">폰 설치 안내</a>
       ${user.role === 'super' ? '<a href="/audit">기록 보기</a>' : ''}
       <form method="post" action="/logout"><button type="submit">로그아웃</button></form>
     </div>
