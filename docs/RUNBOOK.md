@@ -1,50 +1,52 @@
 # 운영 가이드
 
-## 1. 부서 폰 준비 (부서마다 1대)
-1. 안드로이드 폰에 [SMS Gateway for Android](https://github.com/capcom6/android-sms-gateway) 설치
-2. 앱에서 **Local Server** 켜기 → 표시되는 주소(`http://폰IP:8080`), 사용자명, 비밀번호를 메모
-3. 폰은 PC와 같은 네트워크(Wi-Fi)에 두고 **고정 IP**(공유기 DHCP 예약) 권장. 절전/배터리 최적화 제외 설정.
-4. (권장) 앱 설정 → Webhooks → **Signing Key** 확인/지정 → 웹의 게이트웨이 등록 시 입력
-5. 통신사 요금제의 문자 발송 한도 확인. 대량 발송 시 `SEND_INTERVAL_MS`를 늘린다.
+운영 주소: https://interview-sms.bigbears.workers.dev (Cloudflare Worker, 계정은 `npx wrangler whoami`로 확인)
 
-## 2. 웹훅용 HTTPS 주소 만들기 (필수)
-폰 앱은 웹훅 URL이 **HTTPS**여야 한다(`127.0.0.1` 제외). PC가 사설 IP라 직접 노출이 안 되므로:
+## 1. 부서 폰 연결 (부서마다 1대)
+1. 안드로이드 폰에 [SMS Gateway for Android](https://github.com/capcom6/android-sms-gateway) 설치, SMS 권한 허용
+2. 앱의 **Cloud Server** 를 켜고 **Offline** 버튼을 눌러 **Online** 이 될 때까지 연결
+   - 최초 연결 시 **Username / Password 가 자동 생성**되어 앱의 Cloud Server 화면에 표시된다.
+   - (앱이 "QR 코드를 스캔하라"고 먼저 요구하면, 화면의 건너뛰기/수동 설정이 있는지 확인하고 아래 *QR 안내*를 본다.)
+3. 배터리 최적화 제외, 백그라운드 실행 허용(그렇지 않으면 발송이 멈춘다)
+4. (권장) 앱 Settings → Webhooks 에서 **Signing Key**를 확인하고 웹의 게이트웨이 등록 시 입력
 
-**방법 A — Cloudflare Tunnel (권장, 이미 계정 있음)**
+### QR 안내
+공식 문서의 클라우드 모드 절차에는 QR 스캔이 없다. QR 화면은 앱 버전에 따른 연결 마법사일 수 있다.
+QR 로 연결되는 대상(서버 주소)이 `api.sms-gate.app`(공개 클라우드)인지 확인하고, 그 방식이 자체 서버(Private)용이라면
+앱 설정에서 서버를 **Public Cloud**로 선택해야 한다. 막히면 화면 캡처를 보고 판단한다.
+
+## 2. 웹에서 최초 설정 (전체 관리자)
+1. `/login` — 아이디 `admin`, 비밀번호는 최초 배포 시 전달된 값 → **바로 `/password`에서 변경**
+2. 관리 → 부서 추가
+3. 관리 → 게이트웨이 추가: 앱에 표시된 Username/Password 입력 (API 주소/경로 기본값 유지)
+4. 게이트웨이 목록의 **웹훅 등록** 클릭 (폰이 답장 수신 시 이 Worker 로 알려주게 한다)
+5. 관리자 계정 추가: 담당 부서 ID 지정
+
+## 3. 첫 시험
+1. 본인 번호 1건만 담은 CSV 로 캠페인 생성 → 즉시 발송 (Cron 이 매 분 이어받음)
+2. 문자를 받고 "참석"/"불참"으로 답장 → 캠페인 상세에서 상태 확인
+3. 안 바뀌면: 웹훅 등록 여부, 서명 키 불일치(401), `inbound` 수신 로그, 폰 앱 로그 확인
+
+## 4. 배포/변경
 ```bash
-cloudflared tunnel --url http://localhost:3000     # 임시 주소(trycloudflare.com) 확인용
-# 운영: 이름 있는 터널 + 본인 도메인 연결 (cloudflared tunnel create / route dns)
+npm test
+npm run db:migrate   # 스키마 변경이 있을 때
+npm run deploy
+npx wrangler tail    # 실시간 로그
 ```
-나온 `https://...` 주소를 `.env`의 `PUBLIC_BASE_URL`에 넣고 서버 재시작.
-임시 터널 주소는 재시작마다 바뀌므로 **운영에는 이름 있는 터널**을 쓴다.
+시크릿 교체: `npx wrangler secret put ADMIN_PASSWORD` 등. **`ENCRYPTION_KEY`를 바꾸면 저장된 게이트웨이 비밀번호를 복호화할 수 없다** — 게이트웨이를 다시 등록해야 한다.
 
-> 터널로 외부에 열리는 것은 로그인 화면과 웹훅 경로다. 관리자 비밀번호를 강하게 설정하고,
-> 가능하면 Cloudflare Access로 `/hook/*` 외 경로를 제한한다.
-
-**방법 B** — 사설 CA로 발급한 인증서를 앱에 설치(공식 문서 참고). 번거로워 비권장.
-
-## 3. 웹에서 설정
-관리 메뉴: 부서 추가 → 게이트웨이 추가(폰 주소/사용자명/비밀번호) → **웹훅 등록** 버튼 → 관리자 계정 추가(담당 부서 ID 지정)
-
-## 4. 첫 시험
-1. 본인 번호만 담은 CSV로 캠페인 생성 → 즉시 발송
-2. 문자를 받고 "참석"/"불참"으로 답장 → 대시보드에서 상태 확인
-3. 상태가 바뀌지 않으면: 폰 앱 로그, 웹훅 등록 여부, `PUBLIC_BASE_URL`, 서명 키 불일치(401)를 확인
-
-## 4-1. PC 부팅 시 자동 시작 (Windows)
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install-windows-task.ps1
+## 5. 백업
+```bash
+npx wrangler d1 export interview-sms --remote --output backup.sql
 ```
-작업 스케줄러에 `interview-sms`가 등록된다. Cloudflare Tunnel(`cloudflared service install`)도 서비스로 등록해 둘 것.
-HTTPS 터널 뒤에서 운영하면 쿠키에 Secure가 자동 적용된다(`x-forwarded-proto`).
-
-## 5. 백업/복구
-- 중지 후 `data/app.db`(+ `-wal`, `-shm`) 복사. 개인정보가 들어 있으므로 암호화된 저장소에 보관하고 보관기간 정책을 따른다.
+개인정보가 포함되므로 안전한 곳에 보관하고 보관기간 정책에 따라 삭제한다.
 
 ## 6. 장애 대응
 | 증상 | 확인 |
 |---|---|
-| 발송 실패(`failed`) | 폰 전원/Wi-Fi/앱 실행, `base_url`·계정, 웹의 실패 사유 → "리마인드 발송"으로 재시도 |
-| 답장이 반영 안 됨 | 웹훅 등록/HTTPS 주소, 서명 키(401), 수신 로그 `inbound` 테이블 |
+| 발송이 시작되지 않음 | 캠페인 상태/예약 시각(KST), Cron 동작(`wrangler tail`) |
+| 발송 실패(`failed`) | 폰 Online 여부, 게이트웨이 계정, 실패 사유 → "리마인드 발송"으로 재시도 |
+| 답장이 반영 안 됨 | 웹훅 등록/서명 키(401), `inbound` 테이블 |
 | "확인필요" 다수 | 답장 문구 확인 → `docs/PARSING_RULES.md` 규칙 보강 후 수동 확정 |
 | 로그인 잠김 | 5분 대기 |

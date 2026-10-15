@@ -1,12 +1,12 @@
-// android-sms-gateway (capcom6) 로컬 서버 모드 클라이언트
-import { createHmac, timingSafeEqual } from 'node:crypto';
+// SMS Gateway for Android (capcom6) 클라우드/프라이빗 서버 API 클라이언트
+import { hmacSha256Hex, safeEqual } from './crypto.js';
 
-function authHeader(gw) {
-  return 'Basic ' + Buffer.from(`${gw.username}:${gw.password}`).toString('base64');
-}
+const authHeader = (gw) => 'Basic ' + btoa(`${gw.username}:${gw.password}`);
+const baseUrl = (gw) => gw.base_url.replace(/\/$/, '');
 
+// gw.password 는 호출 전에 복호화되어 있어야 한다.
 export async function sendSms(gw, phone, text) {
-  const res = await fetch(gw.base_url.replace(/\/$/, '') + gw.send_path, {
+  const res = await fetch(baseUrl(gw) + gw.send_path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: authHeader(gw) },
     body: JSON.stringify({ textMessage: { text }, phoneNumbers: [phone] }),
@@ -16,13 +16,14 @@ export async function sendSms(gw, phone, text) {
   return res.json().catch(() => ({}));
 }
 
-// 폰 앱에 "문자 수신 시 우리 서버로 POST" 웹훅을 등록한다.
+// 폰이 문자 수신 시 우리 Worker 로 POST 하도록 웹훅을 등록한다. (같은 id 가 있으면 교체)
 export async function registerWebhook(gw, publicBaseUrl) {
+  const id = `interview-sms-${gw.id}`;
   const url = `${publicBaseUrl.replace(/\/$/, '')}/hook/${gw.id}/${gw.hook_token}`;
-  const res = await fetch(gw.base_url.replace(/\/$/, '') + '/webhooks', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: authHeader(gw) },
-    body: JSON.stringify({ id: `interview-sms-${gw.id}`, url, event: 'sms:received' }),
+  const headers = { 'Content-Type': 'application/json', Authorization: authHeader(gw) };
+  await fetch(`${baseUrl(gw)}/webhooks/${id}`, { method: 'DELETE', headers, signal: AbortSignal.timeout(20000) }).catch(() => {});
+  const res = await fetch(`${baseUrl(gw)}/webhooks`, {
+    method: 'POST', headers, body: JSON.stringify({ id, url, event: 'sms:received' }),
     signal: AbortSignal.timeout(20000)
   });
   if (!res.ok) throw new Error(`웹훅 등록 실패 ${res.status}: ${(await res.text()).slice(0, 150)}`);
@@ -30,11 +31,9 @@ export async function registerWebhook(gw, publicBaseUrl) {
 }
 
 // X-Signature = HMAC-SHA256(key, rawBody + X-Timestamp), 허용 시차 ±5분
-export function verifySignature(key, rawBody, signature, timestamp, now = Date.now()) {
+export async function verifySignature(key, rawBody, signature, timestamp, now = Date.now()) {
   if (!key) return true; // 서명 키 미설정 시 URL 토큰만으로 인증
   if (!signature || !timestamp) return false;
   if (Math.abs(now / 1000 - Number(timestamp)) > 300) return false;
-  const expected = createHmac('sha256', key).update(rawBody + timestamp).digest('hex');
-  const a = Buffer.from(expected), b = Buffer.from(String(signature));
-  return a.length === b.length && timingSafeEqual(a, b);
+  return safeEqual(await hmacSha256Hex(key, rawBody + timestamp), String(signature));
 }

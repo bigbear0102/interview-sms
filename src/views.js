@@ -1,15 +1,23 @@
 export const STATUS_LABEL = {
-  pending: '발송대기', sent: '미응답', attending: '참석', absent: '불참', unclear: '확인필요', failed: '발송실패'
+  pending: '발송대기', sending: '발송중', sent: '미응답', attending: '참석', absent: '불참', unclear: '확인필요', failed: '발송실패'
 };
 
 export const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// 모든 시각은 한국시간(KST, UTC+9)으로 표시/입력한다
+const KST = 9 * 3600 * 1000;
 export function fmtTime(ms) {
   if (!ms) return '';
-  const d = new Date(ms);
+  const d = new Date(ms + KST);
   const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+}
+
+// <input type="datetime-local"> 값(예: 2026-10-20T14:00)을 KST 로 해석
+export function parseKstLocal(s) {
+  const t = String(s).trim();
+  return new Date(`${t}${t.length === 16 ? ':00' : ''}+09:00`).getTime();
 }
 
 const CSS = `

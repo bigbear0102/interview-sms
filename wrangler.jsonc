@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "interview-sms",
+  "main": "src/worker.js",
+  "compatibility_date": "2025-09-01",
+  "workers_dev": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "interview-sms",
+      "database_id": "c55dbe7a-beef-4598-a67f-305a4ca94305",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // 매 분 발송 큐 처리, 정각에 파기/세션 정리
+  "triggers": { "crons": ["* * * * *"] },
+  "vars": {
+    "PUBLIC_BASE_URL": "https://interview-sms.bigbears.workers.dev",
+    "ADMIN_USER": "admin",
+    // 호출 1회당 최대 발송 건수 (무료 플랜 서브리퀘스트 한도 50 고려)
+    "SEND_BATCH": "25"
+  }
+}
