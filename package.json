@@ -15,7 +15,8 @@
     "db:migrate": "wrangler d1 migrations apply interview-sms --remote",
     "deploy": "node scripts/deploy.mjs",
     "deploy:raw": "wrangler deploy",
-    "backup": "node scripts/backup.mjs"
+    "backup": "node scripts/backup.mjs",
+    "export:intro": "node scripts/export-intro-pdf.mjs"
   },
   "devDependencies": {
     "wrangler": "^4"
