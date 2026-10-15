@@ -60,7 +60,7 @@ const SLIDES = [
   `<p class="kicker">면접 안내 문자 관리 시스템</p>
    <h1>면접 연락,<br>한 화면에서 끝내요.</h1>
    <p class="lead">현업 담당자가 직접 연락하고, 확인하고, 다시 알려 주던 일을 시스템이 대신 챙깁니다.</p>
-   <p><span class="pill">명단 올리기</span><span class="pill">한 번에 보내기</span><span class="pill">답장 자동 집계</span><span class="pill">전날 자동 리마인드</span></p>`,
+   <p><span class="pill">명단 올리기</span><span class="pill">한 번에 보내기</span><span class="pill">답장 자동 집계</span><span class="pill">당일 아침 자동 리마인드</span></p>`,
 
   // 2 현재 문제
   `<p class="kicker">지금은 이렇게 해요</p>
@@ -69,7 +69,7 @@ const SLIDES = [
      <ul class="list">
        <li><span class="x">✕</span><span>면접 전에 한 사람씩 <b>미리 연락</b>해서 일정 안내</span></li>
        <li><span class="x">✕</span><span>"오실 수 있나요?" <b>참석 여부를 전화·메시지로 확인</b></span></li>
-       <li><span class="x">✕</span><span>전날·당일 <b>다시 연락(리마인드)</b></span></li>
+       <li><span class="x">✕</span><span>면접 당일 <b>다시 연락(리마인드)</b></span></li>
        <li><span class="x">✕</span><span>답을 <b>엑셀에 직접 옮겨 적고</b> 사업장별로 취합</span></li>
        <li><span class="x">✕</span><span>누가 연락했는지, 누가 안 왔는지 <b>기록이 흩어짐</b></span></li>
      </ul>
@@ -83,7 +83,7 @@ const SLIDES = [
      <div class="card"><span class="num">1</span><h3>명단 올리기</h3><p>엑셀(CSV)을 올리거나, 한 명만 직접 입력해요.</p></div>
      <div class="card"><span class="num">2</span><h3>한 번에 보내기</h3><p>지금 보내거나 원하는 시간에 예약해요.</p></div>
      <div class="card"><span class="num">3</span><h3>답장 자동 정리</h3><p>"참석/불참"을 알아서 분류해서 사업장별로 모아요.</p></div>
-     <div class="card"><span class="num">4</span><h3>전날 자동 안내</h3><p>참석하겠다는 분께 면접 전날 다시 알려 줘요.</p></div>
+     <div class="card"><span class="num">4</span><h3>당일 아침 자동 안내</h3><p>참석하겠다는 분께 면접 당일 아침 8시에 다시 알려 줘요.</p></div>
    </div>
    <p class="note">사람이 하던 "연락 → 확인 → 재연락 → 취합"을 시스템이 이어서 처리합니다.</p>`,
 
@@ -137,10 +137,10 @@ const SLIDES = [
    <div class="flow">
      <div class="card"><h3>면접 안내 발송</h3><p>참석 여부를 답장으로 받아요.</p></div>
      <div class="card"><h3>"참석"이라고 답한 분</h3><p>이 분들만 대상이에요. 불참·미회신은 제외.</p></div>
-     <div class="card"><h3>면접 전날 자동 발송</h3><p>낮 시간대(08~21시)에 <b>한 번만</b> 보내요.</p></div>
+     <div class="card"><h3>면접 당일 오전 8시 자동 발송</h3><p>참석 답장을 한 분께 <b>한 번만</b> 보내요.</p></div>
      <div class="card"><h3>불참 답장이 오면</h3><p>자동 집계에 바로 반영돼요.</p></div>
    </div>
-   <p class="note">담당자가 일정을 보며 하나씩 연락하던 "전날 확인 전화"를 대체하는 것이 목표입니다. 켜고 끄는 것은 면접 안내마다 선택할 수 있어요.</p>`,
+   <p class="note">담당자가 일정을 보며 하나씩 연락하던 "당일 확인 전화"를 대체하는 것이 목표입니다. 켜고 끄는 것은 면접 안내마다 선택할 수 있어요.</p>`,
 
   // 9 결과·이력
   `<div class="grid g2"><div><p class="kicker">결과 기록과 이력</p><h2>면접 이후까지 이어서 기록해요.</h2>

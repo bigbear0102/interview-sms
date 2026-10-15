@@ -8,7 +8,7 @@ export function outcomeSection(camp, oc = {}) {
   const on = !!camp.auto_remind;
   const toggle = camp.purged_at ? '' : `<form method="post" action="/campaigns/${camp.id}/autoremind" class="inline" style="margin-top:8px">
       <input type="hidden" name="on" value="${on ? 0 : 1}">
-      <span class="muted">${icon('clock', 14)} 자동 리마인드(면접 전날, 참석자에게 한 번): <b>${on ? '켜짐' : '꺼짐'}</b>${on && oc.reminded ? ` · ${oc.reminded}명에게 보냄` : ''}</span>
+      <span class="muted">${icon('clock', 14)} 자동 리마인드(면접 당일 오전 8시, 참석자에게 한 번): <b>${on ? '켜짐' : '꺼짐'}</b>${on && oc.reminded ? ` · ${oc.reminded}명에게 보냄` : ''}</span>
       <button class="secondary small">${on ? '끄기' : '켜기'}</button></form>`;
   return `<section class="section">
     <div class="shead"><h2>면접 결과</h2><span class="muted">사람별 표에서 결과를 골라 기록해요</span></div>

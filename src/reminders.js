@@ -1,5 +1,6 @@
 // 면접 결과 기록과 자동 리마인드
-// - 자동 리마인드: "참석"이라고 답한 사람에게 면접 24시간 전~1시간 전 사이, 08~21시(KST)에 한 번만 보낸다.
+// - 자동 리마인드: "참석"이라고 답한 사람에게 면접 당일 오전 8시(KST)에 한 번만 보낸다.
+//   (그날 8시 이후에 참석 답장이 와도 면접 시각 전이면 바로 한 번 보낸다)
 import { all, run, stmt } from './d1.js';
 import { renderTemplate } from './core.js';
 
@@ -11,7 +12,7 @@ export const OUTCOMES = { showed: '출석', noshow: '노쇼', passed: '합격', 
 
 export const DEFAULT_REMIND_TEMPLATE = [
   '안녕하세요, {이름}님.',
-  '{면접일시} 면접이 예정되어 있어 다시 안내드립니다.',
+  '오늘 {면접일시} 면접이 예정되어 있어 다시 안내드립니다.',
   '',
   '참석이 어려워지셨다면 "불참"이라고 답장해 주세요.',
   '감사합니다.'
@@ -59,7 +60,8 @@ export async function queueAutoReminders(db, now = Date.now(), { limit = 200 } =
     if (queued >= limit) break;
     const at = parseInterviewAt(c.interview_at, now);
     if (!Number.isFinite(at)) continue;
-    if (at - now > DAY || at - now < HOUR) continue;
+    const sendFrom = Math.floor((at + KST) / DAY) * DAY - KST + 8 * HOUR; // 면접 당일 08:00
+    if (now < sendFrom || now >= at) continue;
     // 한 번만: 먼저 표시를 남기고 성공한 호출만 큐에 넣는다
     const claim = await run(db, `UPDATE candidates SET reminded_at=? WHERE id=? AND reminded_at IS NULL`, now, c.id);
     if (claim.meta.changes !== 1) continue;

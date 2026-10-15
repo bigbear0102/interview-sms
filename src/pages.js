@@ -304,7 +304,7 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
           `<option value="${g.id}">${esc(deps.find((d) => d.id === g.department_id)?.name || '')} / ${esc(g.name)}</option>`).join('')}</select></label>`
           : `<input type="hidden" name="gateway_id" value="${gws[0].id}"><p class="muted" style="margin-bottom:12px">보내는 폰: ${esc(gws[0].name)}</p>`}
         ${whenChoice({ firstValue: 'manual', firstLabel: '올린 다음에 제가 직접 보낼게요' })}
-        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:16px"><input type="checkbox" name="auto_remind" value="1" checked style="margin-top:4px"><span><b>면접 전날 자동으로 다시 알려 주기</b><br><small>"참석"이라고 답한 사람에게만, 면접 1일 전~1시간 전 사이 낮 시간(08~21시)에 한 번 보내요. 면접일시를 "10/20 14:00"처럼 적어야 해요.</small></span></label>
+        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:16px"><input type="checkbox" name="auto_remind" value="1" checked style="margin-top:4px"><span><b>면접 당일 아침 8시에 자동으로 다시 알려 주기</b><br><small>"참석"이라고 답한 사람에게만, 면접 당일 오전 8시에 한 번 보내요. 면접일시를 "10/20 14:00"처럼 적어야 해요.</small></span></label>
         <details style="margin-top:12px"><summary>더 설정하기</summary>
           <label style="margin-top:8px">개인정보 보관 기간(일) <small>지나면 이름과 전화번호가 저절로 지워져요</small>
             <input name="retention_days" type="number" value="90" min="1" max="3650"></label></details>
