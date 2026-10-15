@@ -78,11 +78,13 @@ test('면접 안내: 명단 올리기 → 보내기 화면 → 숫자 카드', a
   assert.match(detail, /지금 바로 보내기 \(2명\)/);
   assert.match(detail, /아직 문자를 보내지 않았어요/);
   const home = await (await call('/')).text();
-  assert.match(home, /면접 안내 문자 보내기/);
+  assert.match(home, /문자 관리 시스템/);
+  assert.ok(home.includes('href="/send"'));
+  assert.match(home, /면접 안내/);
 });
 
-test('문자함: 공백/줄바꿈으로 구분한 여러 번호', async () => {
-  const { db, post } = await setup();
+test('문자 보내기: 공백/줄바꿈으로 구분한 여러 번호는 큐에 담겨 발송된다', async () => {
+  const { db, env, post } = await setup();
   await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
   await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'폰','u',?, 't')`)
     .bind(await encryptText('k', 'pw')).run();
@@ -90,9 +92,12 @@ test('문자함: 공백/줄바꿈으로 구분한 여러 번호', async () => {
   const sent = [];
   globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body).phoneNumbers[0]); return new Response('{}', { status: 200 }); };
   try {
-    await post('/messages', { gateway_id: '1', phones: '010-1111-2222\n010-3333-4444 01055556666', text: '안녕' });
+    const res = await post('/send', { gateway_id: '1', phones: '010-1111-2222\n010-3333-4444 01055556666', text: '안녕', send_mode: 'now' });
+    assert.match(await res.text(), /3명에게 보내는 중이에요/);
+    // 요청 처리 중 백그라운드로 시작된 발송이 끝날 때까지 잠시 기다린다
+    for (let i = 0; i < 40 && sent.length < 3; i++) await new Promise((r) => setTimeout(r, 25));
   } finally { globalThis.fetch = originalFetch; }
-  assert.deepEqual(sent, ['+821011112222', '+821033334444', '+821055556666']);
+  assert.deepEqual([...sent].sort(), ['+821011112222', '+821033334444', '+821055556666']);
 });
 
 test('받기 시험: 폰이 자기 번호로 보낸 문자가 수신되면 성공, 안 오면 안내', async () => {
@@ -198,4 +203,57 @@ test('예약 발송: 명단 올릴 때 예약, 상세에서 변경/취소, 시�
   try { await processQueue(env, { batchSize: 5 }); } finally { globalThis.fetch = originalFetch; }
   assert.deepEqual(sent, ['+821011112222']);
   assert.equal((await db.prepare(`SELECT status FROM campaigns WHERE id=1`).first()).status, 'done');
+});
+
+test('문자 보내기: 예약 → 예약 목록 → 취소 → 시간이 되면 발송', async () => {
+  const { db, env, call, post } = await setup();
+  await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
+  await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'폰','u',?, 't')`)
+    .bind(await encryptText('k', 'pw')).run();
+  const { processQueue } = await import('../src/core.js');
+  const t = new Date(Date.now() + 9 * 3600000 + 2 * 86400000);
+  const pad = (n) => String(n).padStart(2, '0');
+  const when = `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}T10:30`;
+
+  // 예약 두 건
+  const ok = await (await post('/send', { gateway_id: '1', phones: '010-1111-2222, 010-3333-4444', text: '예약 문자', send_mode: 'schedule', when })).text();
+  assert.match(ok, /2명에게 .*에 보내도록 예약했어요/);
+  const list = await (await call('/messages?dir=scheduled')).text();
+  assert.match(list, /예약 문자 \(2\)/);
+  assert.match(list, /예약 취소/);
+
+  // 아직 시간이 안 됐으니 큐가 건드리지 않는다
+  const sent = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body).phoneNumbers[0]); return new Response('{}', { status: 202 }); };
+  try {
+    await processQueue(env, { batchSize: 10 });
+    assert.equal(sent.length, 0);
+
+    // 한 건 취소
+    const first = await db.prepare(`SELECT id FROM messages ORDER BY id LIMIT 1`).first();
+    await post('/messages/cancel', { id: String(first.id) });
+    assert.equal((await db.prepare(`SELECT status FROM messages WHERE id=?`).bind(first.id).first()).status, 'cancelled');
+
+    // 시간이 되면 남은 한 건만 발송
+    await db.prepare(`UPDATE messages SET scheduled_at=? WHERE status='scheduled'`).bind(Date.now() - 1000).run();
+    await processQueue(env, { batchSize: 10 });
+  } finally { globalThis.fetch = originalFetch; }
+  assert.deepEqual(sent, ['+821033334444']);
+  assert.equal((await db.prepare(`SELECT status FROM messages WHERE phone='01033334444'`).first()).status, 'sent');
+});
+
+test('홈: 오늘 보낸/받은 문자 요약과 빠른 실행', async () => {
+  const { db, call } = await setup();
+  await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
+  await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'폰','u',?, 't')`)
+    .bind(await encryptText('k', 'pw')).run();
+  await db.prepare(`INSERT INTO messages (gateway_id,phone,text,status,at) VALUES (1,'01011112222','안녕','sent',?)`).bind(Date.now()).run();
+  await db.prepare(`INSERT INTO inbound (gateway_id,sender,message,received_at,result) VALUES (1,'01011112222','네',?, 'unmatched')`).bind(Date.now()).run();
+  const home = await (await call('/')).text();
+  assert.match(home, /<b>1<\/b>오늘 보낸 문자/);
+  assert.match(home, /<b>1<\/b>오늘 받은 문자/);
+  for (const href of ['/send', '/messages', '/messages?dir=scheduled', '/campaigns']) assert.ok(home.includes(`href="${href}"`), href);
+  const camps = await call('/campaigns');
+  assert.equal(camps.status, 200);
 });

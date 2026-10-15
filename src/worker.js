@@ -5,12 +5,14 @@ import { registerWebhook, verifySignature, unlockGateway } from './gateway.js';
 import { encryptText, decryptText, randomToken, sha256Hex } from './crypto.js';
 import {
   DEFAULT_TEMPLATE, createCampaign, scheduleCampaign, cancelCampaign, remindCampaign,
-  processQueue, handleInbound, setManualStatus, purgeExpired, campaignStats, sendDirect, unscheduleCampaign
+  processQueue, handleInbound, setManualStatus, purgeExpired, campaignStats, sendDirect, unscheduleCampaign,
+  queueDirect, cancelDirect
 } from './core.js';
 import { all, first, run } from './d1.js';
 import { normalizePhone } from './parser.js';
 import { applyAdminAction, renderAdmin } from './admin.js';
 import { page, esc, STATUS_LABEL, fmtTime, parseKstLocal } from './views.js';
+import { renderHome, renderCampaignList, renderSend, renderMessages, schedulePicker, SCHEDULE_JS } from './pages.js';
 
 // 어느 실행 환경이 응답했는지 확인용 (Cloudflare Workers / Node)
 const RUNTIME = typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers' ? 'workers' : 'node';
@@ -36,33 +38,7 @@ async function loadCampaign(db, user, id) {
   return c && canAccessDepartment(user, c.department_id) ? c : null;
 }
 
-// 예약 시간 입력(한국 시간) + 빠른 선택 버튼
-const schedulePicker = (name = 'when', required = false) => `
-  <div class="schedule">
-    <input type="datetime-local" name="${name}" id="${name}-input"${required ? ' required' : ''}>
-    <div class="quick">
-      <button type="button" data-plus="60">1시간 뒤</button>
-      <button type="button" data-tomorrow="9">내일 오전 9시</button>
-      <button type="button" data-tomorrow="14">내일 오후 2시</button>
-    </div>
-    <small>한국 시간 기준이에요. 문자는 정해진 시간 <b>1분 안</b>에 나가요.</small>
-  </div>`;
-const SCHEDULE_JS = `<script>
-(function () {
-  function fmt(d) { var p = function (n) { return String(n).padStart(2, '0'); };
-    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()); }
-  document.addEventListener('click', function (e) {
-    var b = e.target.closest('.quick button'); if (!b) return;
-    var input = b.closest('.schedule').querySelector('input[type=datetime-local]'); var d = new Date();
-    if (b.dataset.plus) d = new Date(d.getTime() + Number(b.dataset.plus) * 60000);
-    if (b.dataset.tomorrow) { d.setDate(d.getDate() + 1); d.setHours(Number(b.dataset.tomorrow), 0, 0, 0); }
-    input.value = fmt(d); input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-  document.querySelectorAll('input[type=datetime-local]').forEach(function (i) { i.min = fmt(new Date()); });
-})();
-</script>`;
-
-const loginForm = (err = '') => `<form method="post" class="stack narrow"><h2>면접 참석 확인 시스템</h2>
+const loginForm = (err = '') => `<form method="post" class="stack narrow"><h2>문자 관리 시스템</h2>
   ${err ? `<p class="err">${esc(err)}</p>` : ''}
   <input name="username" placeholder="아이디" autofocus required>
   <input name="password" type="password" placeholder="비밀번호" required>
@@ -150,41 +126,16 @@ async function handle(request, env, ctx) {
     return redirect('/login', { 'Set-Cookie': 'sid=; Max-Age=0; Path=/; Secure; HttpOnly' });
   }
 
-  // 대시보드
+  // 홈: 문자 관리 요약
   if (path === '/' && method === 'GET') {
-    const deps = (await visibleDepartments(db, user)).map((d) => d.id);
-    const rows = deps.length
-      ? await all(db, `SELECT k.*, d.name dept,
-            (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id) total,
-            (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='attending') att,
-            (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='absent') abs,
-            (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status IN ('sent','unclear')) wait
-          FROM campaigns k JOIN departments d ON d.id=k.department_id
-          WHERE k.department_id IN (${deps.map(() => '?').join(',')}) ORDER BY k.id DESC LIMIT 200`, ...deps)
-      : [];
-    const gwCount = (await first(db, `SELECT COUNT(*) n FROM gateways WHERE active=1`)).n;
-    const phoneBanner = gwCount
-      ? '<div class="ok big">🟢 문자를 보낼 폰이 준비되어 있어요.</div>'
-      : `<div class="warn big">🔴 문자를 보낼 폰이 아직 연결되지 않았어요. ${user.role === 'super' ? '<a href="/admin">여기를 눌러 폰을 연결하세요.</a>' : '전체 관리자에게 폰 연결을 부탁하세요.'}</div>`;
-    const CAMP = { draft: '아직 안 보냄', scheduled: '보낼 시간을 기다리는 중', sending: '보내는 중', done: '모두 보냄', cancelled: '취소함' };
-    const body = `<section class="hero">
-        <h1>면접 안내,<br>문자 한 번이면 끝.</h1>
-        <p>명단 파일을 올리면 참석 여부를 자동으로 모아서 보여 드려요.</p>
-        <div class="cta"><a class="btn big" href="/campaigns/new">면접 안내 보내기</a><a class="btn big ghost" href="#results">보낸 결과 보기</a></div>
-      </section>
-      ${phoneBanner}
-      <div class="bigbtns">
-        <a class="bigbtn" href="/campaigns/new"><span class="n">1</span>면접 안내 문자 보내기<small>명단 파일을 올려서 한꺼번에 보내요</small></a>
-        <a class="bigbtn" href="#results"><span class="n">2</span>보낸 결과 보기<small>누가 참석하고 불참하는지 봐요</small></a>
-        <a class="bigbtn" href="/messages"><span class="n">3</span>문자 따로 보내기 · 받은 문자 보기<small>한 사람에게 보내거나 답장을 봐요</small></a>
-      </div>
-      <h3 id="results">지금까지 보낸 면접 안내</h3>
-      ${rows.length ? `<table><tr><th>이름</th><th>상태</th><th>보낸 사람 수</th><th>참석</th><th>불참</th><th>답 없음·확인 필요</th></tr>
-      ${rows.map((r) => `<tr><td><a href="/campaigns/${r.id}">${esc(r.name)}</a><br><small>${esc(r.dept)}</small></td>
-        <td>${esc(r.purged_at ? '개인정보 지움' : CAMP[r.status] || r.status)}</td>
-        <td>${r.total}</td><td><b>${r.att}</b></td><td><b>${r.abs}</b></td><td>${r.wait}</td></tr>`).join('')}</table>`
-      : '<p>아직 보낸 면접 안내가 없어요. 위의 <b>1번</b>을 눌러 시작하세요.</p>'}`;
-    return html(page(user, '대시보드', body));
+    const deps = await visibleDepartments(db, user);
+    return html(page(user, '홈', await renderHome(db, user, deps)));
+  }
+
+  // 면접 안내 목록 (문자 관리 안의 한 기능)
+  if (path === '/campaigns' && method === 'GET') {
+    const deps = await visibleDepartments(db, user);
+    return html(page(user, '면접 안내', await renderCampaignList(db, user, deps)));
   }
 
   // 새 캠페인
@@ -416,70 +367,71 @@ async function handle(request, env, ctx) {
       `<tr><td>${fmtTime(r.at)}</td><td>${esc(r.username || '')}</td><td>${esc(r.action)}</td><td>${esc(r.detail)}</td></tr>`).join('')}</table>`));
   }
 
-  // 문자함: 임의 번호로 직접 발송 + 송수신 내역
-  if (path === '/messages') {
+  // 문자 보내기 / 문자함 (직접 보내는 문자, 예약 포함)
+  if (path === '/send' || path === '/messages' || path === '/messages/cancel') {
     const deps = await visibleDepartments(db, user);
     const gws = (await all(db, `SELECT id,department_id,name FROM gateways WHERE active=1`)).filter((g) => deps.some((d) => d.id === g.department_id));
-    if (!gws.length) return html(page(user, '문자함', '<p>사용 가능한 게이트웨이(폰)가 없습니다.</p>'));
+    if (!gws.length) {
+      return html(page(user, '문자 보내기', `<div class="warn big">문자를 보낼 폰이 아직 연결되지 않았어요. ${user.role === 'super' ? '<a href="/admin">설정에서 폰을 먼저 연결하세요.</a>' : '전체 관리자에게 폰 연결을 부탁하세요.'}</div>`));
+    }
+
+    if (path === '/messages/cancel' && method === 'POST') {
+      const f = form(await request.text());
+      const n = await cancelDirect(db, f.id, gws.map((g) => g.id));
+      if (n) await audit(db, user, 'message.cancel', `message=${Number(f.id)}`);
+      return redirect('/messages?dir=scheduled');
+    }
+
+    // 새 문자 (지금 / 예약). POST /messages 도 같은 처리를 한다(이전 주소 호환).
     let notice = '';
+    let keep = {};
     if (method === 'POST') {
       const f = form(await request.text());
-      const gwRow = gws.find((g) => g.id === Number(f.gateway_id));
+      const gwRow = gws.find((g) => g.id === Number(f.gateway_id)) || (gws.length === 1 ? gws[0] : null);
       const phones = String(f.phones || '').split(/[\s,;]+/).filter(Boolean);
       const text = String(f.text || '').trim();
-      if (!gwRow || !phones.length || !text) {
-        notice = '<p class="err">폰, 받는 번호, 내용을 모두 입력하세요.</p>';
-      } else if (phones.length > 20) {
-        notice = '<p class="err">한 번에 최대 20명까지 보낼 수 있습니다. 대량 발송은 캠페인을 사용하세요.</p>';
+      let at = Date.now();
+      let err = '';
+      if (!gwRow) err = '보낼 폰을 골라 주세요.';
+      else if (!phones.length) err = '받는 번호를 적어 주세요.';
+      else if (!text) err = '문자 내용을 적어 주세요.';
+      else if (phones.length > 200) err = '한 번에 최대 200명까지 보낼 수 있어요. 나누어서 보내 주세요.';
+      else if (f.send_mode === 'schedule') {
+        at = f.when ? parseKstLocal(f.when) : NaN;
+        if (!Number.isFinite(at)) err = '예약 시간을 정해 주세요.';
+        else if (at < Date.now() - 60000) err = '이미 지난 시간이에요. 시간을 다시 정해 주세요.';
+      }
+      if (err) {
+        notice = `<div class="warn">${esc(err)}</div>`;
+        keep = { toPhone: f.phones, text: f.text };
       } else {
-        const full = await first(db, `SELECT * FROM gateways WHERE id=?`, gwRow.id);
-        const gw = await unlockGateway(env, full);
-        const res = await sendDirect(db, gw, phones, text, user.id);
-        await audit(db, user, 'message.send', `gateway=${gw.id} count=${res.length} ok=${res.filter((r) => r.ok).length}`);
-        const ok = res.filter((r) => r.ok).length;
-        notice = `<p>${ok}건 발송 요청 완료${res.length - ok ? `, <span class="err">${res.length - ok}건 실패</span>` : ''}.</p>` +
-          res.filter((r) => !r.ok).map((r) => `<p class="err">${esc(r.phone)}: ${esc(r.error)}</p>`).join('');
+        const r = await queueDirect(db, { gatewayId: gwRow.id, phones, text, userId: user.id, at });
+        await audit(db, user, f.send_mode === 'schedule' ? 'message.schedule' : 'message.send',
+          `gateway=${gwRow.id} queued=${r.queued} rejected=${r.rejected.length}`);
+        if (r.queued && at <= Date.now() + 1000) ctx.waitUntil(processQueue(env).catch(console.error));
+        const bad = r.rejected.length
+          ? `<div class="warn">보내지 못한 번호 ${r.rejected.length}건: ${r.rejected.slice(0, 10).map((x) => `${esc(x.phone)} (${esc(x.reason)})`).join(', ')}</div>` : '';
+        const when = f.send_mode === 'schedule' ? `${fmtTime(at)}에 보내도록 예약했어요` : '보내는 중이에요';
+        notice = (r.queued ? `<div class="ok big">✅ ${r.queued}명에게 ${when}.</div><p><a href="/messages">문자함에서 확인하기</a></p>` : '') + bad;
+        if (!r.queued) keep = { toPhone: f.phones, text: f.text };
       }
     }
-    const ids = gws.map((g) => g.id);
-    const ph = ids.map(() => '?').join(',');
-    const dirFilter = ['in', 'out'].includes(url.searchParams.get('dir')) ? url.searchParams.get('dir') : '';
-    const inCount = (await first(db, `SELECT COUNT(*) n FROM inbound WHERE gateway_id IN (${ph})`, ...ids)).n;
-    const filter = normalizePhone(url.searchParams.get('phone') || '');
-    const phoneCond = filter ? ' AND phone=?' : '';
-    const phoneArgs = filter ? [filter] : [];
-    const rows = await all(db,
-      `SELECT * FROM (
-         SELECT 'out' dir, phone, text, status result, at, gateway_id FROM messages WHERE gateway_id IN (${ph})${phoneCond}
-         UNION ALL
-         SELECT 'in' dir, sender phone, message text, result, received_at at, gateway_id FROM inbound WHERE gateway_id IN (${ph})${filter ? ' AND sender=?' : ''}
-       ) WHERE (? = '' OR dir = ?) ORDER BY at DESC LIMIT 100`, ...ids, ...phoneArgs, ...ids, ...phoneArgs, dirFilter, dirFilter);
-    const RES = { sent: '발송요청', failed: '실패', attending: '참석', absent: '불참', unclear: '확인필요', unmatched: '캠페인 외' };
-    const toPhone = url.searchParams.get('to') || '';
-    const gwSel = Number(url.searchParams.get('gw')) || gws[0].id;
-    const body = `<h2>문자함</h2>${notice}
-      <form method="post" class="stack">
-        <label>보낼 폰 <select name="gateway_id">${gws.map((g) =>
-          `<option value="${g.id}"${g.id === gwSel ? ' selected' : ''}>${esc(deps.find((d) => d.id === g.department_id).name)} / ${esc(g.name)}</option>`).join('')}</select></label>
-        <label>받는 번호 <small>여러 명은 쉼표/줄바꿈으로 구분 (최대 20명)</small>
-          <textarea name="phones" rows="2" placeholder="010-1234-5678">${esc(toPhone)}</textarea></label>
-        <label>내용 <textarea name="text" rows="3" required></textarea></label>
-        <button class="btn">문자 보내기</button>
-      </form>
-      <div class="tabs">
-        <a class="${dirFilter === '' ? 'on' : ''}" href="/messages">전체</a>
-        <a class="${dirFilter === 'in' ? 'on' : ''}" href="/messages?dir=in">받은 문자 (${inCount})</a>
-        <a class="${dirFilter === 'out' ? 'on' : ''}" href="/messages?dir=out">보낸 문자</a>
-      </div>
-      <h3>${dirFilter === 'in' ? '받은 문자' : dirFilter === 'out' ? '보낸 문자' : '주고받은 문자'} <small>최근 100건 · 15초마다 자동으로 새로 불러와요${filter ? ` · ${esc(filter)} <a href="/messages">전체 보기</a>` : ''}</small></h3>
-      <table><tr><th>시각</th><th>구분</th><th>번호</th><th>내용</th><th>결과</th><th></th></tr>
-      ${rows.length ? '' : '<tr><td colspan="6">아직 없어요.</td></tr>'}
-      ${rows.map((r) => `<tr><td>${fmtTime(r.at)}</td><td>${r.dir === 'in' ? '받음' : '보냄'}</td>
-        <td><a href="/messages?phone=${encodeURIComponent(r.phone)}">${esc(r.phone)}</a></td>
-        <td style="white-space:normal;min-width:200px">${esc(r.text)}</td><td>${esc(RES[r.result] || r.result)}</td>
-        <td><a href="/messages?to=${encodeURIComponent(r.phone)}&gw=${r.gateway_id}">답장</a></td></tr>`).join('')}</table>`;
-    const live = `<script>setInterval(function(){var a=document.activeElement;if(a&&(a.tagName==='TEXTAREA'||a.tagName==='INPUT'))return;if(document.querySelector('textarea[name=text]').value)return;location.reload();},15000);</script>`;
-    return html(page(user, '문자함', body + (method === 'GET' ? live : '')));
+
+    if (path === '/send' || method === 'POST') {
+      return html(page(user, '문자 보내기', renderSend({
+        gws, deps,
+        gwSel: Number(url.searchParams.get('gw')) || gws[0].id,
+        toPhone: keep.toPhone ?? url.searchParams.get('to') ?? '',
+        text: keep.text ?? '',
+        notice
+      })));
+    }
+
+    const dirParam = url.searchParams.get('dir');
+    const dirFilter = ['in', 'out', 'scheduled'].includes(dirParam) ? dirParam : '';
+    const body = await renderMessages(db, { gws, dirFilter, phoneFilter: normalizePhone(url.searchParams.get('phone') || '') });
+    const live = '<script>setInterval(function(){var a=document.activeElement;if(a&&(a.tagName==="TEXTAREA"||a.tagName==="INPUT"))return;location.reload();},15000);</script>';
+    return html(page(user, '문자함', body + live));
   }
 
   // 비밀번호 변경

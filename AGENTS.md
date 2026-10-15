@@ -3,7 +3,7 @@
 이 파일을 먼저 읽고 작업을 시작한다. (`CLAUDE.md`도 이 파일을 가리킨다)
 
 ## 프로젝트 요약
-면접 참석 확인 문자 시스템. 서버 렌더링 HTML, 외부 런타임 의존성 없음. **같은 코드가 두 런타임에서 동작**한다:
+**문자 관리 시스템**(문자 보내기/문자함/예약 문자) 안에 **면접 안내** 기능(명단 업로드, 참석 여부 자동 집계)이 있다. 서버 렌더링 HTML, 외부 런타임 의존성 없음. **같은 코드가 두 런타임에서 동작**한다:
 - **Cloudflare Workers + D1**(**현재 운영**): `src/worker.js`, `wrangler.jsonc`, 배포 `npm run deploy`
 - **Node + SQLite**(회사 서버 이전용, 검증 완료): `src/node/server.js`, D1 API 어댑터 `src/node/d1-sqlite.js`
 부서별 안드로이드 폰(android-sms-gateway)은 **자체 호스팅 Private 서버**(`deploy/gateway`, Docker)에 연결되고,
@@ -30,7 +30,8 @@ npm start                # Node 서버 (회사 서버 이전용, .env 필요)
 | `src/auth.js` / `src/crypto.js` | 세션/권한, PBKDF2·AES-GCM·HMAC (WebCrypto) |
 | `src/csv.js` / `src/views.js` / `src/d1.js` | CSV, HTML·KST 시각, D1 헬퍼 |
 | `src/admin.js` | 설정 화면(폰 연결 마법사, 부서, 관리자). 초보자용 문구는 `docs/GUIDE.md` 와 맞춘다 |
-| `/messages` (worker.js) | 문자함: 임의 번호 직접 발송(`sendDirect`) + 송수신 내역(`messages`, `inbound`) |
+| `src/pages.js` | 홈 요약, 문자 보내기, 문자함(받은/보낸/예약), 면접 안내 목록 화면 |
+| `/send`, `/messages` (worker.js) | 직접 보내는 문자: `queueDirect`(큐/예약) → Cron `processQueue` 가 발송, `cancelDirect`(예약 취소) |
 | `migrations/*.sql` | D1 스키마 (번호 순서 적용) |
 | `test/` | 단위 테스트. `src/node/d1-sqlite.js`(node:sqlite 기반 D1 어댑터)를 사용 |
 

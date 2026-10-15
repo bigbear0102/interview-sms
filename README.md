@@ -1,6 +1,7 @@
-# interview-sms — 면접 참석 확인 문자 시스템
+# 문자 관리 시스템 (interview-sms)
 
-지원자에게 면접 안내 문자를 보내고, **답장("참석"/"불참" 등)을 자동 해석**해 사업장별로 집계하는 웹 시스템.
+문자를 **보내고, 받고, 예약하는 문자 관리 시스템**. 그 안에 "면접 안내"(명단으로 한꺼번에 보내고 참석/불참 답장을 자동 집계) 기능이 들어 있다.
+문자는 부서별 안드로이드 폰의 [android-sms-gateway](https://github.com/capcom6/android-sms-gateway)(SMSGate 앱)로 송수신한다.
 **직접 운영**(현재는 PC, 추후 회사 서버)하며, 문자는 부서별 안드로이드 폰의
 [android-sms-gateway](https://github.com/capcom6/android-sms-gateway)를 **자체 호스팅한 Private 서버**로 송수신한다.
 외부 접속은 Cloudflare Tunnel 을 쓰고, 지원자 정보는 외부 공개 SMS 서버를 거치지 않는다.

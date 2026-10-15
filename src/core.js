@@ -107,6 +107,32 @@ export async function processQueue(env, { batchSize = Number(env.SEND_BATCH || 2
       `SELECT COUNT(*) n FROM candidates WHERE campaign_id=? AND status IN ('pending','sending')`, camp.id)).n;
     if (left === 0) await run(db, `UPDATE campaigns SET status='done' WHERE id=? AND status='sending'`, camp.id);
   }
+  // ---- 직접 보내는 문자(문자 보내기 화면): 예약/대기 건을 이어서 처리한다 ----
+  if (budget > 0) {
+    await run(db, `UPDATE messages SET status='scheduled' WHERE status='sending' AND at<?`, Date.now() - 300000);
+    const due = await all(db,
+      `SELECT * FROM messages WHERE status='scheduled' AND scheduled_at<=? ORDER BY scheduled_at, id LIMIT ?`, Date.now(), budget);
+    const gwCache = new Map();
+    for (const m of due) {
+      // 선점: 다른 호출이 먼저 가져갔으면 건너뛴다
+      const claim = await run(db, `UPDATE messages SET status='sending', at=? WHERE id=? AND status='scheduled'`, Date.now(), m.id);
+      if (claim.meta.changes !== 1) continue;
+      try {
+        if (!gwCache.has(m.gateway_id)) {
+          const row = await first(db, `SELECT * FROM gateways WHERE id=?`, m.gateway_id);
+          gwCache.set(m.gateway_id, row ? await unlockGateway(env, row) : null);
+        }
+        const gw = gwCache.get(m.gateway_id);
+        if (!gw) throw new Error('폰 정보를 찾을 수 없어요.');
+        await send(gw, m.phone, m.text);
+        await run(db, `UPDATE messages SET status='sent', at=?, error='' WHERE id=?`, Date.now(), m.id);
+      } catch (e) {
+        await run(db, `UPDATE messages SET status='failed', at=?, error=? WHERE id=?`, Date.now(), String(e.message).slice(0, 300), m.id);
+        log.error?.(`직접 발송 실패 message=${m.id}: ${e.message}`);
+      }
+      sentCount++;
+    }
+  }
   return sentCount;
 }
 
@@ -170,6 +196,35 @@ export async function campaignStats(db, campaignId) {
     s.total += r.n;
   }
   return [...bySite.values()].sort((a, b) => a.site.localeCompare(b.site, 'ko'));
+}
+
+// 문자 보내기 화면: 받는 사람마다 큐에 넣는다. at 이 지금이면 곧바로, 미래면 그 시각에 발송된다.
+// 반환: { queued, rejected: [{phone, reason}] }
+export async function queueDirect(db, { gatewayId, phones, text, userId, at = Date.now() }) {
+  const seen = new Set();
+  const rejected = [];
+  const stmts = [];
+  const now = Date.now();
+  for (const raw of phones) {
+    const phone = normalizePhone(raw);
+    if (!isValidMobile(phone)) { rejected.push({ phone: raw, reason: '휴대폰 번호 형식이 아니에요' }); continue; }
+    if (seen.has(phone)) { rejected.push({ phone: raw, reason: '같은 번호가 두 번 있어요' }); continue; }
+    seen.add(phone);
+    stmts.push(stmt(db,
+      `INSERT INTO messages (gateway_id,phone,text,status,user_id,at,scheduled_at) VALUES (?,?,?,'scheduled',?,?,?)`,
+      gatewayId, phone, text, userId ?? null, now, at));
+  }
+  for (let i = 0; i < stmts.length; i += 40) await db.batch(stmts.slice(i, i + 40));
+  return { queued: stmts.length, rejected };
+}
+
+// 예약 취소 (아직 보내지 않은 건만). allowedGatewayIds 안의 건만 취소한다.
+export async function cancelDirect(db, id, allowedGatewayIds) {
+  if (!allowedGatewayIds.length) return 0;
+  const r = await run(db,
+    `UPDATE messages SET status='cancelled' WHERE id=? AND status='scheduled' AND gateway_id IN (${allowedGatewayIds.map(() => '?').join(',')})`,
+    Number(id), ...allowedGatewayIds);
+  return r.meta.changes;
 }
 
 // 캠페인과 무관하게 임의 번호로 문자를 보낸다. gw.password 는 복호화된 상태여야 한다.

@@ -128,17 +128,24 @@ details.help{background:var(--help-bg);border-radius:14px;padding:14px 16px;marg
 .quick{display:flex;gap:8px;flex-wrap:wrap}
 .quick button{background:var(--chip);color:var(--ink);padding:7px 14px;font-size:14px}
 .when-choice{margin:14px 0}.when-choice legend{font-weight:600;padding:0 6px}
+.hero.compact{padding:20px 8px 8px}.hero.compact h1{font-size:clamp(30px,5vw,44px)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:18px 0}
+.tile{display:block;background:var(--canvas);border:1px solid var(--hairline);border-radius:18px;padding:20px;color:var(--ink);position:relative}
+.tile:hover{background:var(--pearl);text-decoration:none}
+.tile .ico{font-size:30px;display:block;margin-bottom:6px}.tile b{font-size:20px;display:block;letter-spacing:-.02em}
+.tile small{display:block;margin-top:4px;font-size:15px}
+a.count{display:block;color:var(--ink)}a.count:hover{background:var(--pearl);text-decoration:none}
 .bigfile{font-size:17px;padding:22px;width:100%;border:2px dashed var(--hairline);border-radius:18px;background:var(--parchment)}
 @media (max-width:640px){main{padding:20px 14px 48px}.step{flex-direction:column;padding:18px}h2{font-size:28px}header a{padding:6px 8px}}
 `;
 
 export function page(user, title, body) {
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - 면접 참석 확인</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - 문자 관리</title>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>${CSS}</style></head><body>
-${user ? `<header><a href="/"><b>면접 문자</b></a><a href="/">처음 화면</a><a href="/campaigns/new">면접 안내 보내기</a><a href="/messages">문자함</a>
+${user ? `<header><a href="/"><b>문자 관리</b></a><a href="/">홈</a><a href="/send">문자 보내기</a><a href="/messages">문자함</a><a href="/messages?dir=scheduled">예약 문자</a><a href="/campaigns">면접 안내</a>
 ${user.role === 'super' ? '<a href="/admin">설정</a><a href="/audit">기록</a>' : ''}<span class="sp"></span>
 <span>${esc(user.username)}</span><a href="/password">비밀번호 바꾸기</a>
 <form method="post" action="/logout" class="inline"><button>로그아웃</button></form></header>` : ''}
