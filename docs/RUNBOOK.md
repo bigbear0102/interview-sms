@@ -1,52 +1,72 @@
 # 운영 가이드
 
-운영 주소: https://interview-sms.bigbears.workers.dev (Cloudflare Worker, 계정은 `npx wrangler whoami`로 확인)
+현재 운영 형태: **이 PC(Windows)에서 직접 운영**, 외부 접속은 Cloudflare Tunnel.
+나중에 회사 서버로 옮기는 방법은 마지막 절 참고.
 
-## 1. 부서 폰 연결 (부서마다 1대)
-1. 안드로이드 폰에 [SMS Gateway for Android](https://github.com/capcom6/android-sms-gateway) 설치, SMS 권한 허용
-2. 앱의 **Cloud Server** 를 켜고 **Offline** 버튼을 눌러 **Online** 이 될 때까지 연결
-   - 최초 연결 시 **Username / Password 가 자동 생성**되어 앱의 Cloud Server 화면에 표시된다.
-   - (앱이 "QR 코드를 스캔하라"고 먼저 요구하면, 화면의 건너뛰기/수동 설정이 있는지 확인하고 아래 *QR 안내*를 본다.)
-3. 배터리 최적화 제외, 백그라운드 실행 허용(그렇지 않으면 발송이 멈춘다)
-4. (권장) 앱 Settings → Webhooks 에서 **Signing Key**를 확인하고 웹의 게이트웨이 등록 시 입력
+| 구성요소 | 위치 | 공개 주소 |
+|---|---|---|
+| 면접 관리 웹 (Node, SQLite `data/app.db`) | PC `127.0.0.1:8787` | https://interview.bigbears.me |
+| SMS 게이트웨이 서버 (Docker: backend/worker/MariaDB) | PC `127.0.0.1:3000` | https://sms.bigbears.me |
+| Cloudflare Tunnel `interview-sms` | PC (`cloudflared`) | — |
 
-### QR 안내
-공식 문서의 클라우드 모드 절차에는 QR 스캔이 없다. QR 화면은 앱 버전에 따른 연결 마법사일 수 있다.
-QR 로 연결되는 대상(서버 주소)이 `api.sms-gate.app`(공개 클라우드)인지 확인하고, 그 방식이 자체 서버(Private)용이라면
-앱 설정에서 서버를 **Public Cloud**로 선택해야 한다. 막히면 화면 캡처를 보고 판단한다.
+비밀값은 모두 레포 루트의 `.env`(git 제외)에 있다. **`.env`와 `data/`는 반드시 백업**한다. (`ENCRYPTION_KEY`를 잃으면 저장된 게이트웨이 비밀번호를 복구할 수 없다)
 
-## 2. 웹에서 최초 설정 (전체 관리자)
-1. `/login` — 아이디 `admin`, 비밀번호는 최초 배포 시 전달된 값 → **바로 `/password`에서 변경**
+## 1. 최초 설치 (새 PC/서버에서)
+```bash
+npm install                                  # (wrangler 는 Cloudflare Workers 배포 시에만 필요)
+node deploy/setup.mjs <웹도메인> <게이트웨이도메인>   # .env 와 deploy/gateway/.env 생성
+cd deploy/gateway && docker compose --env-file .env up -d     # 게이트웨이 서버
+cloudflared tunnel create interview-sms      # 터널 생성 후 deploy/tunnel/config.template.yml 참고해
+cloudflared tunnel route dns --overwrite-dns <터널UUID> <도메인>   # 도메인 연결(UUID 로 지정할 것)
+powershell -ExecutionPolicy Bypass -File deploy\windows\install-tasks.ps1   # 로그온 시 자동 시작
+```
+수동 실행: `npm start` (웹), `cloudflared tunnel --config <설정> run` (터널).
+로그: `data/web.log`, `data/tunnel.log`, `docker compose logs`.
+
+## 2. 폰 연결 (부서마다 1대)
+1. 폰에 [SMS Gateway for Android](https://github.com/capcom6/android-sms-gateway) 설치 (패키지 `me.capcom.smsgateway`), SMS 권한 허용
+2. 앱 **Settings → Cloud Server**
+   - **API URL**: `https://sms.bigbears.me/api/mobile/v1` (끝의 `/api/mobile/v1` 필수)
+   - **Private Token**: `.env` 의 `GATEWAY_PRIVATE_TOKEN` 값
+3. **Home** 탭 → **Cloud server** 스위치 켜기 → **Offline** 버튼을 눌러 **Online** 이 될 때까지 대기
+4. 첫 연결 시 자동 생성된 **Username/Password** 가 앱의 Cloud Server 화면에 표시된다
+5. 배터리 최적화에서 앱 제외, 백그라운드 실행 허용
+6. (QR 스캔 화면이 나오면 위 URL/토큰을 입력하는 다른 방법일 수 있다. 수동 입력이 가능하면 수동으로 한다)
+
+## 3. 웹에서 설정 (전체 관리자)
+1. https://interview.bigbears.me 로그인 (`admin` / `.env` 의 `ADMIN_PASSWORD`) → **`/password`에서 변경**
 2. 관리 → 부서 추가
-3. 관리 → 게이트웨이 추가: 앱에 표시된 Username/Password 입력 (API 주소/경로 기본값 유지)
-4. 게이트웨이 목록의 **웹훅 등록** 클릭 (폰이 답장 수신 시 이 Worker 로 알려주게 한다)
-5. 관리자 계정 추가: 담당 부서 ID 지정
+3. 관리 → 게이트웨이 추가: 앱에 표시된 Username/Password 입력 (API 주소는 기본값 유지)
+4. **웹훅 등록** 클릭 → 폰이 문자를 받으면 웹으로 알려준다
+5. 관리자 계정 추가 (담당 부서 ID 지정)
 
-## 3. 첫 시험
-1. 본인 번호 1건만 담은 CSV 로 캠페인 생성 → 즉시 발송 (Cron 이 매 분 이어받음)
-2. 문자를 받고 "참석"/"불참"으로 답장 → 캠페인 상세에서 상태 확인
-3. 안 바뀌면: 웹훅 등록 여부, 서명 키 불일치(401), `inbound` 수신 로그, 폰 앱 로그 확인
+## 4. 시험
+1. 본인 번호 1건 CSV 로 캠페인 생성 → 즉시 발송
+2. 문자 수신 후 "참석"/"불참" 답장 → 캠페인 상세 확인
+3. 안 바뀌면: 웹훅 등록 여부, 서명 키(401), `inbound` 테이블, 폰 앱 Online 여부
 
-## 4. 배포/변경
+## 5. 백업/복구
 ```bash
-npm test
-npm run db:migrate   # 스키마 변경이 있을 때
-npm run deploy
-npx wrangler tail    # 실시간 로그
+# 중지 후 복사 (개인정보 포함 — 안전한 곳에 보관, 보관기간 정책 준수)
+data/app.db  data/app.db-wal  data/app.db-shm  .env
+# 게이트웨이 DB 는 임시 큐라서 중요하지 않다 (문자 원문 3일 후 자동 삭제)
 ```
-시크릿 교체: `npx wrangler secret put ADMIN_PASSWORD` 등. **`ENCRYPTION_KEY`를 바꾸면 저장된 게이트웨이 비밀번호를 복호화할 수 없다** — 게이트웨이를 다시 등록해야 한다.
-
-## 5. 백업
-```bash
-npx wrangler d1 export interview-sms --remote --output backup.sql
-```
-개인정보가 포함되므로 안전한 곳에 보관하고 보관기간 정책에 따라 삭제한다.
 
 ## 6. 장애 대응
 | 증상 | 확인 |
 |---|---|
-| 발송이 시작되지 않음 | 캠페인 상태/예약 시각(KST), Cron 동작(`wrangler tail`) |
-| 발송 실패(`failed`) | 폰 Online 여부, 게이트웨이 계정, 실패 사유 → "리마인드 발송"으로 재시도 |
-| 답장이 반영 안 됨 | 웹훅 등록/서명 키(401), `inbound` 테이블 |
-| "확인필요" 다수 | 답장 문구 확인 → `docs/PARSING_RULES.md` 규칙 보강 후 수동 확정 |
-| 로그인 잠김 | 5분 대기 |
+| 웹 접속 안 됨 | PC 켜짐, `interview-sms-web`/`-tunnel` 작업 상태, `data/*.log`, 터널 `cloudflared tunnel info interview-sms` |
+| 발송이 시작되지 않음 | 캠페인 상태/예약 시각(KST), 웹 로그 |
+| 발송 실패(`failed`) | 폰 Online, 게이트웨이 계정, Docker 컨테이너 상태(`docker compose ps`) → "리마인드 발송"으로 재시도 |
+| 답장 반영 안 됨 | 웹훅 등록/서명 키, `inbound` 테이블 |
+| PC 재부팅 후 | Docker Desktop 이 자동 시작되어야 게이트웨이가 올라온다(설정에서 로그인 시 시작 켜기) |
+
+## 7. 회사 서버로 이전
+1. 새 서버에 Node 22.5+, Docker, cloudflared 설치 후 레포 clone
+2. 기존 PC 의 `.env`, `data/app.db*` 를 복사 (도메인이 같으면 `deploy/setup.mjs` 는 실행하지 않는다)
+3. `deploy/gateway` 컨테이너 실행. 게이트웨이 DB(`mariadb-data`)는 새로 시작해도 되지만, **폰 앱 등록이 풀리므로** 폰에서 다시 Online 해야 한다. (주소가 같으면 앱 설정 변경은 필요 없음)
+4. 터널 자격 증명(`~/.cloudflared/<UUID>.json`)을 새 서버로 옮기고 같은 터널을 실행한다. 이전 PC 의 터널은 먼저 중지한다.
+5. 이전 PC 의 작업(`interview-sms-*`)을 제거하고 데이터를 파기한다.
+
+## 8. (참고) Cloudflare Workers 배포
+같은 코드가 Workers+D1 에서도 동작한다(`wrangler.jsonc`, `npm run deploy`). 현재는 PC 운영이므로 사용하지 않는다.

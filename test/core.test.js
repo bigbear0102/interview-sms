@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { createTestDb } from './d1-shim.js';
+import { fileURLToPath } from 'node:url';
+import { openSqliteD1 } from '../src/node/d1-sqlite.js';
+const createTestDb = () => openSqliteD1(':memory:', fileURLToPath(new URL('../migrations', import.meta.url)));
 import { createCampaign, scheduleCampaign, processQueue, handleInbound, purgeExpired, campaignStats, remindCampaign } from '../src/core.js';
 import { candidatesFromCsv } from '../src/csv.js';
 import { verifySignature } from '../src/gateway.js';

@@ -2,5 +2,8 @@ node_modules/
 .wrangler/
 .dev.vars
 .env
+**/.env
 data/
 *.db
+*.db-*
+data-*.log

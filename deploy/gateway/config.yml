@@ -1,0 +1,9 @@
+# 기본 설정. 비밀값과 주소는 docker-compose.yml 의 환경변수가 덮어쓴다.
+gateway:
+  mode: private
+http:
+  listen: 0.0.0.0:3000
+  api:
+    path: /api
+database:
+  timezone: UTC

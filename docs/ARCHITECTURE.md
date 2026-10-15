@@ -1,11 +1,12 @@
 # 아키텍처
 
-## 구성 (모두 Cloudflare)
-- **Worker** `interview-sms` (`src/worker.js`): 화면(SSR), 웹훅 수신, Cron 발송 큐
-- **D1** `interview-sms` (id: `c55dbe7a-beef-4598-a67f-305a4ca94305`): 모든 데이터
-- **Cron Trigger** `* * * * *`: 매 분 `processQueue`, 정각에 만료 파기/세션 정리
-- **폰**: SMS Gateway 앱 **클라우드 서버 모드** → `https://api.sms-gate.app/3rdparty/v1`
-  (Workers 는 사설 IP 의 폰을 직접 호출할 수 없으므로 로컬 모드 사용 불가)
+## 구성 (현재: PC 직접 운영)
+- **면접 웹** (`src/node/server.js` → `src/worker.js`): 화면(SSR), 웹훅 수신, 10초 주기 발송 큐. SQLite `data/app.db`
+- **SMS 게이트웨이 서버** (Docker `deploy/gateway`): Private 모드. 폰 앱이 여기에 등록되고, 웹이 `/api/3rdparty/v1/*` 로 발송
+- **Cloudflare Tunnel** `interview-sms`: `interview.bigbears.me`→웹, `sms.bigbears.me`→게이트웨이 (PC 는 인바운드 포트를 열지 않음)
+- **폰**: SMS Gateway 앱 → `https://sms.bigbears.me/api/mobile/v1` + Private Token
+- (대체 배포) Cloudflare Workers + D1 + Cron: `wrangler.jsonc`. 같은 핸들러를 사용한다.
+- 문서상 Private 모드에서도 폰 깨우기용 푸시(FCM) 신호는 upstream(`api.sms-gate.app`)을 경유한다. 문자 내용은 우리 서버에만 있다.
 
 ## 데이터 모델 (`migrations/0001_init.sql`)
 ```

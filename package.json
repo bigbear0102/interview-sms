@@ -6,6 +6,7 @@
   "type": "module",
   "engines": { "node": ">=22.5" },
   "scripts": {
+    "start": "node --env-file=.env src/node/server.js",
     "test": "node --test",
     "dev": "wrangler dev --test-scheduled",
     "db:migrate:local": "wrangler d1 migrations apply interview-sms --local",

@@ -1,36 +1,34 @@
 # interview-sms — 면접 참석 확인 문자 시스템
 
 지원자에게 면접 안내 문자를 보내고, **답장("참석"/"불참" 등)을 자동 해석**해 사업장별로 집계하는 웹 시스템.
-**Cloudflare Workers + D1**에서 동작하고, 문자는 부서별 안드로이드 폰의
-[android-sms-gateway](https://github.com/capcom6/android-sms-gateway)(클라우드 서버 모드)로 송수신한다.
+**직접 운영**(현재는 PC, 추후 회사 서버)하며, 문자는 부서별 안드로이드 폰의
+[android-sms-gateway](https://github.com/capcom6/android-sms-gateway)를 **자체 호스팅한 Private 서버**로 송수신한다.
+외부 접속은 Cloudflare Tunnel 을 쓰고, 지원자 정보는 외부 공개 SMS 서버를 거치지 않는다.
 
-- 운영 주소: https://interview-sms.bigbears.workers.dev
+- 웹: https://interview.bigbears.me  /  게이트웨이: https://sms.bigbears.me
 
 ```
-관리자 브라우저 ─▶ Cloudflare Worker ─▶ D1(DB)
-                        │  ▲ Cron(매 분) 발송 큐
-        발송 API        ▼  │ 웹훅(sms:received)
-              api.sms-gate.app ◀──▶ 부서 폰(SMS Gateway 앱) ──SMS──▶ 지원자
+관리자 브라우저 ─▶ Cloudflare Tunnel ─▶ 면접 웹(Node + SQLite) ──발송 API──▶ 게이트웨이 서버(Docker)
+                                                  ▲ 웹훅(sms:received)              │ 푸시/SSE
+                                                  └──────────── 부서 폰(SMS Gateway 앱) ◀──┘ ──SMS──▶ 지원자
 ```
+
+같은 코드는 Cloudflare Workers + D1 에서도 동작한다(`src/worker.js`, `wrangler.jsonc`).
 
 - 부서 1개 = 폰 1대 = 게이트웨이 1개. 관리자는 여러 명이며 담당 부서별로 권한이 나뉜다.
 - 사업장은 명단 CSV의 `사업장` 컬럼으로 자동 분리된다. (수천 개 가능)
 - 예약 발송, 미응답자 리마인드, 수동 확정, CSV 내보내기, 보관기간 경과 시 개인정보 자동 파기, 감사 로그.
 
-## 개발/배포
+## 실행
 
-필요: Node.js 22.5+, Cloudflare 계정 로그인(`npx wrangler login`)
+필요: Node.js 22.5+, Docker, cloudflared. 설치/이전 절차는 [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ```bash
-npm install
-npm test                  # 단위 테스트 (D1 은 node:sqlite 어댑터로 대체)
-npm run dev               # 로컬 Worker + 로컬 D1 (먼저 npm run db:migrate:local)
-npm run db:migrate        # 원격 D1 에 마이그레이션 적용
-npm run deploy            # 배포
+node deploy/setup.mjs <웹도메인> <게이트웨이도메인>   # .env 생성 (최초 1회)
+cd deploy/gateway && docker compose --env-file .env up -d   # SMS 게이트웨이 서버
+npm start                 # 면접 웹 (127.0.0.1:8787)
+npm test                  # 단위 테스트
 ```
-
-시크릿(최초 1회): `wrangler secret put ENCRYPTION_KEY`, `wrangler secret put ADMIN_PASSWORD`
-(최초 로그인 시 `ADMIN_USER`/`ADMIN_PASSWORD`로 관리자 계정이 만들어진다. 이후 웹에서 비밀번호 변경.)
 
 ## 문서
 

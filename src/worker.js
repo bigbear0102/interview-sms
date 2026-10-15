@@ -268,7 +268,7 @@ async function handle(request, env, ctx) {
           await run(db,
             `INSERT INTO gateways (department_id,name,base_url,username,password,send_path,signing_key,hook_token)
              VALUES (?,?,?,?,?,?,?,?)`, Number(f.department_id), f.name,
-            (f.base_url || 'https://api.sms-gate.app/3rdparty/v1').trim(), f.username.trim(),
+            (f.base_url || env.GATEWAY_URL || 'https://api.sms-gate.app/3rdparty/v1').trim(), f.username.trim(),
             await encryptText(env.ENCRYPTION_KEY, f.password), (f.send_path || '/messages').trim(),
             (f.signing_key || '').trim(), randomToken(18));
         }
@@ -304,7 +304,7 @@ async function handle(request, env, ctx) {
       <form method="post" class="stack"><input type="hidden" name="do" value="gw">
         <select name="department_id">${deps.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select>
         <input name="name" placeholder="이름 (예: 인사팀 폰)" required>
-        <input name="base_url" value="https://api.sms-gate.app/3rdparty/v1" required>
+        <input name="base_url" value="${esc(env.GATEWAY_URL || 'https://api.sms-gate.app/3rdparty/v1')}" required>
         <input name="username" placeholder="앱 Cloud Server 화면의 Username" required>
         <input name="password" placeholder="앱 Cloud Server 화면의 Password" required>
         <input name="send_path" value="/messages">
@@ -346,26 +346,30 @@ async function handle(request, env, ctx) {
   return html(page(user, '없음', '<p>페이지를 찾을 수 없습니다.</p>'), 404);
 }
 
-export default {
-  async fetch(request, env, ctx) {
-    try {
-      return await handle(request, env, ctx);
-    } catch (e) {
-      console.error(e);
-      return html('internal error', 500);
-    }
-  },
+// 주기 작업: 발송 큐 처리 + 매 시 정각 파기/세션 정리 (Workers Cron, Node 서버 공용)
+export async function runScheduled(env, whenMs = Date.now()) {
+  await processQueue(env);
+  if (new Date(whenMs).getUTCMinutes() === 0) {
+    await run(env.DB, `DELETE FROM sessions WHERE expires_at<?`, Date.now());
+    await run(env.DB, `DELETE FROM login_fail WHERE until<?`, Date.now());
+    const n = await purgeExpired(env.DB);
+    if (n) console.log(`보관기간 만료 캠페인 ${n}건 파기`);
+  }
+}
 
-  // Cron Trigger: 매 분 발송 큐 처리, 매 시 정각 파기/세션 정리
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil((async () => {
-      await processQueue(env);
-      if (new Date(event.scheduledTime).getUTCMinutes() === 0) {
-        await run(env.DB, `DELETE FROM sessions WHERE expires_at<?`, Date.now());
-        await run(env.DB, `DELETE FROM login_fail WHERE until<?`, Date.now());
-        const n = await purgeExpired(env.DB);
-        if (n) console.log(`보관기간 만료 캠페인 ${n}건 파기`);
-      }
-    })());
+export async function handleRequest(request, env, ctx) {
+  try {
+    return await handle(request, env, ctx);
+  } catch (e) {
+    console.error(e);
+    return html('internal error', 500);
+  }
+}
+
+export default {
+  fetch: handleRequest,
+  // Cloudflare Cron Trigger (Workers 배포 시)
+  scheduled(event, env, ctx) {
+    ctx.waitUntil(runScheduled(env, event.scheduledTime));
   }
 };

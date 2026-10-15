@@ -3,37 +3,40 @@
 이 파일을 먼저 읽고 작업을 시작한다. (`CLAUDE.md`도 이 파일을 가리킨다)
 
 ## 프로젝트 요약
-면접 참석 확인 문자 시스템. **Cloudflare Workers(서버 렌더링 HTML) + D1(SQLite)**, 외부 런타임 의존성 없음.
-부서별 안드로이드 폰(android-sms-gateway, **클라우드 서버 모드** `api.sms-gate.app`)으로 발송하고
-폰이 웹훅(`/hook/:gatewayId/:token`)으로 답장을 보낸다.
+면접 참석 확인 문자 시스템. 서버 렌더링 HTML, 외부 런타임 의존성 없음. **같은 코드가 두 런타임에서 동작**한다:
+- **Node + SQLite**(현재 운영: PC → 회사 서버): `src/node/server.js`, D1 API 어댑터 `src/node/d1-sqlite.js`
+- **Cloudflare Workers + D1**: `src/worker.js`, `wrangler.jsonc`
+부서별 안드로이드 폰(android-sms-gateway)은 **자체 호스팅 Private 서버**(`deploy/gateway`, Docker)에 연결되고,
+폰이 웹훅(`/hook/:gatewayId/:token`)으로 답장을 보낸다. 외부 접속은 Cloudflare Tunnel.
 
 ## 명령어
 ```bash
 npm test                 # 반드시 통과 후 커밋
-npm run dev              # 로컬 개발 (npm run db:migrate:local 선행)
-npm run db:migrate       # 원격 D1 마이그레이션
-npm run deploy           # 배포 (main 에 커밋/푸시한 뒤 배포)
+npm start                # Node 서버 (.env 필요, 마이그레이션은 시작 시 자동 적용)
+# Workers 배포 시: npm run db:migrate && npm run deploy
 ```
 
 ## 코드 지도
 | 파일 | 역할 |
 |---|---|
-| `src/worker.js` | fetch(화면/웹훅) + scheduled(Cron) 진입점 |
+| `src/worker.js` | 요청 핸들러(화면/웹훅) + `runScheduled`(주기 작업). Workers/Node 공용 |
+| `src/node/` | Node 진입점(`server.js`)과 SQLite→D1 어댑터 |
+| `deploy/` | `setup.mjs`(비밀값 생성), `gateway/`(docker compose), `tunnel/`, `windows/`(자동 시작) |
 | `src/core.js` | 캠페인 생성, 발송 큐, 답장 매칭, 파기, 통계 (**비즈니스 로직**) |
 | `src/parser.js` | 답장 해석(`parseReply`), 전화번호 정규화 |
 | `src/gateway.js` | 게이트웨이 API 호출, 웹훅 등록, HMAC 서명 검증 |
 | `src/auth.js` / `src/crypto.js` | 세션/권한, PBKDF2·AES-GCM·HMAC (WebCrypto) |
 | `src/csv.js` / `src/views.js` / `src/d1.js` | CSV, HTML·KST 시각, D1 헬퍼 |
 | `migrations/*.sql` | D1 스키마 (번호 순서 적용) |
-| `test/` | 단위 테스트. `d1-shim.js`가 node:sqlite 로 D1 API 를 흉내 냄 |
+| `test/` | 단위 테스트. `src/node/d1-sqlite.js`(node:sqlite 기반 D1 어댑터)를 사용 |
 
 ## 규칙
 1. **답장 해석 규칙을 바꾸면** `test/parser.test.js`에 케이스를 추가하고 `docs/PARSING_RULES.md`를 갱신한다. 부정 표현이 항상 먼저 검사된다는 원칙을 유지한다.
 2. **스키마 변경은 새 마이그레이션 파일**(`migrations/0002_*.sql`)로 한다. 기존 파일은 수정하지 않는다. 적용: `npm run db:migrate`.
 3. **개인정보**(이름, 전화번호, 문자 원문)는 로그/에러/감사 로그에 쓰지 않는다. 새 개인정보 컬럼을 추가하면 `purgeExpired`에 파기 처리를 넣는다.
-4. **비밀값**(`ENCRYPTION_KEY`, `ADMIN_PASSWORD`, 게이트웨이 비밀번호)은 코드/레포에 넣지 않는다. Worker 시크릿으로만 관리한다.
+4. **비밀값**(`.env`, `deploy/gateway/.env`, `ENCRYPTION_KEY`, 게이트웨이 비밀번호)은 코드/레포에 넣지 않는다. `.env`는 git 제외.
 5. 권한: 캠페인/지원자 접근은 `canAccessDepartment`를 거친다. 새 화면에서 누락하지 않는다.
-6. **Workers 한도**: Cron 1회 호출당 서브리퀘스트(외부 fetch + D1 호출) 수가 제한된다. 발송은 `SEND_BATCH`(기본 25)건씩 나눠 처리한다. 루프 안에서 건별 D1 호출을 늘리지 말고 `db.batch`를 쓴다.
+6. **두 런타임 호환**: `src/worker.js`/`core.js`는 Node 전용 API(`node:*`)를 쓰지 않는다(WebCrypto, fetch만). Workers 한도(호출당 서브리퀘스트)를 고려해 발송은 `SEND_BATCH`건씩 나누고, 건별 D1 호출 대신 `db.batch`를 쓴다.
 7. 시각은 **KST 고정**(`views.js` `fmtTime`/`parseKstLocal`). Worker 는 UTC 이므로 직접 `new Date(문자열)` 하지 않는다.
 8. 변경 후 `docs/DECISIONS.md`의 결정/로드맵을 최신으로 유지한다.
 
