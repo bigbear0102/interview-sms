@@ -121,6 +121,9 @@ details.help{background:var(--help-bg);border-radius:14px;padding:14px 16px;marg
 .count{border-radius:18px;padding:18px;text-align:center;font-size:17px;background:var(--canvas);border:1px solid var(--hairline)}
 .count b{display:block;font-size:44px;font-weight:700;letter-spacing:-.03em;line-height:1.1}
 .count.yes b{color:var(--green)}.count.no b{color:var(--red)}.count.wait b{color:var(--amber)}.count.check b{color:var(--purple)}.count.bad b{color:var(--muted)}
+.tabs{display:flex;gap:8px;margin:18px 0 6px;flex-wrap:wrap}
+.tabs a{padding:8px 18px;border-radius:999px;background:var(--chip);color:var(--ink)}
+.tabs a.on{background:var(--ink);color:var(--canvas)}
 .bigfile{font-size:17px;padding:22px;width:100%;border:2px dashed var(--hairline);border-radius:18px;background:var(--parchment)}
 @media (max-width:640px){main{padding:20px 14px 48px}.step{flex-direction:column;padding:18px}h2{font-size:28px}header a{padding:6px 8px}}
 `;

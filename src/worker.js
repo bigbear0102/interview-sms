@@ -376,6 +376,8 @@ async function handle(request, env, ctx) {
     }
     const ids = gws.map((g) => g.id);
     const ph = ids.map(() => '?').join(',');
+    const dirFilter = ['in', 'out'].includes(url.searchParams.get('dir')) ? url.searchParams.get('dir') : '';
+    const inCount = (await first(db, `SELECT COUNT(*) n FROM inbound WHERE gateway_id IN (${ph})`, ...ids)).n;
     const filter = normalizePhone(url.searchParams.get('phone') || '');
     const phoneCond = filter ? ' AND phone=?' : '';
     const phoneArgs = filter ? [filter] : [];
@@ -384,7 +386,7 @@ async function handle(request, env, ctx) {
          SELECT 'out' dir, phone, text, status result, at, gateway_id FROM messages WHERE gateway_id IN (${ph})${phoneCond}
          UNION ALL
          SELECT 'in' dir, sender phone, message text, result, received_at at, gateway_id FROM inbound WHERE gateway_id IN (${ph})${filter ? ' AND sender=?' : ''}
-       ) ORDER BY at DESC LIMIT 100`, ...ids, ...phoneArgs, ...ids, ...phoneArgs);
+       ) WHERE (? = '' OR dir = ?) ORDER BY at DESC LIMIT 100`, ...ids, ...phoneArgs, ...ids, ...phoneArgs, dirFilter, dirFilter);
     const RES = { sent: '발송요청', failed: '실패', attending: '참석', absent: '불참', unclear: '확인필요', unmatched: '캠페인 외' };
     const toPhone = url.searchParams.get('to') || '';
     const gwSel = Number(url.searchParams.get('gw')) || gws[0].id;
@@ -397,13 +399,20 @@ async function handle(request, env, ctx) {
         <label>내용 <textarea name="text" rows="3" required></textarea></label>
         <button class="btn">문자 보내기</button>
       </form>
-      <h3>송수신 내역 <small>최근 100건${filter ? ` · ${esc(filter)} <a href="/messages">전체 보기</a>` : ''}</small></h3>
+      <div class="tabs">
+        <a class="${dirFilter === '' ? 'on' : ''}" href="/messages">전체</a>
+        <a class="${dirFilter === 'in' ? 'on' : ''}" href="/messages?dir=in">받은 문자 (${inCount})</a>
+        <a class="${dirFilter === 'out' ? 'on' : ''}" href="/messages?dir=out">보낸 문자</a>
+      </div>
+      <h3>${dirFilter === 'in' ? '받은 문자' : dirFilter === 'out' ? '보낸 문자' : '주고받은 문자'} <small>최근 100건 · 15초마다 자동으로 새로 불러와요${filter ? ` · ${esc(filter)} <a href="/messages">전체 보기</a>` : ''}</small></h3>
       <table><tr><th>시각</th><th>구분</th><th>번호</th><th>내용</th><th>결과</th><th></th></tr>
-      ${rows.map((r) => `<tr><td>${fmtTime(r.at)}</td><td>${r.dir === 'in' ? '수신' : '발신'}</td>
+      ${rows.length ? '' : '<tr><td colspan="6">아직 없어요.</td></tr>'}
+      ${rows.map((r) => `<tr><td>${fmtTime(r.at)}</td><td>${r.dir === 'in' ? '받음' : '보냄'}</td>
         <td><a href="/messages?phone=${encodeURIComponent(r.phone)}">${esc(r.phone)}</a></td>
         <td style="white-space:normal;min-width:200px">${esc(r.text)}</td><td>${esc(RES[r.result] || r.result)}</td>
         <td><a href="/messages?to=${encodeURIComponent(r.phone)}&gw=${r.gateway_id}">답장</a></td></tr>`).join('')}</table>`;
-    return html(page(user, '문자함', body));
+    const live = `<script>setInterval(function(){var a=document.activeElement;if(a&&(a.tagName==='TEXTAREA'||a.tagName==='INPUT'))return;if(document.querySelector('textarea[name=text]').value)return;location.reload();},15000);</script>`;
+    return html(page(user, '문자함', body + (method === 'GET' ? live : '')));
   }
 
   // 비밀번호 변경

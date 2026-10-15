@@ -120,3 +120,19 @@ test('받기 시험: 폰이 자기 번호로 보낸 문자가 수신되면 성�
     assert.match(html, /알려 주지 않았어요/);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test('문자함: 받은 문자만 보기 탭과 목록', async () => {
+  const { db, call } = await setup();
+  await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
+  await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'폰','u',?, 't')`)
+    .bind(await encryptText('k', 'pw')).run();
+  await db.prepare(`INSERT INTO inbound (gateway_id,sender,message,received_at,result) VALUES (1,'01029501868','참석합니다',?, 'unmatched')`).bind(Date.now()).run();
+  await db.prepare(`INSERT INTO messages (gateway_id,phone,text,status,at) VALUES (1,'01029501868','안녕',?,?)`).bind('sent', Date.now()).run();
+  const inOnly = await (await call('/messages?dir=in')).text();
+  assert.match(inOnly, /받은 문자 \(1\)/);
+  assert.match(inOnly, /참석합니다/);
+  assert.doesNotMatch(inOnly, /<td[^>]*>안녕<\/td>/);
+  const outOnly = await (await call('/messages?dir=out')).text();
+  assert.match(outOnly, /안녕/);
+  assert.doesNotMatch(outOnly, /<td[^>]*>참석합니다<\/td>/);
+});
