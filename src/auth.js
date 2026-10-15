@@ -13,8 +13,8 @@ export async function createSession(db, userId) {
 export async function getUser(db, token) {
   if (!token) return null;
   const row = await first(db,
-    `SELECT u.id, u.username, u.role FROM sessions s JOIN users u ON u.id=s.user_id
-     WHERE s.token_hash=? AND s.expires_at>? AND u.active=1`, await sha256Hex(token), Date.now());
+    `SELECT u.id, u.username, u.name, u.email, u.role FROM sessions s JOIN users u ON u.id=s.user_id
+     WHERE s.token_hash=? AND s.expires_at>? AND u.active=1 AND u.email_verified_at IS NOT NULL`, await sha256Hex(token), Date.now());
   if (!row) return null;
   const deps = (await all(db, `SELECT department_id FROM user_departments WHERE user_id=?`, row.id)).map((r) => r.department_id);
   return { ...row, departments: deps };

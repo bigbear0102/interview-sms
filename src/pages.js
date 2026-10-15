@@ -129,7 +129,8 @@ export async function renderHome(db, user, deps) {
          (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='attending') attending,
          (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='absent') absent,
          (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='unclear') unclear,
-         (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='sent') noreply
+         (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='sent') noreply,
+         (SELECT COALESCE(NULLIF(name,''), username) FROM users WHERE id=k.created_by) author
        FROM campaigns k WHERE k.department_id IN (${dph}) ORDER BY k.id DESC LIMIT 3`, ...depIds);
   }
 
@@ -176,7 +177,7 @@ function campaignCard(r) {
   return `<a class="camp" href="/campaigns/${r.id}">
     <div class="top"><b>${esc(r.name)}</b>${campaignBadge(r)}</div>
     ${responseBar({ attending: r.attending, absent: r.absent, unclear: r.unclear, noreply: r.noreply })}
-    <div class="meta">${r.status === 'scheduled' ? `${fmtWhen(r.scheduled_at)} 발송 예정 · ` : ''}대상 ${r.total}명${delivered ? ` · 회신 ${replied}명 · 참석 ${r.attending} · 불참 ${r.absent}` : ''}</div>
+    <div class="meta">${r.author ? `${esc(r.author)} · ` : ''}${r.status === 'scheduled' ? `${fmtWhen(r.scheduled_at)} 발송 예정 · ` : ''}대상 ${r.total}명${delivered ? ` · 회신 ${replied}명 · 참석 ${r.attending} · 불참 ${r.absent}` : ''}</div>
   </a>`;
 }
 
@@ -189,7 +190,8 @@ export async function renderCampaignList(db, user, deps) {
           (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='attending') attending,
           (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='absent') absent,
           (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='unclear') unclear,
-          (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='sent') noreply
+          (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='sent') noreply,
+          (SELECT COALESCE(NULLIF(name,''), username) FROM users WHERE id=k.created_by) author
         FROM campaigns k WHERE k.department_id IN (${idList(depIds)}) ORDER BY k.id DESC LIMIT 200`, ...depIds)
     : [];
   return `${pageHeader({ title: '면접 안내', desc: '대상자 명단으로 안내 문자를 한꺼번에 보내고, 참석·불참 답장을 사업장별로 모아 봐요.',
@@ -394,15 +396,17 @@ export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice =
   let rows;
   if (dirFilter === 'scheduled') {
     rows = await all(db,
-      `SELECT 'out' dir, id, phone, text, status result, scheduled_at at, gateway_id FROM messages
+      `SELECT 'out' dir, id, phone, text, status result, scheduled_at at, gateway_id,
+         (SELECT COALESCE(NULLIF(name,''), username) FROM users WHERE id=messages.user_id) author FROM messages
        WHERE gateway_id IN (${ph}) AND status IN ('scheduled','sending')${phoneOut} ORDER BY scheduled_at, id LIMIT 200`, ...ids, ...pArgs);
   } else {
     rows = await all(db,
       `SELECT * FROM (
-         SELECT 'out' dir, id, phone, text, status result, COALESCE(CASE WHEN status='scheduled' THEN scheduled_at END, at) at, gateway_id
+         SELECT 'out' dir, id, phone, text, status result, COALESCE(CASE WHEN status='scheduled' THEN scheduled_at END, at) at, gateway_id,
+           (SELECT COALESCE(NULLIF(name,''), username) FROM users WHERE id=messages.user_id) author
            FROM messages WHERE gateway_id IN (${ph}) AND status != 'cancelled'${phoneOut}
          UNION ALL
-         SELECT 'in' dir, id, sender phone, message text, result, received_at at, gateway_id FROM inbound WHERE gateway_id IN (${ph})${phoneIn}
+         SELECT 'in' dir, id, sender phone, message text, result, received_at at, gateway_id, NULL author FROM inbound WHERE gateway_id IN (${ph})${phoneIn}
        ) WHERE (? = '' OR dir = ?) ORDER BY at DESC LIMIT 100`, ...ids, ...pArgs, ...ids, ...pArgs, dirFilter, dirFilter);
   }
 
@@ -429,6 +433,7 @@ export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice =
           <span class="when">${fmtWhen(r.at)}</span>
         </div>
         <div class="mtext">${esc(r.text)}</div>
+        ${r.author ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(r.author)} 님이 보냄</div>` : ''}
         <div class="mact">${r.dir === 'out' && r.result === 'scheduled'
           ? `<form method="post" action="/messages/cancel" class="inline" data-confirm="이 예약을 취소할까요?"><input type="hidden" name="id" value="${r.id}"><button class="btn danger small">예약 취소</button></form>`
           : `<a class="btn tertiary small" href="/send?to=${encodeURIComponent(r.phone)}&gw=${r.gateway_id}">${icon('reply', 16)}답장</a>`}</div>

@@ -14,8 +14,15 @@ import { applyAdminAction, renderAdmin } from './admin.js';
 import { page, esc, STATUS_LABEL, fmtTime, parseKstLocal, icon } from './views.js';
 import {
   renderHome, renderCampaignList, renderCampaignNew, renderCampaignDetail, renderSend, renderMessages,
-  renderLogin, renderPassword, renderAudit
+  renderPassword, renderAudit
 } from './pages.js';
+import {
+  renderLogin, renderUnverified, renderSignup, renderSignupDone, renderForgot, renderReset, renderLinkInvalid, sortDepartments
+} from './pages-auth.js';
+import {
+  ALLOWED_DOMAIN, normalizeEmail, signUp, verifyEmail, resendVerification, requestReset, completeReset, peekToken
+} from './accounts.js';
+import { mailConfigured } from './mailer.js';
 
 // 어느 실행 환경이 응답했는지 확인용 (Cloudflare Workers / Node)
 const RUNTIME = typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers' ? 'workers' : 'node';
@@ -97,7 +104,7 @@ async function handle(request, env, ctx) {
     }
   }
 
-  // 로그인
+  // 로그인 (이메일 + 비밀번호)
   if (path === '/login') {
     if (method === 'POST') {
       const ip = request.headers.get('cf-connecting-ip') || 'unknown';
@@ -105,8 +112,13 @@ async function handle(request, env, ctx) {
       if (fail.until > Date.now()) return html(page(null, '로그인', renderLogin('시도 횟수가 너무 많아요. 5분 뒤에 다시 시도해 주세요.')), 429);
       await ensureInitialAdmin(db, env);
       const f = form(await request.text());
-      const u = await first(db, `SELECT * FROM users WHERE username=? AND active=1`, f.username || '');
+      const id = normalizeEmail(f.email || f.username);
+      // 이메일로 찾고, 이메일이 아닌 값이면 이전 방식의 아이디도 허용한다(이메일을 아직 등록하지 않은 관리자 계정용)
+      const u = await first(db, `SELECT * FROM users WHERE active=1 AND (email=? OR (username=? AND email IS NULL))`, id, f.email || f.username || '');
       if (u && (await verifyPassword(f.password || '', u.pass_hash))) {
+        if (!u.email_verified_at) {
+          return html(page(null, '이메일 인증', renderUnverified(u.email || id, mailConfigured(env))), 403);
+        }
         await run(db, `DELETE FROM login_fail WHERE ip=?`, ip);
         await audit(db, u, 'login');
         const token = await createSession(db, u.id);
@@ -116,9 +128,64 @@ async function handle(request, env, ctx) {
       await run(db, `INSERT INTO login_fail (ip,n,until) VALUES (?,?,?)
         ON CONFLICT(ip) DO UPDATE SET n=excluded.n, until=excluded.until`,
         ip, n >= 5 ? 0 : n, n >= 5 ? Date.now() + 5 * 60000 : 0);
-      return html(page(null, '로그인', renderLogin('아이디 또는 비밀번호가 올바르지 않습니다.')), 401);
+      return html(page(null, '로그인', renderLogin('이메일 또는 비밀번호가 올바르지 않아요.', '', f.email || '')), 401);
     }
-    return html(page(null, '로그인', renderLogin()));
+    const info = url.searchParams.get('verified') ? '이메일 인증이 끝났어요. 로그인해 주세요.'
+      : url.searchParams.get('reset') ? '비밀번호를 바꿨어요. 새 비밀번호로 로그인해 주세요.' : '';
+    return html(page(null, '로그인', renderLogin('', info)));
+  }
+
+  // ---- 회원가입 / 이메일 인증 / 비밀번호 재설정 (로그인 전) ----
+  const ipOf = () => request.headers.get('cf-connecting-ip') || 'unknown';
+
+  if (path === '/signup') {
+    const deps = sortDepartments(await all(db, `SELECT id, name FROM departments`));
+    const domain = ALLOWED_DOMAIN(env);
+    if (method === 'POST') {
+      const f = form(await request.text());
+      const r = await signUp(db, env, publicBase, f, ipOf());
+      if (!r.ok) return html(page(null, '회원가입', renderSignup({ deps, domain, err: r.error, v: f })), 400);
+      await audit(db, null, 'signup', r.existing ? 'existing' : `user=${r.userId} mailed=${r.mailed ? 1 : 0}`);
+      return html(page(null, '가입 신청', renderSignupDone({ email: normalizeEmail(f.email), mailed: r.mailed, existing: r.existing })));
+    }
+    return html(page(null, '회원가입', renderSignup({ deps, domain })));
+  }
+
+  if (path === '/verify' && method === 'GET') {
+    const ok = await verifyEmail(db, url.searchParams.get('token') || '');
+    if (!ok) return html(page(null, '인증', renderLinkInvalid()), 400);
+    return redirect('/login?verified=1');
+  }
+
+  if (path === '/verify/resend' && method === 'POST') {
+    const f = form(await request.text());
+    const r = await resendVerification(db, env, publicBase, f.email, ipOf());
+    if (!r.ok) return html(page(null, '로그인', renderLogin(r.error, '', f.email)), 429);
+    return html(page(null, '로그인', renderLogin('', r.mailConfigured
+      ? '인증 메일을 다시 보냈어요. 메일의 링크를 눌러 주세요.' : '메일 발송이 아직 설정되지 않았어요. 관리자에게 승인을 요청해 주세요.', f.email)));
+  }
+
+  if (path === '/forgot') {
+    if (method === 'POST') {
+      const f = form(await request.text());
+      const r = await requestReset(db, env, publicBase, f.email, ipOf());
+      if (!r.ok) return html(page(null, '비밀번호 재설정', renderForgot({ err: r.error })), 429);
+      return html(page(null, '비밀번호 재설정', renderForgot({ sent: true, configured: r.mailConfigured })));
+    }
+    return html(page(null, '비밀번호 재설정', renderForgot({})));
+  }
+
+  if (path === '/reset') {
+    if (method === 'POST') {
+      const f = form(await request.text());
+      if (f.password !== f.password2) return html(page(null, '새 비밀번호', renderReset({ token: f.token || '', err: '비밀번호 확인이 달라요.' })), 400);
+      const r = await completeReset(db, f.token || '', f.password);
+      if (!r.ok) return html(page(null, '새 비밀번호', renderReset({ token: f.token || '', err: r.error })), 400);
+      return redirect('/login?reset=1');
+    }
+    const token = url.searchParams.get('token') || '';
+    if (!(await peekToken(db, token, 'reset'))) return html(page(null, '새 비밀번호', renderLinkInvalid()), 400);
+    return html(page(null, '새 비밀번호', renderReset({ token })));
   }
 
   const user = await getUser(db, getCookie(request, 'sid'));
@@ -283,7 +350,7 @@ async function handle(request, env, ctx) {
     let result = null;
     if (method === 'POST') {
       const f = form(await request.text());
-      result = await applyAdminAction(db, env, f, publicBase);
+      result = await applyAdminAction(db, env, { ...f, _me: user.id }, publicBase);
       await audit(db, user, 'admin.' + (f.do || '?'), result.ok ? 'ok' : 'fail');
     }
     return html(pg('설정', await renderAdmin(db, env, publicBase, result)));

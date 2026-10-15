@@ -37,6 +37,7 @@ npm test                  # 단위 테스트
 | 문서 | 내용 |
 |---|---|
 | [AGENTS.md](AGENTS.md) | AI/개발자 작업 규칙 (먼저 읽을 것) |
+| [docs/ACCOUNTS.md](docs/ACCOUNTS.md) | 회원가입(이메일 인증), 권한, 메일 발송 설정 |
 | [docs/UX.md](docs/UX.md) | UX/UI 설계 기준: 정보 구조, 용어, 화면 패턴, 접근성, 점검 방법 |
 | [DESIGN.md](DESIGN.md) | 시각 디자인 참고(Apple 스타일 토큰) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 구조, 데이터 모델, 처리 흐름, 한도 |

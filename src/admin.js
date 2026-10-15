@@ -5,6 +5,8 @@ import { fmtPhone, fmtWhen, pageHeader, tableWrap, emptyState } from './ui.js';
 import { encryptText, decryptText, randomToken, hashPassword } from './crypto.js';
 import { registerWebhook, checkGateway, sendSms, unlockGateway } from './gateway.js';
 import { normalizePhone, isValidMobile } from './parser.js';
+import { listUsers, normalizeEmail } from './accounts.js';
+import { sortDepartments } from './pages-auth.js';
 
 // 폰 앱에 입력할 주소: .../api/3rdparty/v1 → .../api/mobile/v1
 export const phoneApiUrl = (env) => (env.GATEWAY_URL || '').replace('/api/3rdparty/v1', '/api/mobile/v1');
@@ -121,14 +123,79 @@ export async function applyAdminAction(db, env, f, publicBase) {
       }
 
       case 'user': {
-        const username = (f.username || '').trim();
-        if (!username || (f.password || '').length < 8) return { ok: false, msg: '아이디를 적고, 비밀번호는 8글자 이상으로 해 주세요.' };
-        const r = await run(db, `INSERT INTO users (username,pass_hash,role) VALUES (?,?,?)`,
-          username, await hashPassword(f.password), f.role === 'super' ? 'super' : 'admin');
+        const name = (f.name || '').trim();
+        const email = normalizeEmail(f.email);
+        if (!name || !email.includes('@') || (f.password || '').length < 8) return { ok: false, msg: '이름과 이메일을 적고, 비밀번호는 8글자 이상으로 해 주세요.' };
+        if (await first(db, `SELECT id FROM users WHERE email=? OR username=?`, email, email)) return { ok: false, msg: '이미 같은 이메일이 있어요.' };
+        const r = await run(db,
+          `INSERT INTO users (username,pass_hash,role,active,name,email,phone,email_verified_at,created_at) VALUES (?,?,?,1,?,?,?,?,?)`,
+          email, await hashPassword(f.password), f.role === 'super' ? 'super' : 'admin', name, email, normalizePhone(f.phone), Date.now(), Date.now());
         for (const [k, v] of Object.entries(f)) {
           if (k.startsWith('dep_') && v) await run(db, `INSERT OR IGNORE INTO user_departments VALUES (?,?)`, Number(r.meta.last_row_id), Number(k.slice(4)));
         }
-        return { ok: true, msg: `"${username}" 계정을 만들었어요.` };
+        return { ok: true, msg: `"${name}" 계정을 만들었어요. (이메일 인증은 건너뛰어요)` };
+      }
+
+      case 'user_edit': {
+        const id = Number(f.user_id);
+        const name = (f.name || '').trim();
+        const email = normalizeEmail(f.email);
+        if (!name) return { ok: false, msg: '이름을 적어 주세요.' };
+        if (email) {
+          const dup = await first(db, `SELECT id FROM users WHERE email=? AND id<>?`, email, id);
+          if (dup) return { ok: false, msg: '다른 사람이 쓰는 이메일이에요.' };
+        }
+        const phone = f.phone ? normalizePhone(f.phone) : '';
+        if (phone && !isValidMobile(phone)) return { ok: false, msg: '휴대폰 번호 형식이 달라요.' };
+        await run(db, `UPDATE users SET name=?, email=?, phone=?, role=? WHERE id=?`,
+          name, email || null, phone, f.role === 'super' ? 'super' : 'admin', id);
+        await run(db, `DELETE FROM user_departments WHERE user_id=?`, id);
+        for (const [k, v] of Object.entries(f)) {
+          if (k.startsWith('dep_') && v) await run(db, `INSERT OR IGNORE INTO user_departments VALUES (?,?)`, id, Number(k.slice(4)));
+        }
+        return { ok: true, msg: `"${name}" 정보를 저장했어요.` };
+      }
+
+      case 'user_verify': {
+        await run(db, `UPDATE users SET email_verified_at=?, active=1 WHERE id=?`, Date.now(), Number(f.user_id));
+        return { ok: true, msg: '이메일 인증 없이 승인했어요. 이제 로그인할 수 있어요.' };
+      }
+
+      case 'user_delete': {
+        const id = Number(f.user_id);
+        if (id === Number(f._me)) return { ok: false, msg: '내 계정은 지울 수 없어요.' };
+        await run(db, `DELETE FROM sessions WHERE user_id=?`, id);
+        await run(db, `DELETE FROM email_tokens WHERE user_id=?`, id);
+        await run(db, `DELETE FROM user_departments WHERE user_id=?`, id);
+        await run(db, `UPDATE campaigns SET created_by=NULL WHERE created_by=?`, id);
+        await run(db, `UPDATE messages SET user_id=NULL WHERE user_id=?`, id);
+        await run(db, `UPDATE audit SET user_id=NULL WHERE user_id=?`, id);
+        await run(db, `DELETE FROM users WHERE id=?`, id);
+        return { ok: true, msg: '계정을 지웠어요.' };
+      }
+
+      case 'dept_rename': {
+        const name = (f.name || '').trim();
+        if (!name) return { ok: false, msg: '부서 이름을 적어 주세요.' };
+        await run(db, `UPDATE departments SET name=? WHERE id=?`, name, Number(f.department_id));
+        return { ok: true, msg: `부서 이름을 "${name}"(으)로 바꿨어요.` };
+      }
+
+      case 'dept_delete': {
+        const id = Number(f.department_id);
+        const used = (await first(db,
+          `SELECT (SELECT COUNT(*) FROM user_departments WHERE department_id=?) + (SELECT COUNT(*) FROM gateways WHERE department_id=?)
+             + (SELECT COUNT(*) FROM campaigns WHERE department_id=?) n`, id, id, id)).n;
+        if (used > 0) return { ok: false, msg: '사용자, 폰, 면접 안내가 연결된 부서는 지울 수 없어요. 먼저 옮겨 주세요.' };
+        await run(db, `DELETE FROM departments WHERE id=?`, id);
+        return { ok: true, msg: '부서를 지웠어요.' };
+      }
+
+      case 'gw_edit': {
+        const name = (f.name || '').trim();
+        if (!name) return { ok: false, msg: '폰 이름을 적어 주세요.' };
+        await run(db, `UPDATE gateways SET name=?, department_id=? WHERE id=?`, name, Number(f.department_id), Number(f.gateway_id));
+        return { ok: true, msg: '폰 정보를 저장했어요.' };
       }
 
       case 'user_reset': {
@@ -140,6 +207,7 @@ export async function applyAdminAction(db, env, f, publicBase) {
 
       case 'user_active': {
         const on = f.active === '1' ? 1 : 0;
+        if (!on && Number(f.user_id) === Number(f._me)) return { ok: false, msg: '내 계정은 쓰지 못하게 할 수 없어요.' };
         await run(db, `UPDATE users SET active=? WHERE id=?`, on, Number(f.user_id));
         if (!on) await run(db, `DELETE FROM sessions WHERE user_id=?`, Number(f.user_id));
         return { ok: true, msg: on ? '이 계정을 다시 쓰도록 했어요.' : '이 계정을 쓰지 못하게 했어요.' };
@@ -168,11 +236,9 @@ document.addEventListener('click', function (e) {
 export async function renderAdmin(db, env, publicBase, result = null) {
   const deps = await all(db, `SELECT * FROM departments ORDER BY name`);
   const gws = await all(db,
-    `SELECT g.id,g.name,g.username,g.active,g.own_number,(g.passphrase != '') AS locked,d.name dept FROM gateways g JOIN departments d ON d.id=g.department_id ORDER BY g.active DESC, g.id`);
-  const users = await all(db,
-    `SELECT u.id,u.username,u.role,u.active,
-       (SELECT group_concat(d.name, ', ') FROM user_departments ud JOIN departments d ON d.id=ud.department_id WHERE ud.user_id=u.id) deps
-     FROM users u ORDER BY u.id`);
+    `SELECT g.id,g.name,g.username,g.active,g.own_number,g.department_id,(g.passphrase != '') AS locked,d.name dept FROM gateways g JOIN departments d ON d.id=g.department_id ORDER BY g.active DESC, g.id`);
+  const users = await listUsers(db);
+  const orderedDeps = sortDepartments(deps);
   const apiUrl = phoneApiUrl(env);
   const token = env.GATEWAY_PRIVATE_TOKEN || '';
   const pub = isPublicCloud(env);
@@ -371,6 +437,12 @@ export async function renderAdmin(db, env, publicBase, result = null) {
           <form method="post" class="inline"><input type="hidden" name="do" value="gw_hook"><input type="hidden" name="gateway_id" value="${g.id}">
             <p class="muted" style="margin-bottom:8px">받은 문자가 화면에 안 들어오면 눌러 보세요.</p>
             <button class="btn secondary small">답장 받기 다시 설정</button></form>
+          <details><summary>폰 이름·부서 바꾸기</summary>
+            <form method="post" class="stack small-form">
+              <input type="hidden" name="do" value="gw_edit"><input type="hidden" name="gateway_id" value="${g.id}">
+              <label>이름<input name="name" value="${esc(g.name)}" required></label>
+              <label>이 폰을 쓰는 부서<select name="department_id">${sortDepartments(deps).map((d) => `<option value="${d.id}"${d.id === g.department_id ? ' selected' : ''}>${esc(d.name)}</option>`).join('')}</select></label>
+              <div class="form-actions"><button class="btn small">저장</button></div></form></details>
           <details><summary>폰을 다시 설치했어요</summary>
             <form method="post" class="stack small-form">
               <input type="hidden" name="do" value="gw_update"><input type="hidden" name="gateway_id" value="${g.id}">
@@ -392,41 +464,79 @@ export async function renderAdmin(db, env, publicBase, result = null) {
       ${gws.length ? gws.map(phoneCard).join('') : emptyState({ title: '아직 연결된 폰이 없어요', desc: '아래 "폰 연결하기"의 1~7번을 차례로 해 주세요.' })}
     </section>`;
 
+  const depChecks = (selectedIds = []) => orderedDeps.map((d) =>
+    `<label class="check"><input type="checkbox" name="dep_${d.id}" value="1"${selectedIds.includes(d.id) ? ' checked' : ''}> ${esc(d.name)}</label>`).join('');
+  const pending = users.filter((u) => !u.email_verified_at);
+
+  const userRow = (u) => {
+    const depIds = (u.dep_ids || '').split(',').filter(Boolean).map(Number);
+    const verified = Boolean(u.email_verified_at);
+    return `<div class="urow${u.active ? '' : ' off'}">
+      <div class="uinfo">
+        <div><b>${esc(u.name || u.username)}</b>
+          <span class="badge ${u.role === 'super' ? 'info' : ''}">${u.role === 'super' ? '관리자' : '일반 사용자'}</span>
+          ${verified ? '' : '<span class="badge wait">이메일 인증 대기</span>'}
+          ${u.active ? '' : '<span class="badge">쓰지 않음</span>'}</div>
+        <div class="muted">${esc(u.email || u.username)}${u.phone ? ' · ' + esc(fmtPhone(u.phone)) : ''}</div>
+        <div class="muted">${esc(u.role === 'super' ? '모든 부서' : u.deps || '부서 없음')}${u.created_at ? ' · 가입 ' + fmtWhen(u.created_at) : ''}</div>
+      </div>
+      <div class="pbtns">
+        ${verified ? '' : `<form method="post" class="inline"><input type="hidden" name="do" value="user_verify"><input type="hidden" name="user_id" value="${u.id}"><button class="btn small">승인하기</button></form>`}
+        <details class="pop"><summary class="btn secondary small">수정</summary>
+          <form method="post" class="stack small-form" style="min-width:280px">
+            <input type="hidden" name="do" value="user_edit"><input type="hidden" name="user_id" value="${u.id}">
+            <label>이름<input name="name" value="${esc(u.name || '')}" required></label>
+            <label>이메일<input name="email" type="email" value="${esc(u.email || '')}"></label>
+            <label>휴대폰<input name="phone" value="${esc(u.phone || '')}" inputmode="tel"></label>
+            <label>권한<select name="role"><option value="admin"${u.role === 'super' ? '' : ' selected'}>일반 사용자 (고른 부서만)</option><option value="super"${u.role === 'super' ? ' selected' : ''}>관리자 (모든 것)</option></select></label>
+            <fieldset><legend>부서</legend>${depChecks(depIds)}</fieldset>
+            <div class="form-actions"><button class="btn small">저장</button></div>
+          </form></details>
+        <details class="pop"><summary class="btn secondary small">비밀번호</summary>
+          <form method="post" class="stack small-form"><input type="hidden" name="do" value="user_reset"><input type="hidden" name="user_id" value="${u.id}">
+            <input name="password" type="password" placeholder="새 비밀번호(8글자 이상)" minlength="8" required autocomplete="new-password">
+            <div class="form-actions"><button class="btn small">바꾸기</button></div></form></details>
+        <form method="post" class="inline"><input type="hidden" name="do" value="user_active"><input type="hidden" name="user_id" value="${u.id}">
+          <input type="hidden" name="active" value="${u.active ? 0 : 1}"><button class="btn secondary small">${u.active ? '쓰지 못하게' : '다시 쓰게'}</button></form>
+        <form method="post" class="inline" data-confirm="${esc(u.name || u.email || u.username)} 계정을 지울까요? 되돌릴 수 없어요."><input type="hidden" name="do" value="user_delete"><input type="hidden" name="user_id" value="${u.id}">
+          <button class="btn danger small">삭제</button></form>
+      </div></div>`;
+  };
+
   const people = `
     <section class="section">
-      <div class="shead"><h2>사용자와 부서</h2></div>
+      <div class="shead"><h2>사용자</h2><span class="muted">${users.length}명${pending.length ? ' · 인증 대기 ' + pending.length + '명' : ''}</span></div>
       <div class="card">
-        <h3 style="margin-bottom:12px">부서</h3>
-        <div class="chip-list">${deps.length ? deps.map((d) => `<span class="chip">${esc(d.name)}</span>`).join('') : '<small>아직 없어요. 폰을 연결할 때 새 부서 이름을 적으면 자동으로 만들어져요.</small>'}</div>
-        <form method="post" class="row" style="margin-top:14px"><input type="hidden" name="do" value="dept">
-          <div class="grow"><input name="name" placeholder="새 부서 이름" aria-label="새 부서 이름"></div><button class="btn secondary">부서 만들기</button></form>
-      </div>
-      <div class="card">
-        <h3 style="margin-bottom:12px">로그인할 수 있는 사람</h3>
-        ${users.map((u) => `<div class="urow${u.active ? '' : ' off'}">
-          <div><b>${esc(u.username)}</b> <span class="badge ${u.role === 'super' ? 'info' : ''}">${u.role === 'super' ? '전체 관리자' : '일반 관리자'}</span>
-            ${u.active ? '' : '<span class="badge">쓰지 않음</span>'}
-            <div class="muted">${esc(u.role === 'super' ? '모든 부서' : u.deps || '맡은 부서 없음')}</div></div>
-          <div class="pbtns">
-            <details class="pop"><summary class="btn secondary small">비밀번호 바꿔주기</summary>
-              <form method="post" class="stack small-form"><input type="hidden" name="do" value="user_reset"><input type="hidden" name="user_id" value="${u.id}">
-                <input name="password" type="password" placeholder="새 비밀번호(8글자 이상)" minlength="8" required autocomplete="new-password">
-                <div class="form-actions"><button class="btn small">저장</button></div></form></details>
-            <form method="post" class="inline"><input type="hidden" name="do" value="user_active"><input type="hidden" name="user_id" value="${u.id}">
-              <input type="hidden" name="active" value="${u.active ? 0 : 1}"><button class="btn ${u.active ? 'danger' : 'secondary'} small">${u.active ? '쓰지 못하게 하기' : '다시 쓰게 하기'}</button></form>
-          </div></div>`).join('')}
-        <details style="margin-top:16px"><summary><b>사람 추가하기</b></summary>
+        ${users.length ? users.map(userRow).join('') : emptyState({ title: '아직 사용자가 없어요' })}
+        <details style="margin-top:16px"><summary><b>사용자 직접 추가하기</b> <small>이메일 인증 없이 바로 만들어요</small></summary>
           <form method="post" class="stack" style="margin-top:12px;max-width:420px">
             <input type="hidden" name="do" value="user">
-            <label>아이디<input name="username" required autocomplete="off"></label>
+            <label>이름<input name="name" required></label>
+            <label>이메일<input name="email" type="email" required autocomplete="off"></label>
+            <label>휴대폰<input name="phone" inputmode="tel" autocomplete="off"></label>
             <label>비밀번호 <small>8글자 이상</small><input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
-            <label>권한 <select name="role"><option value="admin">일반 관리자 (고른 부서만 볼 수 있어요)</option><option value="super">전체 관리자 (모든 것을 볼 수 있어요)</option></select></label>
-            <fieldset><legend>맡을 부서 <small>일반 관리자만 해당</small></legend>
-              ${deps.length ? deps.map((d) => `<label class="check"><input type="checkbox" name="dep_${d.id}" value="1"> ${esc(d.name)}</label>`).join('') : '<small>부서가 아직 없어요.</small>'}
-            </fieldset>
-            <div class="form-actions"><button class="btn">사람 추가하기</button></div>
+            <label>권한 <select name="role"><option value="admin">일반 사용자 (고른 부서만 볼 수 있어요)</option><option value="super">관리자 (모든 것을 볼 수 있어요)</option></select></label>
+            <fieldset><legend>부서</legend>${depChecks([])}</fieldset>
+            <div class="form-actions"><button class="btn">추가하기</button></div>
           </form>
         </details>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="shead"><h2>부서</h2></div>
+      <div class="card">
+        ${orderedDeps.map((d) => `<div class="urow">
+          <div><b>${esc(d.name)}</b></div>
+          <div class="pbtns">
+            <details class="pop"><summary class="btn secondary small">이름 바꾸기</summary>
+              <form method="post" class="stack small-form"><input type="hidden" name="do" value="dept_rename"><input type="hidden" name="department_id" value="${d.id}">
+                <input name="name" value="${esc(d.name)}" required><div class="form-actions"><button class="btn small">저장</button></div></form></details>
+            <form method="post" class="inline" data-confirm="${esc(d.name)} 부서를 지울까요?"><input type="hidden" name="do" value="dept_delete"><input type="hidden" name="department_id" value="${d.id}">
+              <button class="btn danger small">삭제</button></form>
+          </div></div>`).join('')}
+        <form method="post" class="row" style="margin-top:14px"><input type="hidden" name="do" value="dept">
+          <div class="grow"><input name="name" placeholder="새 부서 이름" aria-label="새 부서 이름"></div><button class="btn secondary">부서 추가</button></form>
       </div>
     </section>`;
 

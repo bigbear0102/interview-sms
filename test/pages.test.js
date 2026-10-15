@@ -14,7 +14,7 @@ async function setup() {
     DB: db, ENCRYPTION_KEY: 'k', PUBLIC_BASE_URL: 'https://example.test',
     GATEWAY_URL: 'https://sms.example.test/api/3rdparty/v1', GATEWAY_PRIVATE_TOKEN: 'tok-123'
   };
-  const u = await db.prepare(`INSERT INTO users (username,pass_hash,role) VALUES ('boss',?,'super')`).bind(await hashPassword('password123')).run();
+  const u = await db.prepare(`INSERT INTO users (username,pass_hash,role,email_verified_at,name,email) VALUES ('boss',?,'super',1,'김관리','boss@willvi.co.kr')`).bind(await hashPassword('password123')).run();
   const sid = await createSession(db, Number(u.meta.last_row_id));
   const ctx = { waitUntil() {} };
   const call = (path, init = {}) => handleRequest(new Request('https://example.test' + path, {

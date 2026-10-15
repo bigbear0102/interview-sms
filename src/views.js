@@ -325,9 +325,9 @@ export function page(user, title, body, nav = '') {
   <a class="brand" href="/"><span class="logo">${icon('send', 16)}</span>문자 관리</a>
   <nav class="topnav" aria-label="주 메뉴">${items.map((n) => link(n, false)).join('')}</nav>
   <details class="usermenu">
-    <summary>${icon('user', 18)}<span class="label">${esc(user.username)}</span></summary>
+    <summary>${icon('user', 18)}<span class="label">${esc(user.name || user.username)}</span></summary>
     <div class="menu">
-      <div class="who">${esc(user.username)} · ${user.role === 'super' ? '전체 관리자' : '일반 관리자'}</div>
+      <div class="who">${esc(user.name || user.username)}${user.email ? `<br>${esc(user.email)}` : ''}<br>${user.role === 'super' ? '관리자' : '일반 사용자'}</div>
       <a href="/password">비밀번호 바꾸기</a>
       ${user.role === 'super' ? '<a href="/audit">기록 보기</a>' : ''}
       <form method="post" action="/logout"><button type="submit">로그아웃</button></form>
