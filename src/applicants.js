@@ -535,6 +535,12 @@ const SHEET_CSS = `<style>
 .sheet td.sel,.sheet th.sel{width:34px;padding-right:0}
 @media (max-width:640px){.sheet tr{position:relative}.sheet td.sel{position:absolute;right:12px;top:12px;width:auto;padding:0;display:block}.sheet td.sel::before{content:none!important}.sheet td.sel input{width:26px;height:26px}.sheet td:nth-child(2){padding-right:44px}.sheet td.acts{white-space:normal;flex-wrap:wrap;row-gap:4px}}
 .addbox>form{margin:12px 0 0}
+.sheet details.more{display:inline-block;vertical-align:top}
+.sheet details.more[open]{display:block;width:100%;margin-top:6px}
+.sheet details.more>summary{list-style:none}
+.sheet details.more>summary::-webkit-details-marker{display:none}
+.sheet .menu{display:grid;gap:8px;margin-top:6px;padding:10px;border:1px solid var(--line);border-radius:14px;background:var(--surface-2,#fafafc);min-width:230px}
+.sheet .menu a{padding:6px 2px}
 .addbox>summary{cursor:pointer}
 .sheet td.sel input,.sheet th.sel input{width:18px;height:18px;min-height:0}
 .bulkbar{display:none;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--blue-bg,#e8f1fb)}
@@ -724,18 +730,22 @@ export async function renderApplicantSheet(db, opts = {}) {
       <td class="acts">
         <button type="button" class="small secondary js-edit">수정</button>
         <button class="small js-save" form="ef-${r.id}">저장</button>
+        <button type="button" class="small secondary js-hist" data-id="${r.id}">기록</button>
+        <details class="more"><summary class="btn small secondary" aria-label="더 보기">더 보기</summary>
+          <div class="menu">
         ${r.bl_id
-    ? `<form method="post" action="/applicants/${r.id}/release" class="inline" data-confirm="블랙리스트에서 해제할까요?">${hid}<button class="small secondary">해제</button></form>
-          <details class="bl"><summary class="btn small secondary" style="display:inline-flex">사유 수정</summary>
+    ? `<form method="post" action="/applicants/${r.id}/release" class="inline" data-confirm="블랙리스트에서 해제할까요?">${hid}<button class="small secondary">블랙리스트 해제</button></form>
+          <details class="bl"><summary>사유 수정</summary>
             <form method="post" action="/applicants/${r.id}/reason">${hid}${reasonSelect(r.reason_code)}
               <input name="reason_text" maxlength="300" value="${esc(r.reason_text)}" placeholder="사유 설명 (기타는 필수)" aria-label="사유 설명"${r.reason_code === 'other' ? ' required' : ''}>
               <button class="small btn secondary">저장</button></form></details>`
-    : `<details class="bl"><summary class="btn small secondary" style="display:inline-flex">블랙리스트</summary>
+    : `<details class="bl"><summary>블랙리스트로 등록</summary>
             <form method="post" action="/applicants/${r.id}/blacklist">${hid}${reasonSelect()}
               <input name="reason_text" maxlength="300" placeholder="사유 설명 (선택)" aria-label="사유 설명">
               <button class="small btn danger">등록</button></form></details>`}
-        <button type="button" class="small secondary js-hist" data-id="${r.id}">기록</button>
-        <a class="small" href="/applicants/${r.id}" style="margin-left:4px">상세</a>
+            <a href="/applicants/${r.id}">상세 화면 열기</a>
+          </div>
+        </details>
       </td></tr>
       <tr class="hist" id="hist-${r.id}" hidden><td colspan="8"><div class="hbox">불러오는 중…</div></td></tr>`).join('')}
     </tbody></table>`)
@@ -755,6 +765,7 @@ export async function renderApplicantSheet(db, opts = {}) {
 
   return `${SHEET_CSS}${pageHeader({ title: '지원자 관리', desc: '한 화면에서 등록하고, 수정하고, 블랙리스트를 관리해요. 문자 발송과는 별개로 동작해요.',
     actions: `<a class="btn secondary" href="/applicants/export.csv">${icon('download', 18)}엑셀로 저장</a>` })}
+    <div class="tabs"><a href="/applicants" aria-current="page">지원자 목록</a><a href="/people">면접 안내 이력</a></div>
     ${notices.join('')}
     ${suggestions.length ? `<details class="card" open style="margin-bottom:16px"><summary><b>블랙리스트 후보 제안 ${suggestions.length}명</b>
       <span class="muted">면접 결과를 "노쇼"로 기록한 횟수가 ${link.threshold}회 이상이에요. 사람이 확인하고 등록해요.</span></summary>

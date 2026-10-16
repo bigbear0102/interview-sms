@@ -377,7 +377,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
     </div>`;
 
   const phones = `
-    <section class="section">
+    <section class="section" id="sec-phones">
       <div class="shead"><h2>문자 보내는 폰</h2></div>
       ${gws.length ? gws.map(phoneCard).join('') : emptyState({ title: '아직 연결된 폰이 없어요', desc: '아래 "폰 연결하기"의 1~9번을 차례로 해 주세요.' })}
     </section>`;
@@ -422,7 +422,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
   };
 
   const people = `
-    <section class="section">
+    <section class="section" id="sec-users">
       <div class="shead"><h2>사용자</h2><span class="muted">${users.length}명${pending.length ? ' · 인증 대기 ' + pending.length + '명' : ''}</span></div>
       <div class="card">
         ${users.length ? users.map(userRow).join('') : emptyState({ title: '아직 사용자가 없어요' })}
@@ -441,7 +441,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="sec-depts">
       <div class="shead"><h2>부서</h2></div>
       <div class="card">
         ${orderedDeps.map((d) => `<div class="urow">
@@ -460,7 +460,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
 
   const errs = await recentErrors(db, 8);
   const system = `
-    <section class="section">
+    <section class="section" id="sec-system">
       <div class="shead"><h2>시스템 상태</h2>
         <form method="post" class="inline"><input type="hidden" name="do" value="monitor_now"><button class="btn secondary small">지금 점검하기</button></form></div>
       <div class="card">
@@ -470,7 +470,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
     </section>`;
 
   const connect = `
-    <section class="section">
+    <section class="section" id="sec-connect">
       <details class="card" ${hasPhone ? '' : 'open'}>
         <summary><b>폰 연결하기</b> <span class="muted">새 폰을 연결할 때 열어서 1~9번을 차례로 해요</span></summary>
         <p class="muted" style="margin-top:10px">직원에게 보여 주려면 <a href="/help/phone">폰 설치 안내 페이지</a>를 열어 주세요. (Obtainium으로 설치하면 "접근 차단"을 피할 수 있어요)</p>
@@ -478,6 +478,9 @@ export async function renderAdmin(db, env, publicBase, result = null) {
       </details>
     </section>`;
 
+  const subnav = `<nav class="subnav" aria-label="설정 구역">
+      <a href="#sec-phones">문자 보내는 폰</a><a href="#sec-system">시스템 상태</a><a href="#sec-connect">폰 연결하기</a>
+      <a href="#sec-users">사용자</a><a href="#sec-depts">부서</a></nav>`;
   return `${pageHeader({ title: '설정', desc: '문자를 보내는 폰과, 이 시스템을 쓰는 사람을 관리해요.' })}
-    ${status}${notice}${phones}${system}${connect}${people}${COPY_JS}`;
+    ${subnav}${status}${notice}${phones}${system}${connect}${people}${COPY_JS}`;
 }

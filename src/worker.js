@@ -61,7 +61,7 @@ async function loadCampaign(db, user, id) {
 // 화면 위치(상단/하단 메뉴 강조)
 const navFor = (p) =>
   p === '/' ? 'home' : p.startsWith('/send') ? 'send' : p.startsWith('/messages') ? 'inbox'
-    : p.startsWith('/campaigns') ? 'interview' : p.startsWith('/applicants') ? 'applicants' : (p.startsWith('/admin') || p.startsWith('/audit')) ? 'settings'
+    : p.startsWith('/campaigns') ? 'interview' : (p.startsWith('/applicants') || p.startsWith('/people')) ? 'applicants' : (p.startsWith('/admin') || p.startsWith('/audit')) ? 'settings'
     : p.startsWith('/password') ? 'account' : '';
 
 async function handle(request, env, ctx) {
@@ -458,7 +458,7 @@ async function handle(request, env, ctx) {
 
   if (path === '/people') {
     const deps = await visibleDepartments(db, user);
-    return html(pg('지원자 이력', await renderPeople(db, deps, url.searchParams.get('q') || ''), 'interview'));
+    return html(pg('면접 안내 이력', await renderPeople(db, deps, url.searchParams.get('q') || ''), 'applicants'));
   }
 
   if (path === '/audit' && user.role === 'super') {

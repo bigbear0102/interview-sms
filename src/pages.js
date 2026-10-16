@@ -3,6 +3,7 @@
 import { all, first } from './d1.js';
 import { esc, fmtTime, icon } from './views.js';
 import { OUTCOMES } from './reminders.js';
+import { unreadCount } from './delivery.js';
 import { outcomeSection } from './outcome-view.js';
 import { monthStats, renderSavingsCard } from './savings.js';
 import { phoneWaitBadge, colHead, colCount, fmtPhone, fmtWhen, badge, messageBadge, responseBar, pageHeader, tableWrap, stat, emptyState } from './ui.js';
@@ -113,6 +114,8 @@ export async function renderHome(db, user, deps) {
   const today = kstDayStart();
   let sentToday = 0, recvToday = 0, scheduled = 0, review = 0, gwCount = 0;
   let recent = [], camps = [], phones = [];
+  let noreply7 = 0;
+  const unread = await unreadCount(db, user).catch(() => 0);
 
   if (depIds.length) {
     const dph = idList(depIds);
@@ -135,6 +138,9 @@ export async function renderHome(db, user, deps) {
     review = (await first(db,
       `SELECT COUNT(*) n FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
        WHERE k.department_id IN (${dph}) AND ca.status='unclear'`, ...depIds)).n;
+    noreply7 = (await first(db,
+      `SELECT COUNT(*) n FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
+        WHERE k.department_id IN (${dph}) AND ca.status='sent' AND ca.sent_at>=?`, ...depIds, Date.now() - 7 * DAY)).n;
     camps = await all(db,
       `SELECT k.id, k.name, k.status, k.purged_at, k.scheduled_at,
          (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id) total,
@@ -175,22 +181,38 @@ export async function renderHome(db, user, deps) {
     : `<div class="notice warn" role="alert">${icon('alert')}<div><b>문자를 보낼 폰이 아직 연결되지 않았어요.</b><br>${
       user.role === 'super' ? '<a href="/admin">설정에서 폰을 연결하세요.</a> · <a href="/help/phone">폰 설치 안내</a>' : '관리자에게 폰 연결을 부탁하세요. · <a href="/help/phone">폰 설치 안내</a>'}</div></div>`;
 
+  const todoItems = [
+    review ? `<li><a href="/campaigns"><span class="n review">${review}</span><span class="t">확인이 필요한 답장<small>참석인지 불참인지 애매해서 사람이 봐야 해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
+    unread ? `<li><a href="/messages?dir=in"><span class="n info">${unread}</span><span class="t">안 읽은 받은 문자<small>문자함에서 확인해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
+    noreply7 ? `<li><a href="/campaigns"><span class="n wait">${noreply7}</span><span class="t">아직 답이 없는 사람 (최근 7일)<small>면접 안내에서 "답 없는 사람에게 다시 보내기"를 쓸 수 있어요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
+    scheduled ? `<li><a href="/messages?dir=scheduled"><span class="n mute">${scheduled}</span><span class="t">예약 대기 중인 발송<small>정해 둔 시간에 나가요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : ''
+  ].filter(Boolean);
+  const todoHtml = todoItems.length
+    ? `<ul class="todo">${todoItems.join('')}</ul>`
+    : `<div class="todo-done">${icon('check', 20)}<span>지금 처리할 일이 없어요.</span></div>`;
+
   return `${pageHeader({ title: '홈', desc: `${kstDateLabel()} 현황이에요.`,
     actions: `<a class="btn" href="/send">${icon('send', 18)}문자 보내기</a><a class="btn secondary" href="/campaigns/new">${icon('clipboard', 18)}면접 안내 만들기</a>` })}
     ${phoneNotice}
     ${phoneHealthNotices(phones)}
-    <div class="stats">
-      ${stat({ value: sentToday, label: '오늘 보낸 문자' })}
-      ${stat({ value: recvToday, label: '오늘 받은 문자', href: '/messages?dir=in' })}
-      ${stat({ value: scheduled, label: '예약 대기', href: '/messages?dir=scheduled' })}
-      ${stat({ value: review, label: '확인이 필요한 답장', tone: review ? 'review' : '', href: '/campaigns' })}
-    </div>
 
-    ${savings}
+    <section class="section">
+      <div class="shead"><h2>오늘 할 일</h2></div>
+      <div class="card" style="padding:0">${todoHtml}</div>
+    </section>
 
     <section class="section">
       <div class="shead"><h2>면접 안내 현황</h2><span class="muted">최근 30일 · 사업장·보낸 날별</span></div>
       <div class="card" style="padding:0">${boardHtml}</div>
+    </section>
+
+    <section class="section">
+      <div class="shead"><h2>면접 안내</h2><a href="/campaigns">전체 보기</a></div>
+      <div class="card" style="padding:0">
+        ${camps.length ? camps.map((r) => campaignCard(r)).join('')
+          : emptyState({ title: '아직 면접 안내가 없어요', desc: '대상자 명단을 올리면 안내 문자를 한꺼번에 보내고 참석 여부를 모아 볼 수 있어요.',
+              action: `<p style="margin-top:16px"><a class="btn" href="/campaigns/new">면접 안내 만들기</a></p>` })}
+      </div>
     </section>
 
     <section class="section">
@@ -206,13 +228,16 @@ export async function renderHome(db, user, deps) {
     </section>
 
     <section class="section">
-      <div class="shead"><h2>면접 안내</h2><a href="/campaigns">전체 보기</a></div>
-      <div class="card" style="padding:0">
-        ${camps.length ? camps.map((r) => campaignCard(r)).join('')
-          : emptyState({ title: '아직 면접 안내가 없어요', desc: '대상자 명단을 올리면 안내 문자를 한꺼번에 보내고 참석 여부를 모아 볼 수 있어요.',
-              action: `<p style="margin-top:16px"><a class="btn" href="/campaigns/new">면접 안내 만들기</a></p>` })}
+      <div class="shead"><h2>오늘의 숫자</h2></div>
+      <div class="stats">
+        ${stat({ value: sentToday, label: '오늘 보낸 문자' })}
+        ${stat({ value: recvToday, label: '오늘 받은 문자', href: '/messages?dir=in' })}
+        ${stat({ value: scheduled, label: '예약 대기', href: '/messages?dir=scheduled' })}
+        ${stat({ value: review, label: '확인이 필요한 답장', tone: review ? 'review' : '', href: '/campaigns' })}
       </div>
-    </section>`;
+    </section>
+
+    ${savings}`;
 }
 
 // 폰 상태 알림: 문제가 있을 때만 눈에 띄게, 정상이면 한 줄로
@@ -254,7 +279,7 @@ export async function renderCampaignList(db, user, deps) {
         FROM campaigns k WHERE k.department_id IN (${idList(depIds)}) ORDER BY k.id DESC LIMIT 200`, ...depIds)
     : [];
   return `${pageHeader({ title: '면접 안내', desc: '대상자 명단으로 안내 문자를 한꺼번에 보내고, 참석·불참 답장을 사업장별로 모아 봐요.',
-    actions: `<a class="btn secondary" href="/people">지원자 이력</a><a class="btn" href="/campaigns/new">${icon('plus', 18)}새 면접 안내</a>` })}
+    actions: `<a class="btn" href="/campaigns/new">${icon('plus', 18)}새 면접 안내</a>` })}
     <div class="card" style="padding:0">
       ${rows.length ? rows.map((r) => campaignCard(r)).join('')
         : emptyState({ title: '아직 만든 면접 안내가 없어요', desc: '오른쪽 위 버튼으로 시작해 보세요.' })}

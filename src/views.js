@@ -35,7 +35,8 @@ const ICONS = {
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h0"/>',
   phone: '<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>',
   download: '<path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/>',
-  reply: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 016 6v3"/>'
+  reply: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 016 6v3"/>',
+  more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'
 };
 export const icon = (name, size = 20) =>
   `<svg class="ico" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -142,6 +143,26 @@ a.stat:hover{background:var(--surface-2);text-decoration:none}
 .btn.small,button.small{min-height:36px;padding:7px 14px;font-size:14px}
 @media (max-width:640px){.btn.small,button.small{min-height:44px;padding:9px 16px}}
 .mrow{position:relative}
+.todo{list-style:none;margin:0;padding:0}
+.todo li{border-top:1px solid var(--line-soft)}
+.todo li:first-child{border-top:0}
+.todo a{display:flex;align-items:center;gap:14px;padding:14px 18px;color:var(--ink);text-decoration:none}
+.todo a:hover{background:var(--surface-2)}
+.todo .n{flex:none;min-width:38px;height:38px;padding:0 8px;border-radius:12px;display:grid;place-items:center;font-weight:800;font-size:17px;font-variant-numeric:tabular-nums}
+.todo .n.review{background:var(--purple-bg);color:var(--purple-t)}
+.todo .n.info{background:var(--blue-bg);color:var(--blue-t)}
+.todo .n.wait{background:var(--amber-bg);color:var(--amber-t)}
+.todo .n.mute{background:var(--chip);color:var(--muted)}
+.todo .t{flex:1;min-width:0;font-weight:600}
+.todo .t small{display:block;font-weight:400;color:var(--muted)}
+.todo .go{flex:none;color:var(--muted)}
+.todo-done{display:flex;gap:10px;align-items:center;padding:18px;color:var(--green-t);font-weight:600}
+.subnav{position:sticky;top:var(--nav-h);z-index:15;display:flex;gap:8px;overflow-x:auto;padding:10px 0;margin:-6px 0 8px;background:var(--bg);scrollbar-width:none}
+.subnav::-webkit-scrollbar{display:none}
+.subnav a{flex:none;padding:7px 14px;border-radius:999px;background:var(--chip);color:var(--ink);font-size:14px;font-weight:600;text-decoration:none}
+.subnav a:hover{background:var(--line)}
+[id^=sec-]{scroll-margin-top:calc(var(--nav-h) + 56px)}
+.moresheet{display:none}
 .rbtn{position:absolute;right:10px;bottom:8px;display:inline-grid;place-items:center;width:40px;height:40px;border-radius:999px;color:var(--blue)}
 .mrow .mtext{padding-right:44px}
 .rbtn:hover{background:var(--blue-bg)}
@@ -291,6 +312,14 @@ details.pop summary{list-style:none}details.pop summary::-webkit-details-marker{
   .tabbar a:hover{text-decoration:none}
   .tabbar a .dot{position:absolute;top:6px;left:calc(50% + 6px);margin:0}
   .tabbar a[aria-current=page]{color:var(--blue)}
+  .tabbar .tabmore{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--muted);font-size:11px;font-weight:500;background:none;border:0;min-height:0;padding:0;border-radius:0;cursor:pointer}
+  .tabbar .tabmore.cur{color:var(--blue)}
+  .moresheet{display:block;position:fixed;left:0;right:0;bottom:var(--tab-h);z-index:29;background:var(--surface);border-top:1px solid var(--line);border-radius:18px 18px 0 0;padding:8px 8px 14px;box-shadow:0 -14px 36px rgba(0,0,0,.2)}
+  .moresheet[hidden]{display:none}
+  .moresheet ul{list-style:none;margin:0;padding:0}
+  .moresheet a,.moresheet button{display:flex;justify-content:flex-start;gap:14px;align-items:center;width:100%;padding:14px 16px;font-size:16px;font-weight:500;color:var(--ink);background:none;border:0;border-radius:12px;text-align:left;text-decoration:none;min-height:0;cursor:pointer}
+  .moresheet a:hover,.moresheet button:hover{background:var(--chip)}
+  .moresheet .cur{color:var(--blue)}
   .stats{grid-template-columns:repeat(2,1fr)}
   .actions-grid{grid-template-columns:1fr}
   table.cards thead{display:none}
@@ -337,8 +366,16 @@ export function page(user, title, body, nav = '', badges = {}) {
 
   const items = NAV.filter((n) => !n.superOnly || user.role === 'super');
   // 일반 관리자는 설정 대신 "내 계정" 탭
-  const tabBase = items.filter((n) => !n.noTab); // 하단 탭은 5개를 넘기지 않도록 일부 메뉴는 제외
-  const tabItems = user.role === 'super' ? tabBase : [...tabBase, { key: 'account', href: '/password', label: '내 계정', icon: 'user' }];
+  // 하단 탭은 5칸: 홈 · 보내기 · 문자함 · 면접 + 더보기(지원자 관리, 설정, 내 계정 ...)
+  const tabItems = items.filter((n) => !n.noTab && n.key !== 'settings');
+  const moreCurrent = ['settings', 'applicants', 'account'].includes(nav);
+  const moreLinks = [
+    { key: 'applicants', href: '/applicants', label: '지원자 관리', icon: 'user' },
+    ...(user.role === 'super' ? [{ key: 'settings', href: '/admin', label: '설정', icon: 'settings' }] : []),
+    { key: 'account', href: '/password', label: '내 계정', icon: 'user' },
+    { key: 'help', href: '/help/phone', label: '폰 설치 안내', icon: 'phone' },
+    ...(user.role === 'super' ? [{ key: 'audit', href: '/audit', label: '기록 보기', icon: 'clipboard' }] : [])
+  ];
   const link = (n, tab) => `<a href="${n.href}"${nav === n.key ? ' aria-current="page"' : ''}>${icon(n.icon, tab ? 22 : 18)}<span>${esc(tab ? n.short || n.label : n.label)}</span>${badges[n.key] ? `<i class="dot" aria-label="안 읽은 문자 ${badges[n.key]}건">${badges[n.key] > 99 ? '99+' : badges[n.key]}</i>` : ''}</a>`;
   return `<!doctype html><html lang="ko"><head>${head}</head><body>
 <a class="skip" href="#main">본문 바로가기</a>
@@ -358,8 +395,11 @@ export function page(user, title, body, nav = '', badges = {}) {
   </details>
 </div>
 <main id="main" class="page">${body}</main>
-<nav class="tabbar" aria-label="하단 메뉴">${tabItems.map((n) => link(n, true)).join('')}</nav>
+<nav class="tabbar" aria-label="하단 메뉴">${tabItems.map((n) => link(n, true)).join('')}<button type="button" class="tabmore${moreCurrent ? ' cur' : ''}" aria-expanded="false" aria-controls="moresheet">${icon('more', 22)}<span>더보기</span></button></nav>
+<div class="moresheet" id="moresheet" hidden><ul>${moreLinks.map((m) => `<li><a href="${m.href}"${nav === m.key ? ' class="cur" aria-current="page"' : ''}>${icon(m.icon, 20)}<span>${esc(m.label)}</span></a></li>`).join('')}
+  <li><form method="post" action="/logout"><button type="submit">${icon('send', 20)}<span>로그아웃</span></button></form></li></ul></div>
 <script>document.addEventListener('submit',function(e){var m=e.target.getAttribute&&e.target.getAttribute('data-confirm');if(m&&!confirm(m))e.preventDefault();});
+(function(){var b=document.querySelector('.tabmore'),s=document.getElementById('moresheet');if(!b||!s)return;b.addEventListener('click',function(e){e.stopPropagation();var open=s.hidden;s.hidden=!open;b.setAttribute('aria-expanded',String(open));});document.addEventListener('click',function(e){if(!s.hidden&&!s.contains(e.target)){s.hidden=true;b.setAttribute('aria-expanded','false');}});})();
 try{var u=new URL(location.href),ch=false;['ok','err','n','k'].forEach(function(k){if(u.searchParams.has(k)){u.searchParams.delete(k);ch=true;}});if(ch)history.replaceState(null,'',u.pathname+u.search+u.hash);}catch(e){}</script>
 </body></html>`;
 }
