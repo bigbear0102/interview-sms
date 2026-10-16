@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { cpSync, readFileSync } from 'node:fs';
 import { parseAlbamonApply } from '../../src/mail-intake.js';
 import { EXT_BRIDGE_JS } from '../../src/ext-bridge-page.js';
+import { APP_JS } from '../../src/appjs.js';
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -63,8 +64,8 @@ const sysLog = [];      // 시스템 서버가 받은 모든 요청(주소·머�
 const mailIn = [];      // /api/agent/mail 로 받아 해석한 결과
 const PAGE = `<!doctype html><meta charset=utf-8><title>수신함</title>
 <div id="extstate" class="notice">확인 중…</div>
-<form id="gwform"><input id="gwid"><input id="gwpw" type="password"><button type="submit">내 확장에 저장</button></form>
-<div id="gwok" hidden>저장됨</div><script>${EXT_BRIDGE_JS}</script>`;
+<form id="gwform" data-nolock><input id="gwid"><input id="gwpw" type="password"><button type="submit">내 확장에 저장</button></form>
+<div id="gwok" hidden>저장됨</div><script>${APP_JS}</script><script>${EXT_BRIDGE_JS}</script>`;
 const sys = http.createServer((req, res) => {
   if (req.url === '/applicants/inbox/agent-token.json' && req.method === 'POST') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ token: TOKEN })); }
   if (req.url.startsWith('/applicants/inbox')) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(PAGE); }
@@ -262,6 +263,9 @@ const stored = await sw.evaluate(() => chrome.storage.local.get(['gwId', 'gwPw',
 check(stored.gwId === GW_ID && stored.gwPw === GW_PW && stored.gwOn === true, '그룹웨어 아이디·비밀번호가 확장 저장소에 들어감');
 check(/비밀번호 저장됨/.test(t2) && !t2.includes(GW_PW), '화면에는 저장 여부만 보이고 비밀번호는 보이지 않음');
 check((await web.$eval('#gwpw', (e) => e.value)) === '', '저장 뒤 비밀번호 입력칸은 비워짐');
+await sleep(300);
+const btn = await web.$eval('#gwform button', (e) => ({ disabled: e.disabled, text: e.textContent.trim() }));
+check(!btn.disabled && !/처리 중/.test(btn.text), '저장 버튼이 "처리 중…"으로 잠기지 않음(공통 스크립트와 함께 시험)');
 const htmlNow = await web.content();
 check(!htmlNow.includes(GW_PW), '화면 어디에도 비밀번호가 남지 않음');
 await sleep(3500);   // 저장 뒤 자동 실행이 끝날 시간

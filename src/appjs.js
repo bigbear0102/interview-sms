@@ -43,6 +43,8 @@ export const APP_JS = String.raw`
   document.addEventListener('submit', function (e) {
     var f = e.target;
     if (!f || !f.getAttribute || f.getAttribute('method') === 'dialog') return;
+    // 화면 안에서 처리하는 양식(data-nolock)은 잠그지 않는다
+    if (e.defaultPrevented || f.hasAttribute('data-nolock')) return;
     var m = f.getAttribute('data-confirm');
     if (m && !f.__ok) {
       e.preventDefault();

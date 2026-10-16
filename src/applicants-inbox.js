@@ -111,7 +111,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
         <li>수신함에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 알아서 연락처를 채워 줘요. 채워진 뒤 <b>등록</b>만 누르면 돼요.</li>
       </ol>
       <div id="extstate" class="notice" role="status">확장 프로그램 확인 중…</div>
-      <form id="gwform" autocomplete="off" style="display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));align-items:end">
+      <form id="gwform" data-nolock autocomplete="off" style="display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));align-items:end">
         <label style="display:grid;gap:4px"><span style="font-size:13px">내 그룹웨어 메일 주소 (또는 아이디)</span><input id="gwid" autocomplete="off" maxlength="80" placeholder="예: bigbear@willvi.co.kr" aria-label="그룹웨어 메일 주소 또는 아이디"></label>
         <label style="display:grid;gap:4px"><span style="font-size:13px">그룹웨어 비밀번호</span><input id="gwpw" type="password" autocomplete="new-password" maxlength="100" aria-label="그룹웨어 비밀번호"></label>
         <button class="btn small" type="submit">내 확장에 저장</button>
