@@ -353,3 +353,19 @@ test('소개 페이지: 로그인 전 첫 화면은 누구나, 로그인 버튼�
   assert.equal(other.status, 303);
   void db;
 });
+
+test('면접 안내: 엑셀에서 복사한 표(제목 줄 없음)를 그대로 붙여넣어 올리기', async () => {
+  const { db, call, post } = await setup();
+  await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
+  await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'폰','u',?, 't')`).bind(await encryptText('p', 'k')).run();
+  const form = await (await call('/campaigns/new')).text();
+  assert.match(form, /붙여넣기\(Ctrl\+V\)/);
+  assert.match(form, /id="paste-preview"/);
+  const paste = '홍길동\t010-1234-5678\t10/20 14:00\n김영희\t010-2345-6789\t10/20 14:30\n';
+  const res = await post('/campaigns/new', { mode: 'many', csv: paste, default_site: '아마노코리아(현장HR)', gateway_id: '1', template: '{이름}님', send_mode: 'manual' });
+  assert.equal(res.status, 200);
+  const rows = (await db.prepare(`SELECT name, site, interview_at FROM candidates ORDER BY id`).all()).results;
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].site, '아마노코리아(현장HR)');
+  assert.equal(rows[1].interview_at, '10/20 14:30');
+});

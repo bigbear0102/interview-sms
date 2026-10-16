@@ -268,7 +268,7 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
         <fieldset style="margin-bottom:16px">
           <legend>보낼 대상</legend>
           <label class="check"><input type="radio" name="mode" value="one" checked> <span>한 명에게만</span></label>
-          <label class="check"><input type="radio" name="mode" value="many"> <span>여러 명 (명단 파일)</span></label>
+          <label class="check"><input type="radio" name="mode" value="many"> <span>여러 명 (엑셀 붙여넣기 · 파일)</span></label>
         </fieldset>
         <div id="mode-one">
           <label>사업장(원가중심점) <input name="one_site" placeholder="예: 아마노코리아(현장HR)"></label>
@@ -277,17 +277,20 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
           <label style="margin-top:12px">면접일시 <input name="one_when" placeholder="10/20 14:00" autocomplete="off"></label>
         </div>
         <div id="mode-many" hidden>
-        <p class="muted" style="margin-bottom:12px">엑셀에서 <b>CSV로 저장</b>한 파일을 올려 주세요.</p>
-        ${tableWrap(`<table class="sample"><thead><tr><th>사업장(원가중심점)</th><th>이름</th><th>전화번호</th><th>면접일시</th></tr></thead><tbody>
-          <tr><td>아마노코리아(현장HR)</td><td>홍길동</td><td>010-1234-5678</td><td>10/20 14:00</td></tr></tbody></table>`)}
-        <p style="margin:12px 0"><a class="btn secondary small" href="/template.csv">${icon('download', 16)}양식 받기</a></p>
-        <div class="dropzone"><input type="file" id="f" accept=".csv,.txt" aria-label="명단 파일 선택"><p id="fname" class="muted" style="margin-top:8px">아직 고른 파일이 없어요.</p></div>
+        <p class="muted" style="margin-bottom:8px">엑셀에서 표를 <b>드래그해서 복사(Ctrl+C)</b>한 뒤, 아래 칸에 <b>붙여넣기(Ctrl+V)</b> 하세요. 제목 줄은 있어도 없어도 돼요.</p>
+        <textarea name="csv" id="csv" rows="7" aria-label="명단 붙여넣기" placeholder="아마노코리아(현장HR)&#9;홍길동&#9;010-1234-5678&#9;10/20 14:00&#10;아마노코리아(현장HR)&#9;김영희&#9;010-2345-6789&#9;10/20 14:30"></textarea>
+        <div id="paste-preview" class="muted" style="margin-top:8px;font-size:14px" aria-live="polite"></div>
+        <p class="muted" style="margin:10px 0 0;font-size:14px">열 순서는 <b>사업장 · 이름 · 전화번호 · 면접일시</b>를 권해요. 제목 줄이 있으면 순서가 달라도 알아봐요.</p>
         <label style="margin-top:16px">사업장(원가중심점)
-          <small>파일에 사업장 열이 있으면 비워 두세요. 한 곳에만 보낸다면 여기에 적으면 전체에 적용돼요.</small>
+          <small>붙여넣은 표에 사업장 열이 없다면 여기에 적으세요. 전체에 적용돼요.</small>
           <input name="default_site" placeholder="예: 아마노코리아(현장HR)"></label>
         <p class="muted" style="margin-top:8px;font-size:14px">사업장 이름은 <b>문자에는 들어가지 않고</b>, 사업장별 회신 현황에만 쓰여요.</p>
-        <details style="margin-top:12px"><summary>파일이 없으면 직접 붙여넣기</summary>
-          <textarea name="csv" id="csv" rows="6" placeholder="이름,전화번호,면접일시&#10;홍길동,010-1234-5678,10/20 14:00" style="margin-top:8px"></textarea></details>
+        <details style="margin-top:16px"><summary>파일(CSV)로 올리고 싶다면</summary>
+          <div style="margin-top:12px">
+            <div class="dropzone"><input type="file" id="f" accept=".csv,.txt" aria-label="명단 파일 선택"><p id="fname" class="muted" style="margin-top:8px">아직 고른 파일이 없어요.</p></div>
+            <p style="margin:12px 0"><a class="btn secondary small" href="/template.csv">${icon('download', 16)}양식 받기</a></p>
+          </div>
+        </details>
         </div>
       </div></div>
 
@@ -328,6 +331,15 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
         ['one_site', 'one_name', 'one_phone'].forEach(function (n) { document.getElementsByName(n)[0].required = m === 'one'; });
         document.getElementById('csv').required = m === 'many';
       }
+      var csvEl = document.getElementById('csv'), prev = document.getElementById('paste-preview');
+      function showPaste() {
+        var lines = csvEl.value.replace(/\\r/g, '').split('\\n').filter(function (l) { return l.trim() !== ''; });
+        if (!lines.length) { prev.textContent = ''; return; }
+        var d = lines[0].indexOf('\\t') >= 0 ? '\\t' : ',';
+        var cols = lines[0].split(d).length;
+        prev.textContent = '✓ ' + lines.length + '줄, ' + cols + '개 칸을 읽었어요. 첫 줄: ' + lines[0].split(d).map(function (c) { return c.trim(); }).join(' | ');
+      }
+      csvEl.addEventListener('input', showPaste); showPaste();
       Array.prototype.forEach.call(document.getElementsByName('mode'), function (r) { r.addEventListener('change', mode); });
       mode();
       document.getElementById('f').addEventListener('change', async function (e) {
@@ -336,6 +348,7 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
         var s = new TextDecoder('utf-8').decode(buf);
         if (s.indexOf('\\uFFFD') >= 0) s = new TextDecoder('euc-kr').decode(buf);
         document.getElementById('csv').value = s;
+        document.getElementById('csv').dispatchEvent(new Event('input'));
         document.getElementById('fname').textContent = '✓ ' + file.name + ' 파일을 불러왔어요.';
       });
     })();
