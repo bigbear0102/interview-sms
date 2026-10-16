@@ -42,8 +42,6 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   const pending = await pendingInboxCount(db);
   const rows = await listInbox(db, status === 'done' ? 'done' : 'pending');
   const ccTotal = (await first(db, `SELECT COUNT(*) n FROM cost_centers`)).n;
-  const ccRows = ccTotal ? (await all(db, `SELECT name v FROM cost_centers ORDER BY name LIMIT 3000`)) : await all(db, `SELECT v FROM (SELECT cost_center v FROM inbox_cost_rules UNION SELECT cost_center v FROM applicant_inbox UNION SELECT applied_to v FROM applicant_applications) WHERE v != '' ORDER BY v LIMIT 300`);
-  const ccList = `<datalist id="cc-list">${ccRows.map((x) => `<option value="${esc(x.v)}">`).join('')}</datalist>`;
   const doneCount = (await first(db, `SELECT COUNT(*) n FROM applicant_inbox WHERE status != 'pending'`)).n;
   const notices = [];
   const FLASH = { fetch: '연락처 가져오기를 요청했어요. 에이전트가 켜져 있으면 곧 채워져요.', fetchall: `대기 중인 ${Number(fetched) || 0}건의 연락처 가져오기를 요청했어요.`, auto: '자동 등록 설정을 저장했어요.', registered: '지원자로 등록했어요.', cost: '원가중심점을 저장했어요.', ignored: '무시로 처리했어요.', restored: '다시 대기로 돌렸어요.', token: '수신 주소를 새로 만들었어요. 메일 전달 설정도 새 주소로 바꿔 주세요.' };
@@ -116,7 +114,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
       <td data-label="공고">${esc(r.company || '-')}<br><small class="muted">${esc(r.job_title)}</small></td>
       <td data-label="원가중심점">${r.status === 'pending'
     ? `<form method="post" action="/applicants/inbox/${r.id}/cost" style="display:grid;gap:6px;min-width:200px">
-          <input name="cost_center" list="cc-list" value="${esc(r.cost_center)}" placeholder="예: 아마노코리아(현장HR)" maxlength="80" autocomplete="off" aria-label="${esc(r.name)} 원가중심점">
+          <input name="cost_center" data-cc-search value="${esc(r.cost_center)}" placeholder="예: 아마노코리아(현장HR)" maxlength="80" autocomplete="off" aria-label="${esc(r.name)} 원가중심점">
           <label style="font-size:13px;display:flex;gap:6px;align-items:center"><input type="checkbox" name="apply_all" value="1" checked> 같은 공고 모두 적용·기억</label>
           <button class="small secondary">저장</button></form>`
     : esc(r.cost_center || '-')}</td>
@@ -146,7 +144,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
     ${peopleTabs('inbox', pending)}
     ${notices.join('')}
     <p style="margin:0 0 12px"><a href="/applicants/inbox/cost-centers">원가중심점 목록 ${ccTotal ? `(${ccTotal}개)` : '(아직 없음)'} 보기·추가</a></p>
-    ${ccList}${addressCard}${agentCard}${tool}
+    ${addressCard}${agentCard}${tool}
     <div class="tabs">${filterTab('pending', '대기', pending)}${filterTab('done', '처리됨', doneCount)}</div>
     ${status === 'pending' && pending ? `<form method="post" action="/applicants/inbox/fetch-all" class="inline" style="margin-bottom:12px" data-confirm="대기 중인 ${pending}건의 연락처를 한꺼번에 가져오도록 요청할까요? 알바몬 이용권이 차감될 수 있어요."><button class="btn secondary small">대기 ${pending}건 모두 연락처 가져오기 요청</button></form>` : ''}
     <div class="card" style="padding:0">${table}</div>
@@ -166,10 +164,11 @@ export async function renderCostCenters(db, q, isSuper, ok) {
     ${rows.length ? tableWrap(`<table class="cards sheet"><thead><tr><th scope="col">이름</th>${isSuper ? '<th scope="col">관리</th>' : ''}</tr></thead><tbody>
       ${rows.map((r) => `<tr><td>${esc(r.name)}</td>${isSuper ? `<td class="acts"><form method="post" action="/applicants/inbox/cost-centers/delete" class="inline" data-confirm="${esc(r.name)} 을(를) 목록에서 지울까요?"><input type="hidden" name="name" value="${esc(r.name)}"><button class="small secondary">지우기</button></form></td>` : ''}</tr>`).join('')}
     </tbody></table>`) : emptyState({ title: total ? '찾는 이름이 없어요' : '아직 목록이 없어요', desc: total ? '다른 글자로 찾아 보세요.' : '관리자가 아래에서 엑셀의 원가중심점 열을 복사해 붙여 넣으면 한 번에 등록돼요.' })}
-    ${isSuper ? `<form method="post" action="/applicants/inbox/cost-centers/add" class="card stack" style="margin-top:16px">
+    <form method="post" action="/applicants/inbox/cost-centers/add" class="card stack" style="margin-top:16px">
       <label for="ccnames"><b>목록에 추가하기</b> <span class="muted">한 줄에 하나씩. 엑셀에서 열을 복사해서 붙여 넣어도 돼요. (한 번에 2,000개까지)</span></label>
       <textarea id="ccnames" name="names" rows="8" placeholder="아마노코리아(현장HR)"></textarea>
-      <div><button class="btn">추가</button></div></form>` : '<p class="muted">목록 추가·삭제는 관리자만 할 수 있어요.</p>'}`;
+      <div><button class="btn">추가</button></div></form>
+    ${isSuper ? '' : '<p class="muted">이름 삭제는 관리자만 할 수 있어요.</p>'}`;
 }
 
 export async function renderCapture(db) {
@@ -269,11 +268,16 @@ export async function handleInbox(c, deps) {
       'cache-control': 'no-store'
     } });
   }
+  if (path === '/applicants/inbox/cost-centers/search' && method === 'GET') {
+    const terms = String(url.searchParams.get('q') || '').trim().split(/\s+/).filter(Boolean).slice(0, 5).map((t) => '%' + t.replace(/[%_]/g, '') + '%');
+    const where = terms.length ? terms.map(() => 'name LIKE ?').join(' AND ') : '1=1';
+    const rows = await all(db, `SELECT name FROM cost_centers WHERE ${where} ORDER BY name LIMIT 30`, ...terms);
+    return new Response(JSON.stringify({ items: rows.map((r) => r.name) }), { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
+  }
   if (path === '/applicants/inbox/cost-centers' && method === 'GET') {
     return page('원가중심점 목록', await renderCostCenters(db, url.searchParams.get('q') || '', user.role === 'super', url.searchParams.get('ok') || ''));
   }
   if (path === '/applicants/inbox/cost-centers/add' && method === 'POST') {
-    if (user.role !== 'super') return html(pg('접근 불가', '<p>관리자만 할 수 있어요.</p>', 'applicants'), 403);
     const f = await readForm(request);
     const names = [...new Set(String(f.names || '').split(/\r?\n/).map((x) => x.trim().slice(0, 80)).filter(Boolean))].slice(0, 2000);
     const now = Date.now();

@@ -101,4 +101,76 @@ export const APP_JS = String.raw`
     });
   }
 })();
+// 원가중심점 찾기: 입력하면 목록에서 걸러 보여 주고, 눌러서 고른다. (띄어쓰기로 여러 글자를 함께 찾는다)
+(function () {
+  var box = null, cur = null, timer = null, seq = 0, active = -1;
+  function hide() { if (box) { box.hidden = true; box.innerHTML = ''; } active = -1; }
+  function ensure() {
+    if (box) return box;
+    box = document.createElement('ul');
+    box.setAttribute('role', 'listbox');
+    box.hidden = true;
+    box.style.cssText = 'position:absolute;z-index:50;margin:0;padding:4px 0;list-style:none;background:var(--surface,#fff);color:inherit;border:1px solid var(--line,#ccc);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.18);max-height:260px;overflow:auto;font-size:14px';
+    box.addEventListener('mousedown', function (e) {
+      var li = e.target.closest('li[data-v]');
+      if (li && cur) { e.preventDefault(); cur.value = li.getAttribute('data-v'); hide(); }
+    });
+    document.body.appendChild(box);
+    return box;
+  }
+  function place(el) {
+    var r = el.getBoundingClientRect(), b = ensure();
+    b.style.left = (r.left + window.pageXOffset) + 'px';
+    b.style.top = (r.bottom + window.pageYOffset + 2) + 'px';
+    b.style.minWidth = Math.max(r.width, 240) + 'px';
+  }
+  function show(el, items) {
+    var b = ensure();
+    cur = el; place(el); active = -1;
+    if (!items.length) { b.innerHTML = '<li style="padding:8px 12px;color:#888">찾는 이름이 없어요</li>'; b.hidden = false; return; }
+    b.innerHTML = '';
+    items.forEach(function (v) {
+      var li = document.createElement('li');
+      li.setAttribute('role', 'option');
+      li.setAttribute('data-v', v);
+      li.style.cssText = 'padding:8px 12px;cursor:pointer';
+      li.textContent = v;
+      b.appendChild(li);
+    });
+    b.hidden = false;
+  }
+  function search(el) {
+    var my = ++seq;
+    fetch('/applicants/inbox/cost-centers/search?q=' + encodeURIComponent(el.value), { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (my === seq && document.activeElement === el) show(el, d.items || []); })
+      .catch(function () { hide(); });
+  }
+  document.addEventListener('input', function (e) {
+    var el = e.target;
+    if (!el.matches || !el.matches('input[data-cc-search]')) return;
+    clearTimeout(timer);
+    timer = setTimeout(function () { search(el); }, 150);
+  });
+  document.addEventListener('focusin', function (e) {
+    var el = e.target;
+    if (el.matches && el.matches('input[data-cc-search]')) { cur = el; search(el); }
+  });
+  document.addEventListener('focusout', function (e) {
+    if (e.target.matches && e.target.matches('input[data-cc-search]')) setTimeout(hide, 120);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (!box || box.hidden || !cur) return;
+    var lis = box.querySelectorAll('li[data-v]');
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!lis.length) return;
+      e.preventDefault();
+      active = (active + (e.key === 'ArrowDown' ? 1 : -1) + lis.length) % lis.length;
+      lis.forEach(function (li, i) { li.style.background = i === active ? 'rgba(0,113,227,.15)' : ''; });
+      lis[active].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter' && active >= 0) {
+      e.preventDefault(); cur.value = lis[active].getAttribute('data-v'); hide();
+    } else if (e.key === 'Escape') { hide(); }
+  });
+})();
 `;

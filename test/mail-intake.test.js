@@ -262,7 +262,7 @@ test('원가중심점: 같은 공고에 한 번에 적용·기억, 새 메일에
   await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('박민수(남, 30세)', '900000012'))), Date.now());
   const id1 = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='홍길동'`).first()).id;
   // 화면에 입력칸이 보인다
-  assert.match(await (await call('/applicants/inbox')).text(), /name="cost_center" list="cc-list"/);
+  assert.match(await (await call('/applicants/inbox')).text(), /name="cost_center" data-cc-search/);
   // 같은 공고 모두 적용
   let r = await post(`/applicants/inbox/${id1}/cost`, { cost_center: '아마노코리아(현장HR)', apply_all: '1' });
   assert.equal(r.headers.get('location'), '/applicants/inbox?ok=cost');
@@ -301,5 +301,6 @@ test('원가중심점 목록: 붙여넣기로 추가, 찾기, 목록이 있으�
   // 목록이 생기면 목록 밖 이름은 거절, 안의 이름은 저장
   assert.equal((await post(`/applicants/inbox/${id}/cost`, { cost_center: '아무거나' })).headers.get('location'), '/applicants/inbox?err=cclist');
   assert.equal((await post(`/applicants/inbox/${id}/cost`, { cost_center: '아마노코리아(파견)' })).headers.get('location'), '/applicants/inbox?ok=cost');
-  assert.match(await (await call('/applicants/inbox')).text(), /<option value="아마노코리아\(현장HR\)">/);
+  const found = await (await call('/applicants/inbox/cost-centers/search?q=' + encodeURIComponent('아마노 현장'))).json();
+  assert.deepEqual(found.items, ['아마노코리아(현장HR)']);
 });
