@@ -263,6 +263,9 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
           <div id="gwprog" class="notice" role="status" hidden>확인하는 중… 그룹웨어에 로그인할 수 있는지 확인하고 있어요. (몇 초 걸려요)</div>
           <div id="gwerr" class="notice warn" role="alert" hidden></div>
           <div id="gwok" class="notice ok" hidden>${icon('check')}<div><b>그룹웨어 로그인을 확인했고</b> 내 확장에 저장했어요. 이제 5분마다 등록한 메일함에서 알바몬 지원 메일을 가져와요.</div></div>
+          <label style="display:grid;gap:4px;max-width:360px"><span style="font-size:13px">가져올 양 <small class="muted">(알바몬 지원 메일 기준, 최신 순)</small></span>
+            <select id="gwlimit" aria-label="가져올 양"><option value="0">전부 (기본)</option><option value="30">최근 30통</option><option value="100">최근 100통</option><option value="300">최근 300통</option><option value="1000">최근 1000통</option></select>
+            <small class="muted">이미 가져온 메일은 다시 가져오지 않아요(중복 제외). 양을 늘리면 다음 확인 때 더 오래된 메일까지 이어서 가져와요.</small></label>
           <form id="gwform" data-nolock autocomplete="off" style="display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));align-items:end">
             <label style="display:grid;gap:4px"><span style="font-size:13px">그룹웨어 메일 주소 (또는 아이디)</span><input id="gwid" autocomplete="off" maxlength="80" placeholder="예: bigbear@willvi.co.kr" aria-label="그룹웨어 메일 주소 또는 아이디"></label>
             <label style="display:grid;gap:4px"><span style="font-size:13px">그룹웨어 비밀번호</span><input id="gwpw" type="password" autocomplete="new-password" maxlength="100" aria-label="그룹웨어 비밀번호"></label>

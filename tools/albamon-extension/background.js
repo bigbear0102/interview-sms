@@ -198,6 +198,7 @@ async function saveConfig(p, origin) {
   const set = {};
   if (p.agentToken) set.agentToken = p.agentToken;
   if (typeof p.dry === 'boolean') set.dry = p.dry;
+  if (typeof p.gwLimit === 'number' && p.gwLimit >= 0) set.gwLimit = Math.min(Math.round(p.gwLimit), 5000);
   if (typeof p.serverUrl === 'string' && p.serverUrl) set.serverUrl = p.serverUrl;
   const acc = p.account && p.account.id ? p.account : (typeof p.gwId === 'string' && p.gwId ? { id: p.gwId, pw: p.gwPw || '', first: true } : null);
   if (!set.serverUrl && origin && (set.agentToken || acc)) set.serverUrl = origin;
@@ -233,7 +234,7 @@ async function saveConfig(p, origin) {
     if (!v.ok) { await setStatus(`[${key}] ${gwFailText(v)}`, 'error'); return; }
     touched = true;
   }
-  if (touched || set.agentToken) setTimeout(() => run(true), 300);
+  if (touched || set.agentToken || set.gwLimit !== undefined) setTimeout(() => run(true), 300);
 }
 
 // ---------------- 그룹웨어 로그인 쿠키 보관·복원 ----------------
@@ -269,8 +270,9 @@ recoverGwSwap();   // 확장이 읽는 도중에 꺼졌다면 켜질 때 내 로
 // 문자 관리 시스템으로는 보내지 않는다. 시스템에는 알바몬 지원 메일 본문(표)만 보낸다.
 const GW_MAIL_DEFAULT = 'https://mail.willvi.co.kr/mail/link/emlMail/emlMailMain.do';
 const GW_EVERY_MS = 5 * 60 * 1000;
-const GW_MAX_PER_SCAN = 40;
-const SEEN_CAP = 3000;
+const GW_MAX_PER_SCAN = 1000;   // 한 번에 읽는 최대 건수(남은 것은 다음 확인 때 이어서)
+const GW_CHUNK = 50;            // 이만큼씩 받아서 시스템에 넣고 중간 저장
+const SEEN_CAP = 6000;
 
 async function openTab(url) {
   const tab = await chrome.tabs.create({ url, active: false });
@@ -293,18 +295,27 @@ function pageLogin(id, pw) {
 // 메일 목록에서 알바몬 발신 메일을 찾는다
 function pageHasLogin() { return !!document.querySelector('#cmmLogin_userId'); }
 
-function pageListMails() {
-  const out = [];
+// 알바몬이 보낸 메일 목록을 그룹웨어의 메일 목록 API 로 쪽마다 받아 온다(최신 순). limit: 최근 몇 통까지(0 = 전부, 최대 5000통).
+// 이미 로그인된 이 탭의 쿠키를 그대로 쓴다. 반환: { total, mails:[{id, mb}], error }
+async function pageListAlbamon(limit) {
+  const PAGE = 100, HARD = 5000;
+  const want = limit > 0 ? Math.min(limit, HARD) : HARD;
+  const mails = [];
   let total = 0;
-  for (const u of document.querySelectorAll('ul.mail_list')) {
-    const li = u.closest('li');
-    if (li) total++;
-    if (!li || !/mailmaster@albamon\.com/.test(li.innerHTML)) continue;
-    const inp = li.querySelector('input[name=key]');
-    const a = li.querySelector('.subject a[data-mailbox-id]');
-    if (inp && a) out.push({ id: inp.value, mb: a.getAttribute('data-mailbox-id') });
-  }
-  return { total, mails: out };
+  try {
+    for (let pageNo = 1; mails.length < want; pageNo++) {
+      const r = await fetch('/mail/data/emlMail/selectMailList.do?_=' + Date.now() + 't', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isLazy: 'N', boxCode: 'recv', pageNo: String(pageNo), pageSize: String(PAGE), mailType: 'all', searchField: 'mailFrom', keyword: 'mailmaster@albamon.com', startDt: null, endDt: null })
+      });
+      const j = await r.json();
+      const list = Array.isArray(j.mailList) ? j.mailList : [];
+      total = Number(j.totalCount) || total;
+      for (const m of list) if (m && m.mailId && m.mailboxId) mails.push({ id: m.mailId, mb: m.mailboxId });
+      if (list.length < PAGE) break;
+    }
+  } catch { return { total, mails: mails.slice(0, want), error: true }; }
+  return { total, mails: mails.slice(0, want) };
 }
 
 // 메일 본문을 화면을 열지 않고 그룹웨어의 메일 보기 API 로 바로 받아 온다(메일당 약 0.1초).
@@ -356,36 +367,39 @@ async function scanAccount(cfg, acct) {
       await chrome.tabs.update(tab.id, { url: base });
       await waitLoaded(tab.id);
     }
-    // 메일 목록은 화면이 열린 뒤에 채워진다: 보일 때까지 짧게 확인한다(최대 10초)
-    let list = { total: 0, mails: [] };
-    for (let i = 0; i < 25 && !list.total; i++) {
-      list = (await exec(tab.id, pageListMails).catch(() => null)) || { total: 0, mails: [] };
-      if (!list.total) await sleep(400);
-    }
+    // 알바몬 지원 메일 목록을 API 로 받아 온다(설정한 양만큼, 최신 순)
+    const limit = Number(cfg.gwLimit) || 0;
+    const list = (await exec(tab.id, pageListAlbamon, [limit]).catch(() => null)) || { total: 0, mails: [], error: true };
+    const scope = limit > 0 ? `최근 ${limit}통` : '전부';
     let res;
-    if (!list.total) {
-      res = { level: 'warn', text: `그룹웨어(${key}) 메일함 목록을 읽지 못했어요. 메일함이 비어 있거나, 느리거나, 화면이 바뀌었을 수 있어요. 5분 뒤 다시 확인해요.` };
+    if (list.error && !list.mails.length) {
+      res = { level: 'warn', text: `그룹웨어(${key}) 메일 목록을 읽지 못했어요. 로그인이 풀렸거나, 느리거나, 그룹웨어 화면이 바뀌었을 수 있어요. 5분 뒤 다시 확인해요.` };
     } else if (!list.mails.length) {
-      res = { level: 'ok', text: `그룹웨어(${key}) 확인 완료: 메일 ${list.total}통 중 알바몬 지원 메일이 없어요.` };
+      res = { level: 'ok', text: `그룹웨어(${key}) 확인 완료: 알바몬 지원 메일이 없어요.` };
     } else {
       const seen = new Set(acct.seen || []);
-      const todo = list.mails.filter((m) => !seen.has(m.id)).slice(0, GW_MAX_PER_SCAN);
-      if (!todo.length) {
-        res = { level: 'ok', text: `그룹웨어(${key}) 확인 완료: 알바몬 지원 메일 ${list.mails.length}통, 새 메일은 없어요.` };
+      const todoAll = list.mails.filter((m) => !seen.has(m.id));
+      if (!todoAll.length) {
+        res = { level: 'ok', text: `그룹웨어(${key}) 확인 완료: 알바몬 지원 메일 ${list.mails.length}통(${scope}), 새 메일은 없어요.` };
       } else {
-        await setStatus(`그룹웨어(${key}) 메일 ${todo.length}건 읽는 중…`);
+        const todo = todoAll.slice(0, GW_MAX_PER_SCAN);
         let added = 0, dup = 0, skipped = 0, failed = 0;
-        const bodies = (await exec(tab.id, pageFetchBodies, [todo]).catch(() => [])) || [];
-        for (const b of bodies) {
-          if (b.html === null) { failed++; continue; }   // 못 받은 건은 기억하지 않아서 다음 확인 때 다시 시도
-          if (!b.html) { skipped++; seen.add(b.id); continue; }
-          const r = await (await api(cfg, '/api/agent/mail', { method: 'POST', body: JSON.stringify({ html: b.html, account: key }) })).json();
-          seen.add(b.id);
-          if (r.ok) { if (r.duplicate) dup++; else added++; } else skipped++;
+        for (let i = 0; i < todo.length; i += GW_CHUNK) {
+          const chunk = todo.slice(i, i + GW_CHUNK);
+          await setStatus(`그룹웨어(${key}) 메일 읽는 중… (${Math.min(i + chunk.length, todo.length)}/${todo.length})`);
+          const bodies = (await exec(tab.id, pageFetchBodies, [chunk]).catch(() => [])) || [];
+          for (const b of bodies) {
+            if (b.html === null) { failed++; continue; }   // 못 받은 건은 기억하지 않아서 다음 확인 때 다시 시도
+            if (!b.html) { skipped++; seen.add(b.id); continue; }
+            const r = await (await api(cfg, '/api/agent/mail', { method: 'POST', body: JSON.stringify({ html: b.html, account: key }) })).json();
+            seen.add(b.id);
+            if (r.ok) { if (r.duplicate) dup++; else added++; } else skipped++;
+          }
+          await updateAccount(key, (a) => { a.seen = [...seen].slice(-SEEN_CAP); });   // 긴 작업 중 꺼져도 이어서 하도록 중간 저장
         }
-        await updateAccount(key, (a) => { a.seen = [...seen].slice(-SEEN_CAP); });
-        if (failed && failed === bodies.length) res = { level: 'error', text: `그룹웨어(${key}) 메일 ${failed}건의 내용을 받지 못했어요. 그룹웨어 로그인이 풀렸거나 화면 구조가 바뀌었을 수 있어요. 다음 확인 때 다시 시도해요.` };
-        else res = { level: failed ? 'warn' : 'ok', text: `그룹웨어(${key}) 메일 ${added}건 새로 가져왔어요${dup ? `(이미 있는 ${dup}건)` : ''}${skipped ? `, 지원 메일이 아니어서 건너뜀 ${skipped}건` : ''}${failed ? `, 받지 못한 ${failed}건은 다음에 다시 시도` : ''}.` };
+        const rest = todoAll.length - todo.length;
+        if (failed && failed === todo.length) res = { level: 'error', text: `그룹웨어(${key}) 메일 ${failed}건의 내용을 받지 못했어요. 그룹웨어 로그인이 풀렸거나 화면 구조가 바뀌었을 수 있어요. 다음 확인 때 다시 시도해요.` };
+        else res = { level: failed ? 'warn' : 'ok', text: `그룹웨어(${key}) 알바몬 지원 메일 ${list.mails.length}통(${scope}) 중 ${added}건 새로 가져왔어요${dup ? `(이미 있는 ${dup}건)` : ''}${skipped ? `, 지원 메일이 아니어서 건너뜀 ${skipped}건` : ''}${failed ? `, 받지 못한 ${failed}건은 다음에 다시 시도` : ''}${rest ? `, 남은 ${rest}건은 다음 확인 때 이어서 가져와요` : ''}.` };
       }
     }
     await record(res);
@@ -454,7 +468,7 @@ async function run(force = false) {
   running = true;
   runningSince = Date.now();
   try {
-    const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry', 'gwMailUrl', 'gwCookieDomain']);
+    const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry', 'gwMailUrl', 'gwCookieDomain', 'gwLimit']);
     if (!cfg.agentToken) { await setStatus('연결 키가 없어요. 문자 관리 시스템의 수신함을 한 번 열면 자동으로 연결돼요.', 'error'); return; }
     cfg.serverUrl = (cfg.serverUrl || 'https://interview.bigbears.me').replace(/\/+$/, '');
     const parts = [];
@@ -473,11 +487,11 @@ async function run(force = false) {
 // ---- 수신함 화면과의 연결(bridge.js) ----
 // 화면에서 보낸 그룹웨어 계정·연결 키를 이 PC의 확장 저장소에만 넣는다. 비밀번호는 화면으로 돌려주지 않는다.
 async function bridgeState() {
-  const s = await chrome.storage.local.get(['agentToken', 'lastStatus', 'lastLevel']);
+  const s = await chrome.storage.local.get(['agentToken', 'lastStatus', 'lastLevel', 'gwLimit']);
   const accts = await getAccounts();
   const first = accts[0];
   return {
-    hasKey: !!s.agentToken,
+    hasKey: !!s.agentToken, gwLimit: Number(s.gwLimit) || 0,
     accounts: accts.map((x) => ({ id: x.id, on: x.on !== false, blocked: !!x.blocked, hasPw: !!x.pw, last: x.last || null })),
     gwId: first ? first.id : '', hasPw: first ? !!first.pw : false, blocked: accts.some((x) => x.blocked), gwOn: accts.some((x) => x.on !== false),
     lastStatus: s.lastStatus || '', lastLevel: s.lastLevel || 'info', version: chrome.runtime.getManifest().version

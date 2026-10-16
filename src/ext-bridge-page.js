@@ -11,7 +11,8 @@ export const EXT_BRIDGE_JS = String.raw`
   var last = document.getElementById('extlast');
   var err = document.getElementById('gwerr'), btn = form.querySelector('button[type=submit]'), showPw = document.getElementById('gwshow');
   var waiting = false, waitTimer = null, old = false, lastReply = Date.now();
-  var list = document.getElementById('gwlist'), pendingKey = '';
+  var list = document.getElementById('gwlist'), pendingKey = '', limitEl = document.getElementById('gwlimit');
+  if (limitEl) limitEl.addEventListener('change', function () { post({ type: 'save', gwLimit: parseInt(limitEl.value, 10) || 0 }); });
   function keyOf(id) { return String(id || '').split('@')[0].trim().toLowerCase(); }
   // 등록된 그룹웨어 계정 목록(아이디·상태·삭제). 비밀번호는 화면으로 오지 않는다.
   function renderList(a) {
@@ -67,6 +68,7 @@ export const EXT_BRIDGE_JS = String.raw`
     var n = (s.accounts || []).length;
     t.push(n ? ('그룹웨어 계정 ' + n + '개 등록됨 (' + s.accounts.map(function (x) { return x.id; }).join(', ') + ')') : (s.gwId ? ('그룹웨어 계정 저장됨 (' + s.gwId + ')') : '그룹웨어 계정 아직 없음'));
     renderList(s.accounts);
+    if (limitEl && typeof s.gwLimit === 'number' && document.activeElement !== limitEl) limitEl.value = String(s.gwLimit);
     if (s.blocked) t.push('⚠ 비밀번호 확인 필요');
     if (last) {
       last.hidden = !s.lastStatus;

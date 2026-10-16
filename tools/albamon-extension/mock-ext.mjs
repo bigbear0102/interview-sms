@@ -64,7 +64,7 @@ const sysLog = [];      // 시스템 서버가 받은 모든 요청(주소·머�
 const mailIn = [];      // /api/agent/mail 로 받아 해석한 결과
 const PAGE = `<!doctype html><meta charset=utf-8><title>수신함</title>
 <div id="extstate" class="notice">확인 중…</div>
-<ul id="gwlist"></ul><form id="gwform" data-nolock><input id="gwid"><input id="gwpw" type="password"><button type="submit">내 확장에 저장</button></form>
+<select id="gwlimit"><option value="0">전부</option><option value="30">30</option><option value="100">100</option></select><ul id="gwlist"></ul><form id="gwform" data-nolock><input id="gwid"><input id="gwpw" type="password"><button type="submit">내 확장에 저장</button></form>
 <div id="extlast" class="notice" hidden></div><div id="gwerr" hidden></div><div id="gwok" hidden>저장됨</div><script>${APP_JS}</script><script>${EXT_BRIDGE_JS}</script>`;
 const sys = http.createServer((req, res) => {
   if (req.url === '/applicants/inbox/agent-token.json' && req.method === 'POST') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ token: TOKEN })); }
@@ -107,8 +107,11 @@ const GW_ID = 'tester', GW_PW = 'Pw!9&zq*test';
 const GW2_ID = 'tester2', GW2_PW = 'Second!7&pw';
 const MBX = 'MBX-TEST-' + Math.random().toString(16).slice(2, 8);   // 사람마다 다른 메일함 번호
 const MBX2 = 'MBX-TWO-' + Math.random().toString(16).slice(2, 8);
-const USERS = { [GW_ID]: { pw: GW_PW, mb: MBX }, [GW2_ID]: { pw: GW2_PW, mb: MBX2 } };
-const gwLoginUsers = [];   // 로그인 화면에서 제출된 아이디 기록
+const GW4_ID = 'tester4', GW4_PW = 'Fourth!4&pw';
+const MBX4 = 'MBX-FOUR-' + Math.random().toString(16).slice(2, 8);
+const USERS = { [GW_ID]: { pw: GW_PW, mb: MBX }, [GW2_ID]: { pw: GW2_PW, mb: MBX2 }, [GW4_ID]: { pw: GW4_PW, mb: MBX4 } };
+const gwLoginUsers = [];
+const gwListCalls = [];   // 목록 API 호출 {쪽, 크기}   // 로그인 화면에서 제출된 아이디 기록
 const gwViews = [];   // 열어 본 메일 [{id, mb}]
 let gwLoginPosts = 0;  // 로그인 화면에서 제출된 횟수
 let gwFlagCalls = 0, gwWrong = 0;   // 로그인 확인 API 호출 수, 틀린 횟수
@@ -123,6 +126,9 @@ const mails = [
   { id: 'N1', owner: GW2_ID, from: '알바몬<mailmaster@albamon.com>', subject: '[알바몬] ㈜테스트 온라인지원자 사아자', body: gwBody('사아자', '700000011') },
   { id: 'N2', owner: GW2_ID, from: '알바몬<mailmaster@albamon.com>', subject: '[알바몬] ㈜테스트 온라인지원자 차카타', body: gwBody('차카타', '700000012') }
 ];
+// 네 번째 계정: 알바몬 지원 메일 25통(최신이 앞) + 다른 메일 3통 — 가져올 양 설정 시험용
+for (let i = 25; i >= 1; i--) mails.push({ id: 'P' + i, owner: GW4_ID, from: '알바몬<mailmaster@albamon.com>', subject: '[알바몬] 후보' + String(i).padStart(2, '0'), body: gwBody('후보' + String(i).padStart(2, '0'), String(800000000 + i)) });
+for (let i = 1; i <= 3; i++) mails.push({ id: 'Q' + i, owner: GW4_ID, from: '광고<ad@other.example>', subject: '광고 ' + i, body: '<p>광고</p>' });
 const whoIs = (req) => { const m = (req.headers.cookie || '').match(/gw=ok-([a-z0-9]+)/); return m ? m[1] : ''; };
 const mine = (u) => mails.filter((m) => (m.owner || GW_ID) === u);
 const gw = http.createServer((req, res) => {
@@ -159,6 +165,20 @@ const gw = http.createServer((req, res) => {
     return res.end('<meta charset=utf-8><title>로그인</title><form method="post" action="/login"><input id="cmmLogin_userId" name="userId"><input id="cmmLogin_pwd" name="pwd" type="password"><button type="submit" id="cmmLogin_login">로그인</button></form>');
   }
   if (u.pathname === '/main') { res.writeHead(200, H); return res.end('<meta charset=utf-8><h1>그룹웨어 메인</h1>'); }
+  if (u.pathname === '/mail/data/emlMail/selectMailList.do' && req.method === 'POST') {
+    let b = ''; req.on('data', (c) => (b += c));
+    req.on('end', () => {
+      const j = JSON.parse(b || '{}');
+      const me = whoIs(req);
+      let list = mine(me);
+      if (j.searchField === 'mailFrom') list = list.filter((m) => m.from.includes(j.keyword || ''));
+      const size = Number(j.pageSize) || 30, no = Number(j.pageNo) || 1;
+      gwListCalls.push({ no, size });
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ totalCount: list.length, pageNo: no, pageSize: size, mailList: list.slice((no - 1) * size, no * size).map((m) => ({ mailId: m.id, mailboxId: USERS[me] ? USERS[me].mb : '', dispMailFrom: m.from })) }));
+    });
+    return;
+  }
   if (u.pathname === '/mail/data/emlMail/selectMailView.do') {
     const id = u.searchParams.get('mailId'), mb = u.searchParams.get('mailboxId');
     gwViews.push({ id, mb });
@@ -292,7 +312,30 @@ await sw.evaluate(() => chrome.cookies.set({ url: 'http://127.0.0.1/', name: 'gw
 await sw.evaluate(() => recoverGwSwap());
 check((await cookieOf('gw')) === 'ok-tester', '읽는 도중 꺼졌다가 켜져도 내 그룹웨어 로그인이 복구됨');
 
-const leaked = sysLog.filter((l) => l.includes(GW2_PW) || l.includes(GW_PW) || l.includes(encodeURIComponent(GW_PW)) );
+
+// ---- 가져올 양(설정) ----
+await sw.evaluate((a) => chrome.storage.local.set({ gwAccounts: a, gwLastScan: 0, gwLimit: 10 }), [acc(GW4_ID, GW4_PW, { force: true })]);
+const mailPre4 = mailIn.length, viewPre4 = gwViews.filter((v) => v.id.startsWith('P')).length;
+s = await runAndWait();
+console.log('  상태(최근 10통):', s);
+const got4 = mailIn.slice(mailPre4);
+check(got4.length === 10 && got4.every((x) => x.account === 'tester4'), '가져올 양을 "최근 10통"으로 정하면 10통만 가져옴');
+check(got4.some((x) => x.name === '후보25') && !got4.some((x) => x.name === '후보15'), '최신 메일부터 가져옴(최근 10통 = 후보25~후보16)');
+check(!gwViews.some((v) => v.id.startsWith('Q')), '알바몬이 보낸 메일만 목록에서 골라 읽음(광고 메일은 열지 않음)');
+// 양을 "전부"로 바꾸면 남은 메일을 이어서 가져오고, 이미 가져온 10통은 다시 열지 않는다
+await sw.evaluate(() => chrome.storage.local.set({ gwLimit: 0, gwLastScan: 0 }));
+s = await runAndWait();
+console.log('  상태(전부):', s);
+check(mailIn.length - mailPre4 === 25, '"전부"로 바꾸면 나머지 15통까지 모두 가져옴(총 25통)');
+check(gwViews.filter((v) => v.id.startsWith('P')).length - viewPre4 === 25, '이미 가져온 10통은 다시 열지 않음(본문 요청 25번)');
+const views4 = gwViews.length;
+await sw.evaluate(() => chrome.storage.local.set({ gwLastScan: 0 }));
+s = await runAndWait();
+check(/새 메일은 없어요/.test(s) && gwViews.length === views4, '다시 확인해도 중복은 가져오지 않음(새 메일 없음)');
+check(gwListCalls.some((c) => c.no === 1 && c.size === 100), '목록은 100통씩 쪽을 넘겨 받음');
+await sw.evaluate(() => chrome.storage.local.set({ gwLimit: 0 }));
+
+const leaked = sysLog.filter((l) => l.includes(GW4_PW) || l.includes(GW2_PW) || l.includes(GW_PW) || l.includes(encodeURIComponent(GW_PW)) );
 check(leaked.length === 0, '그룹웨어 비밀번호가 시스템으로 가는 요청에 전혀 없음(' + sysLog.length + '건 검사)');
 
 
@@ -356,6 +399,14 @@ await sleep(3500);   // 저장 뒤 자동 실행이 끝날 시간
 check(gwLoginPosts > postsPre, '새 계정을 저장하면 이미 로그인된 세션이 있어도 저장한 계정으로 다시 로그인함(엉뚱한 메일함 방지)');
 const leaked2 = sysLog.slice(sentBefore).filter((l) => l.includes(GW_PW) || l.includes(encodeURIComponent(GW_PW)));
 check(leaked2.length === 0, '화면에서 저장해도 비밀번호가 시스템 서버로 가는 요청에 없음(' + (sysLog.length - sentBefore) + '건 검사)');
+// 가져올 양 선택: 화면에서 고르면 확장에 저장되고, 다시 열면 그 값이 보인다
+await web.select('#gwlimit', '100');
+await sleep(800);
+check((await sw.evaluate(() => chrome.storage.local.get('gwLimit'))).gwLimit === 100, '화면에서 "가져올 양"을 고르면 확장에 저장됨');
+await sleep(3500);
+check((await web.$eval('#gwlimit', (e) => e.value)) === '100', '확장이 알려 주는 값으로 선택칸이 유지됨');
+await web.select('#gwlimit', '0');
+await sleep(500);
 // 두 번째 계정을 화면에서 추가하고, 목록에 보이고, 삭제할 수 있는지
 await web.type('#gwid', GW2_ID);
 await web.type('#gwpw', GW2_PW);
