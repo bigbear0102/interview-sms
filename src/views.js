@@ -140,6 +140,16 @@ a.stat:hover{background:var(--surface-2);text-decoration:none}
 .btn.danger,button.danger{background:transparent;color:var(--red);border-color:var(--red)}
 .btn.danger:hover{background:var(--red-bg)}
 .btn.small,button.small{min-height:36px;padding:7px 14px;font-size:14px}
+@media (max-width:640px){.btn.small,button.small{min-height:44px;padding:9px 16px}}
+.mrow{position:relative}
+.rbtn{position:absolute;right:10px;bottom:8px;display:inline-grid;place-items:center;width:40px;height:40px;border-radius:999px;color:var(--blue)}
+.mrow .mtext{padding-right:44px}
+.rbtn:hover{background:var(--blue-bg)}
+.tgl-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.tgl{position:relative;flex:none;width:48px;height:28px;min-height:0;border-radius:999px;border:0;padding:0;background:var(--line);cursor:pointer}
+.tgl::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .15s}
+.tgl.on{background:var(--green)}
+.tgl.on::after{left:23px}
 .btn.big{min-height:52px;padding:14px 28px;font-size:17px}
 .btn.go{background:var(--green);width:100%;min-height:56px;font-size:18px;border-radius:var(--r-l)}
 .btn.go:hover{filter:brightness(1.08)}
@@ -260,6 +270,9 @@ details.pop summary{list-style:none}details.pop summary::-webkit-details-marker{
 
 /* ---------- 로그인 ---------- */
 .auth{min-height:100vh;display:grid;place-items:center;padding:24px}
+.auth-wrap{width:100%;max-width:400px}
+.auth-brand{font-weight:700;font-size:15px;color:var(--muted);margin:0 0 18px;letter-spacing:-.01em}
+@media (max-width:640px){.auth{place-items:start center;padding-top:36px}}
 .auth-card{width:100%;max-width:400px}
 .auth-card .logo{width:48px;height:48px;border-radius:14px;background:var(--blue);display:grid;place-items:center;color:#fff;margin-bottom:20px}
 .auth-card h1{font-size:28px;margin-bottom:6px}
@@ -320,7 +333,7 @@ export const NAV = [
 // nav: 현재 위치(home|send|inbox|interview|settings|account)
 export function page(user, title, body, nav = '', badges = {}) {
   const head = `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - 문자 관리 시스템</title>${HEAD_ASSETS}<style>${CSS}</style>`;
-  if (!user) return `<!doctype html><html lang="ko"><head>${head}</head><body><main id="main" class="auth">${body}</main></body></html>`;
+  if (!user) return `<!doctype html><html lang="ko"><head>${head}</head><body><main id="main" class="auth"><div class="auth-wrap"><p class="auth-brand">문자 관리 시스템</p>${body}</div></main></body></html>`;
 
   const items = NAV.filter((n) => !n.superOnly || user.role === 'super');
   // 일반 관리자는 설정 대신 "내 계정" 탭
@@ -346,6 +359,7 @@ export function page(user, title, body, nav = '', badges = {}) {
 </div>
 <main id="main" class="page">${body}</main>
 <nav class="tabbar" aria-label="하단 메뉴">${tabItems.map((n) => link(n, true)).join('')}</nav>
-<script>document.addEventListener('submit',function(e){var m=e.target.getAttribute&&e.target.getAttribute('data-confirm');if(m&&!confirm(m))e.preventDefault();});</script>
+<script>document.addEventListener('submit',function(e){var m=e.target.getAttribute&&e.target.getAttribute('data-confirm');if(m&&!confirm(m))e.preventDefault();});
+try{var u=new URL(location.href),ch=false;['ok','err','n','k'].forEach(function(k){if(u.searchParams.has(k)){u.searchParams.delete(k);ch=true;}});if(ch)history.replaceState(null,'',u.pathname+u.search+u.hash);}catch(e){}</script>
 </body></html>`;
 }

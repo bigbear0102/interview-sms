@@ -6,10 +6,11 @@ export function outcomeSection(camp, oc = {}) {
   const held = (oc.showed || 0) + (oc.noshow || 0);
   const rate = held ? Math.round(((oc.showed || 0) / held) * 100) + '%' : '-';
   const on = !!camp.auto_remind;
-  const toggle = camp.purged_at ? '' : `<form method="post" action="/campaigns/${camp.id}/autoremind" class="inline" style="margin-top:8px">
+  const toggle = camp.purged_at ? '' : `<form method="post" action="/campaigns/${camp.id}/autoremind" class="tgl-row">
       <input type="hidden" name="on" value="${on ? 0 : 1}">
-      <span class="muted">${icon('clock', 14)} 자동 리마인드(면접 당일 오전 8시, 참석자에게 한 번): <b>${on ? '켜짐' : '꺼짐'}</b>${on && oc.reminded ? ` · ${oc.reminded}명에게 보냄` : ''}</span>
-      <button class="secondary small">${on ? '끄기' : '켜기'}</button></form>`;
+      <button class="tgl${on ? ' on' : ''}" role="switch" aria-checked="${on ? 'true' : 'false'}" aria-label="자동 리마인드 ${on ? '끄기' : '켜기'}"></button>
+      <span><b>자동 리마인드</b> <span class="muted">면접 당일 오전 8시, 참석자에게 한 번 · <b>${on ? '켜짐' : '꺼짐'}</b>${on && oc.reminded ? ` · ${oc.reminded}명에게 보냄` : ''}</span></span>
+    </form>`;
   const any = (oc.showed || 0) + (oc.noshow || 0) + (oc.passed || 0) + (oc.hired || 0) + (oc.rejected || 0);
   if (!any) {
     return `<section class="section"><div class="shead"><h2>면접 결과</h2></div>

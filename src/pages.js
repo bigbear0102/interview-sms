@@ -532,13 +532,12 @@ export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice =
           ${r.dir === 'in' ? '<span class="badge info">받음</span>' : '<span class="badge">보냄</span>'}
           ${messageBadge(r.dir, r.result, r.delivery, r.at)}
           <span class="when">${fmtWhen(r.at)}</span>
+          ${r.dir === 'out' && r.result === 'scheduled' ? '' : `<a class="rbtn" href="/send?to=${encodeURIComponent(r.phone)}&gw=${r.gateway_id}" aria-label="${esc(fmtPhone(r.phone))}에게 답장" title="답장">${icon('reply', 18)}</a>`}
         </div>
         <div class="mtext">${esc(r.text)}</div>
         ${r.dir === 'out' && r.error && ['failed', 'scheduled', 'sending'].includes(r.result) || (r.dir === 'out' && r.delivery === 'failed') ? `<div class="muted" style="font-size:13px;margin-top:4px;color:var(--red-t)">${esc(r.error || '전달에 실패했어요')}</div>` : ''}
         ${r.author ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(r.author)} 님이 보냄</div>` : ''}
-        <div class="mact">${r.dir === 'out' && r.result === 'scheduled'
-          ? `<form method="post" action="/messages/cancel" class="inline" data-confirm="이 예약을 취소할까요?"><input type="hidden" name="id" value="${r.id}"><button class="btn danger small">예약 취소</button></form>`
-          : `<a class="btn tertiary small" href="/send?to=${encodeURIComponent(r.phone)}&gw=${r.gateway_id}">${icon('reply', 16)}답장</a>`}</div>
+        ${r.dir === 'out' && r.result === 'scheduled' ? `<div class="mact">${`<form method="post" action="/messages/cancel" class="inline" data-confirm="이 예약을 취소할까요?"><input type="hidden" name="id" value="${r.id}"><button class="btn danger small">예약 취소</button></form>`}</div>` : ''}
       </li>`).join('')}</ul>` : emptyState({ title: empty })}
     </div>`;
 }

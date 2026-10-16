@@ -533,6 +533,9 @@ const SHEET_CSS = `<style>
 .sheet td:nth-child(2),.sheet td:nth-child(3),.sheet td:nth-child(7){white-space:nowrap}
 @media (max-width:640px){.sheet td:nth-child(2),.sheet td:nth-child(3),.sheet td:nth-child(7){white-space:normal}}
 .sheet td.sel,.sheet th.sel{width:34px;padding-right:0}
+@media (max-width:640px){.sheet tr{position:relative}.sheet td.sel{position:absolute;right:12px;top:12px;width:auto;padding:0;display:block}.sheet td.sel::before{content:none!important}.sheet td.sel input{width:26px;height:26px}.sheet td:nth-child(2){padding-right:44px}.sheet td.acts{white-space:normal;flex-wrap:wrap;row-gap:4px}}
+.addbox>form{margin:12px 0 0}
+.addbox>summary{cursor:pointer}
 .sheet td.sel input,.sheet th.sel input{width:18px;height:18px;min-height:0}
 .bulkbar{display:none;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--blue-bg,#e8f1fb)}
 .bulkbar.on{display:flex}
@@ -604,6 +607,8 @@ const SHEET_JS = `<script>
     });
     refresh();
   }
+  var ab = document.getElementById('addbox');
+  if (ab && window.matchMedia('(min-width: 761px)').matches) ab.open = true;
   var f = document.getElementById('csvfile');
   if (f) f.addEventListener('change', async function (e) {
     var file = e.target.files[0]; if (!file) return;
@@ -765,6 +770,7 @@ export async function renderApplicantSheet(db, opts = {}) {
       <input name="lookup" type="tel" inputmode="tel" value="${esc(lookup)}" placeholder="번호로 바로 확인 (010-1234-5678)" aria-label="번호로 바로 확인">
       <button class="secondary" style="flex:none">확인</button></form>
     ${lookupHtml}
+    <details class="card addbox" id="addbox" style="margin-bottom:12px"><summary><b>+ 지원자 추가</b> <span class="muted">이름 · 전화번호 · 지원한 곳 · 직무</span></summary>
     <form id="addform" method="post" action="/applicants/new" class="addbar">${hid}
       <input name="name" placeholder="이름" required autocomplete="off" aria-label="이름">
       <input name="phone" type="tel" inputmode="tel" placeholder="전화번호" required autocomplete="off" aria-label="전화번호">
@@ -772,6 +778,7 @@ export async function renderApplicantSheet(db, opts = {}) {
       <input name="job" list="dl-job" placeholder="직무" autocomplete="off" aria-label="직무">
       <button class="btn">${icon('plus', 18)}추가</button>
     </form>
+    </details>
     <details class="card" style="margin-bottom:16px" id="import"${bulk ? ' open' : ''}>
       <summary><b>CSV·엑셀로 한꺼번에 등록</b> <span class="muted">파일을 올리거나 엑셀에서 복사해 붙여넣어요</span></summary>
       <form method="post" action="/applicants/bulk" class="stack" style="margin-top:12px">${hid}
@@ -803,17 +810,6 @@ export async function renderApplicantSheet(db, opts = {}) {
         <p style="margin-top:8px"><a href="/applicants">필터 초기화</a></p>
       </details>
     </form>
-    ${link ? `<details class="card" style="margin-top:16px"><summary><b>문자 시스템 연결</b>
-      <span class="muted">${link.enabled ? '켜짐' : '꺼짐 (기본)'} — 면접 안내와 지원자 관리를 이어 줘요. 발송은 막지 않아요.</span></summary>
-      <form method="post" action="/applicants/settings" class="stack" style="margin-top:12px">${hid}
-        <label class="check"><input type="checkbox" name="enabled" value="1"${link.enabled ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span><b>연결 사용</b> <small>끄면 아래 항목은 모두 동작하지 않아요</small></span></label>
-        <label class="check"><input type="checkbox" name="register" value="1"${link.raw.register ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>면접 안내를 만들 때 명단을 지원자로 <b>자동 등록</b> <small>(중복은 올리지 않아요, 지원한 곳에는 사업장을 넣어요)</small></span></label>
-        <label class="check"><input type="checkbox" name="history" value="1"${link.raw.history ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>지원자 상세·기록에 <b>면접 안내 이력</b> 보이기</span></label>
-        <label class="check"><input type="checkbox" name="suggest" value="1"${link.raw.suggest ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>노쇼 기록이 많은 사람을 <b>블랙리스트 후보로 제안</b> <small>(등록은 사람이 승인해요)</small></span></label>
-        <label style="max-width:220px">제안 기준 (노쇼 횟수)<input type="number" name="threshold" min="1" max="20" value="${link.threshold}"${isSuper ? '' : ' disabled'}></label>
-        <label class="check"><input type="checkbox" name="flag" value="1"${link.raw.flag ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>면접 안내 명단을 올릴 때 블랙리스트 대상이 있으면 <b>참고용으로 표시</b></span></label>
-        ${isSuper ? '<div><button class="btn secondary">설정 저장</button></div>' : '<p class="muted">설정은 관리자만 바꿀 수 있어요.</p>'}
-      </form></details>` : ''}
     <div class="tabs" style="margin-top:12px">${tab('', '전체', c.total)}${tab('bl', '블랙리스트', c.bl)}${tab('ok', '일반', c.total - c.bl)}</div>
     <div class="card" style="padding:0">
       <form id="bulkform" method="post" action="/applicants/bulk-action" class="bulkbar">${hid}
@@ -829,6 +825,17 @@ export async function renderApplicantSheet(db, opts = {}) {
       </form>
       ${table}</div>
     ${pager}
+    ${link ? `<details class="card" style="margin-top:24px"><summary><b>문자 시스템 연결</b>
+      <span class="muted">${link.enabled ? '켜짐' : '꺼짐 (기본)'} — 면접 안내와 지원자 관리를 이어 줘요. 발송은 막지 않아요.</span></summary>
+      <form method="post" action="/applicants/settings" class="stack" style="margin-top:12px">${hid}
+        <label class="check"><input type="checkbox" name="enabled" value="1"${link.enabled ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span><b>연결 사용</b> <small>끄면 아래 항목은 모두 동작하지 않아요</small></span></label>
+        <label class="check"><input type="checkbox" name="register" value="1"${link.raw.register ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>면접 안내를 만들 때 명단을 지원자로 <b>자동 등록</b> <small>(중복은 올리지 않아요, 지원한 곳에는 사업장을 넣어요)</small></span></label>
+        <label class="check"><input type="checkbox" name="history" value="1"${link.raw.history ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>지원자 상세·기록에 <b>면접 안내 이력</b> 보이기</span></label>
+        <label class="check"><input type="checkbox" name="suggest" value="1"${link.raw.suggest ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>노쇼 기록이 많은 사람을 <b>블랙리스트 후보로 제안</b> <small>(등록은 사람이 승인해요)</small></span></label>
+        <label style="max-width:220px">제안 기준 (노쇼 횟수)<input type="number" name="threshold" min="1" max="20" value="${link.threshold}"${isSuper ? '' : ' disabled'}></label>
+        <label class="check"><input type="checkbox" name="flag" value="1"${link.raw.flag ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>면접 안내 명단을 올릴 때 블랙리스트 대상이 있으면 <b>참고용으로 표시</b></span></label>
+        ${isSuper ? '<div><button class="btn secondary">설정 저장</button></div>' : '<p class="muted">설정은 관리자만 바꿀 수 있어요.</p>'}
+      </form></details>` : ''}
     <datalist id="dl-applied">${appliedOpts.map((o) => `<option value="${esc(o.v)}">`).join('')}</datalist>
     <datalist id="dl-job">${jobOpts.map((o) => `<option value="${esc(o.v)}">`).join('')}</datalist>
     ${editForms}${SHEET_JS}`;
