@@ -67,9 +67,9 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
       </div></details>`;
   }
 
-  const tokenSet = isSuper ? await hasAgentToken(db) : false;
+  const tokenSet = await hasAgentToken(db);
   const autoOn = isSuper ? await getAutoRegister(db) : false;
-  const agentCard = isSuper ? `<details class="card" style="margin-bottom:16px"${agentToken ? ' open' : ''}><summary><b>연락처 자동 가져오기 에이전트</b> <span class="muted">${tokenSet ? '연결 키 있음' : '연결 키 없음'} · 담당자 PC에서 알바몬에 로그인해 연락처를 읽어 와요</span></summary>
+  const agentCard = `<details class="card" style="margin-bottom:16px"${agentToken ? ' open' : ''}><summary><b>연락처 자동 가져오기 에이전트</b> <span class="muted">${tokenSet ? '연결 키 있음' : '연결 키 없음'} · 담당자 PC에서 알바몬에 로그인해 연락처를 읽어 와요</span></summary>
     <div style="margin-top:12px" class="stack">
       <p class="muted" style="font-size:14px">알바몬 이력서의 연락처는 <b>"클릭해야 보여요"</b>. 그래서 담당자 PC의 크롬(이미 알바몬에 로그인된 상태)이 연락처 보기를 눌러 읽어 와요.
         <b>알바몬 아이디·비밀번호는 이 시스템이 받지도 저장하지도 않아요.</b> 여기서 <b>"연락처 가져오기"를 누른 건만</b> 처리해요.</p>
@@ -84,11 +84,12 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
       </ol>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <a class="btn small" href="/applicants/inbox/extension.zip" download>확장 프로그램 내려받기 (v${esc(EXTENSION_VERSION)})</a>
-        <form method="post" action="/applicants/inbox/agent-token" class="inline" data-confirm="${tokenSet ? '연결 키를 새로 만들까요? 이전 키로 실행 중인 에이전트는 멈춰요.' : '에이전트 연결 키를 만들까요?'}"><button class="btn secondary small">${tokenSet ? '연결 키 다시 만들기' : '연결 키 만들기'}</button></form>
+        ${isSuper ? `<form method="post" action="/applicants/inbox/agent-token" class="inline" data-confirm="${tokenSet ? '연결 키를 새로 만들까요? 이전 키로 실행 중인 에이전트는 멈춰요.' : '에이전트 연결 키를 만들까요?'}"><button class="btn secondary small">${tokenSet ? '연결 키 다시 만들기' : '연결 키 만들기'}</button></form>
         <form method="post" action="/applicants/inbox/auto" class="inline"><input type="hidden" name="on" value="${autoOn ? 0 : 1}">
-          <button class="btn secondary small">연락처를 가져오면 바로 지원자로 등록: <b>${autoOn ? '켜짐 (끄기)' : '꺼짐 (켜기)'}</b></button></form>
+          <button class="btn secondary small">연락처를 가져오면 바로 지원자로 등록: <b>${autoOn ? '켜짐 (끄기)' : '꺼짐 (켜기)'}</b></button></form>` : ''}
       </div>
-    </div></details>` : '';
+      ${isSuper ? '' : '<p class="muted" style="font-size:14px">연결 키는 관리자에게 받으세요. (키 만들기·자동 등록 설정은 관리자만 할 수 있어요)</p>'}
+    </div></details>`;
 
   const tool = `<details class="card" style="margin-bottom:16px"><summary><b>이력서에서 연락처 가져오기 도구</b> <span class="muted">처음 한 번만 설치해요</span></summary>
     <div style="margin-top:12px" class="stack">
