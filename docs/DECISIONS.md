@@ -127,3 +127,8 @@
 - `peopleTabs`는 `src/workspace.js`로 이동(개수 뱃지: 새 지원 대기, 공고 정리 필요).
 
 - 원가중심점 제안 확대(2026-10): 공고 정리에서 쓰던 제안(공고 제목 대괄호 안 고객사 이름 ↔ 원가중심점 목록 비교)을 **새 지원 카드**와 **지원자 상세**에도 넣었다. 새 지원 카드에서는 제안 버튼 한 번으로 같은 공고 대기 건 전체에 적용(분류 저장과 같은 경로, 기억 포함), 상세에서는 그 공고로 지원한 모든 지원 건에 적용하고 상세로 돌아온다(POST /applicants/postings/save의 ack은 /applicants/<번호>만 허용). 제안은 확정이 아니라 사람이 누르는 것이다. 제안 함수는 workspace.js(racketName·suggestCostCenters·suggestForTitles)로 옮겼다.
+
+## 그룹웨어 가져올 양 설정 (2026-10, 확장 v1.4.0)
+- 메일 목록을 화면(DOM)이 아니라 그룹웨어 **메일 목록 API**(`POST /mail/data/emlMail/selectMailList.do`, `boxCode=recv`, `searchField=mailFrom`, `keyword=mailmaster@albamon.com`, `pageNo`/`pageSize=100`)로 쪽마다 받는다. 첫 쪽(30통)만 읽던 한계가 없어지고, 보낸 사람 필터를 서버가 해 준다. 실제 시험 계정에서 알바몬 메일 92통을 12.5초에 전부 가져왔다.
+- 가져올 양(`gwLimit`, 0=전부, 최대 5000통)은 확장 저장소에 두고 연결 설정 화면에서 고른다. 최신 순으로 그 수까지만 목록에 올린다. 읽은 메일 id는 계정별 `seen`(최대 6000개)에 기억해 다시 열지 않는다(중복 제외). 한 번에 최대 1000통, 50통씩 받아서 시스템에 넣고 중간 저장한다(도중에 꺼져도 이어서). 양을 늘리면 오래된 것까지 이어서 가져온다.
+- 목록 API 응답 구조가 바뀌면 `pageListAlbamon`을 고쳐야 한다(`mock-ext.mjs`가 쪽 넘기기·보낸 사람 필터·양 설정을 시험한다).
