@@ -176,11 +176,13 @@ export async function saveParsed(db, p, now = Date.now()) {
   const dup = await first(db, `SELECT id FROM applicant_inbox WHERE source=? AND apply_no=?`, p.source, p.applyNo);
   if (dup) return { ok: true, duplicate: true, id: dup.id };
   const clip = (s, n) => String(s || '').slice(0, n);
+  // 같은 공고에 이미 정해 둔 원가중심점이 있으면 자동으로 붙인다
+  const rule = p.recruitNo ? await first(db, `SELECT cost_center FROM inbox_cost_rules WHERE recruit_no=?`, clip(p.recruitNo, 30)) : null;
   const r = await run(db,
-    `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at, cost_center)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     p.source, p.applyNo, clip(p.recruitNo, 30), clip(p.company, 100), clip(p.jobTitle, 200), clip(p.name, 50), clip(p.gender, 4),
-    p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), clip(p.resumeUrl, 500), now);
+    p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), clip(p.resumeUrl, 500), now, rule ? rule.cost_center : '');
   return { ok: true, id: Number(r.meta.last_row_id) };
 }
 

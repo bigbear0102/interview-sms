@@ -34,7 +34,7 @@ export async function handleAgentApi(request, env, url, deps) {
     if (r.ok && (await getAutoRegister(db))) {
       const item = await first(db, `SELECT * FROM applicant_inbox WHERE id=?`, id);
       if (item && item.status === 'pending') {
-        const s = await deps.saveApplicant(db, { name: item.name, phone: r.phone, applied_to: item.company, job: item.job_title }, null, 'mail');
+        const s = await deps.saveApplicant(db, { name: item.name, phone: r.phone, applied_to: item.cost_center || item.company, job: item.job_title }, null, 'mail');
         if (s.ok) {
           const now = Date.now();
           await run(db, `UPDATE applicant_inbox SET status='registered', applicant_id=?, handled_at=? WHERE id=?`, s.id, now, id);

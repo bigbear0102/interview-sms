@@ -255,3 +255,32 @@ test('대기 전체 요청, 연결 키는 관리자 화면에서 한 번만 보�
   assert.ok(!/ag_[0-9a-f]{48}/.test(again), '다시 열면 키는 보이지 않음');
   assert.match(again, /연결 키 있음/);
 });
+
+test('원가중심점: 같은 공고에 한 번에 적용·기억, 새 메일에 자동, 등록 시 지원한 곳으로 저장', async () => {
+  const { db, call, post } = await setup();
+  await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('홍길동(여, 32세)', '900000011'))), Date.now());
+  await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('박민수(남, 30세)', '900000012'))), Date.now());
+  const id1 = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='홍길동'`).first()).id;
+  // 화면에 입력칸이 보인다
+  assert.match(await (await call('/applicants/inbox')).text(), /name="cost_center" list="cc-list"/);
+  // 같은 공고 모두 적용
+  let r = await post(`/applicants/inbox/${id1}/cost`, { cost_center: '아마노코리아(현장HR)', apply_all: '1' });
+  assert.equal(r.headers.get('location'), '/applicants/inbox?ok=cost');
+  const rows = (await db.prepare(`SELECT name, cost_center FROM applicant_inbox ORDER BY id`).all()).results;
+  assert.deepEqual(rows.map((x) => x.cost_center), ['아마노코리아(현장HR)', '아마노코리아(현장HR)']);
+  // 이후 같은 공고의 새 메일에도 자동으로 붙는다
+  await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('최수아(여, 25세)', '900000013'))), Date.now());
+  assert.equal((await db.prepare(`SELECT cost_center c FROM applicant_inbox WHERE name='최수아'`).first()).c, '아마노코리아(현장HR)');
+  // 이 사람만 바꾸기(기억은 그대로)
+  const id2 = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='박민수'`).first()).id;
+  await post(`/applicants/inbox/${id2}/cost`, { cost_center: '아마노코리아(파견)' });
+  assert.equal((await db.prepare(`SELECT cost_center c FROM applicant_inbox WHERE id=?`).bind(id1).first()).c, '아마노코리아(현장HR)');
+  assert.equal((await db.prepare(`SELECT cost_center c FROM applicant_inbox WHERE id=?`).bind(id2).first()).c, '아마노코리아(파견)');
+  // 등록하면 지원한 곳에 원가중심점이 들어간다(없으면 근무회사명)
+  await post(`/applicants/inbox/${id1}/register`, { name: '홍길동', phone: '010-1234-5678' });
+  const app = await db.prepare(`SELECT applied_to FROM applicant_applications`).first();
+  assert.equal(app.applied_to, '아마노코리아(현장HR)');
+  // 비우고 모두 적용하면 기억이 지워진다
+  await post(`/applicants/inbox/${id2}/cost`, { cost_center: '', apply_all: '1' });
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM inbox_cost_rules`).first()).n, 0);
+});

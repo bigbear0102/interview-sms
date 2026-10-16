@@ -1,5 +1,5 @@
 // 메일 수신함: 알바몬 지원 알림 메일이 모이는 곳. 담당자가 이력서를 열어 연락처를 확인해 지원자로 등록한다.
-import { first, run } from './d1.js';
+import { first, run, all } from './d1.js';
 import { makeZip } from './zip.js';
 import { EXTENSION_FILES, EXTENSION_VERSION } from './extension-bundle.js';
 import { esc, icon, fmtTime } from './views.js';
@@ -41,9 +41,11 @@ const STATUS_BADGE = {
 export async function renderInbox(db, env, { status = 'pending', isSuper = false, flash = '', err = '', origin = '', agentToken = '', fetched = 0 } = {}) {
   const pending = await pendingInboxCount(db);
   const rows = await listInbox(db, status === 'done' ? 'done' : 'pending');
+  const ccRows = await all(db, `SELECT v FROM (SELECT cost_center v FROM inbox_cost_rules UNION SELECT cost_center v FROM applicant_inbox UNION SELECT applied_to v FROM applicant_applications) WHERE v != '' ORDER BY v LIMIT 300`);
+  const ccList = `<datalist id="cc-list">${ccRows.map((x) => `<option value="${esc(x.v)}">`).join('')}</datalist>`;
   const doneCount = (await first(db, `SELECT COUNT(*) n FROM applicant_inbox WHERE status != 'pending'`)).n;
   const notices = [];
-  const FLASH = { fetch: '연락처 가져오기를 요청했어요. 에이전트가 켜져 있으면 곧 채워져요.', fetchall: `대기 중인 ${Number(fetched) || 0}건의 연락처 가져오기를 요청했어요.`, auto: '자동 등록 설정을 저장했어요.', registered: '지원자로 등록했어요.', ignored: '무시로 처리했어요.', restored: '다시 대기로 돌렸어요.', token: '수신 주소를 새로 만들었어요. 메일 전달 설정도 새 주소로 바꿔 주세요.' };
+  const FLASH = { fetch: '연락처 가져오기를 요청했어요. 에이전트가 켜져 있으면 곧 채워져요.', fetchall: `대기 중인 ${Number(fetched) || 0}건의 연락처 가져오기를 요청했어요.`, auto: '자동 등록 설정을 저장했어요.', registered: '지원자로 등록했어요.', cost: '원가중심점을 저장했어요.', ignored: '무시로 처리했어요.', restored: '다시 대기로 돌렸어요.', token: '수신 주소를 새로 만들었어요. 메일 전달 설정도 새 주소로 바꿔 주세요.' };
   const ERR = { invalid: '이름과 휴대폰 번호를 확인해 주세요. (예: 010-1234-5678)', gone: '이미 처리되었거나 찾을 수 없는 건이에요.' };
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
   if (ERR[err]) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div>${esc(ERR[err])}</div></div>`);
@@ -107,10 +109,16 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
     return `${note}<form method="post" action="/applicants/inbox/${r.id}/fetch" class="inline"><button class="small secondary">${r.fetch_state === 'failed' ? '다시 요청' : '연락처 가져오기'}</button></form>`;
   };
 
-  const table = rows.length ? tableWrap(`<table class="cards sheet"><thead><tr><th>지원자</th><th>공고</th><th>정보</th><th>받은 시각</th><th>처리</th></tr></thead><tbody>
+  const table = rows.length ? tableWrap(`<table class="cards sheet"><thead><tr><th>지원자</th><th>공고</th><th>원가중심점</th><th>정보</th><th>받은 시각</th><th>처리</th></tr></thead><tbody>
     ${rows.map((r) => `<tr>
       <td><b>${esc(r.name)}</b>${r.gender || r.age ? ` <small class="muted">${esc([r.gender, r.age ? r.age + '세' : ''].filter(Boolean).join(', '))}</small>` : ''}</td>
       <td data-label="공고">${esc(r.company || '-')}<br><small class="muted">${esc(r.job_title)}</small></td>
+      <td data-label="원가중심점">${r.status === 'pending'
+    ? `<form method="post" action="/applicants/inbox/${r.id}/cost" style="display:grid;gap:6px;min-width:200px">
+          <input name="cost_center" list="cc-list" value="${esc(r.cost_center)}" placeholder="예: 아마노코리아(현장HR)" maxlength="80" autocomplete="off" aria-label="${esc(r.name)} 원가중심점">
+          <label style="font-size:13px;display:flex;gap:6px;align-items:center"><input type="checkbox" name="apply_all" value="1" checked> 같은 공고 모두 적용·기억</label>
+          <button class="small secondary">저장</button></form>`
+    : esc(r.cost_center || '-')}</td>
       <td data-label="정보"><small>${esc([r.address, r.education, r.career].filter(Boolean).join(' · ') || '-')}</small></td>
       <td data-label="받은 시각" class="nowrap">${esc(fmtTime(r.received_at))}</td>
       <td data-label="처리" class="acts">${r.status === 'pending'
@@ -136,7 +144,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   return `${pageHeader({ title: '지원자 관리', desc: '알바몬 지원 알림 메일을 모아서, 이력서를 확인하고 지원자로 등록해요.' })}
     ${peopleTabs('inbox', pending)}
     ${notices.join('')}
-    ${addressCard}${agentCard}${tool}
+    ${ccList}${addressCard}${agentCard}${tool}
     <div class="tabs">${filterTab('pending', '대기', pending)}${filterTab('done', '처리됨', doneCount)}</div>
     ${status === 'pending' && pending ? `<form method="post" action="/applicants/inbox/fetch-all" class="inline" style="margin-bottom:12px" data-confirm="대기 중인 ${pending}건의 연락처를 한꺼번에 가져오도록 요청할까요? 알바몬 이용권이 차감될 수 있어요."><button class="btn secondary small">대기 ${pending}건 모두 연락처 가져오기 요청</button></form>` : ''}
     <div class="card" style="padding:0">${table}</div>
@@ -270,7 +278,7 @@ export async function handleInbox(c, deps) {
     return page('메일 수신함', await renderInbox(db, env, { isSuper: true, origin: new URL(request.url).origin, agentToken: token }));
   }
 
-  const m = path.match(/^\/applicants\/inbox\/(\d+)\/(register|ignore|restore|fetch)$/);
+  const m = path.match(/^\/applicants\/inbox\/(\d+)\/(register|ignore|restore|fetch|cost)$/);
   if (!m || method !== 'POST') return null;
   const id = Number(m[1]);
   const action = m[2];
@@ -284,12 +292,24 @@ export async function handleInbox(c, deps) {
   const f = await readForm(request);
   const now = Date.now();
 
+  if (action === 'cost') {
+    const cc = String(f.cost_center || '').trim().slice(0, 80);
+    if (f.apply_all === '1' && item.recruit_no) {
+      if (cc) await run(db, `INSERT INTO inbox_cost_rules (recruit_no, cost_center, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(recruit_no) DO UPDATE SET cost_center=excluded.cost_center, updated_by=excluded.updated_by, updated_at=excluded.updated_at`, item.recruit_no, cc, user.id, now);
+      else await run(db, `DELETE FROM inbox_cost_rules WHERE recruit_no=?`, item.recruit_no);
+      await run(db, `UPDATE applicant_inbox SET cost_center=? WHERE recruit_no=? AND status='pending'`, cc, item.recruit_no);
+    } else {
+      await run(db, `UPDATE applicant_inbox SET cost_center=? WHERE id=?`, cc, id);
+    }
+    await audit(db, user, 'applicant.inbox_cost', `inbox=${id} all=${f.apply_all === '1' ? 1 : 0}`);
+    return redirect('/applicants/inbox?ok=cost');
+  }
   if (action === 'register') {
     if (item.status !== 'pending') return redirect('/applicants/inbox?err=gone');
     const phone = normalizePhone(f.phone);
     const name = String(f.name || item.name).trim().slice(0, 50);
     if (!name || !isValidMobile(phone)) return redirect('/applicants/inbox?err=invalid');
-    const r = await deps.saveApplicant(db, { name, phone, applied_to: item.company, job: item.job_title }, user.id, 'mail');
+    const r = await deps.saveApplicant(db, { name, phone, applied_to: item.cost_center || item.company, job: item.job_title }, user.id, 'mail');
     if (!r.ok) return redirect('/applicants/inbox?err=invalid');
     await run(db, `UPDATE applicant_inbox SET status='registered', applicant_id=?, handled_by=?, handled_at=? WHERE id=?`, r.id, user.id, now, id);
     await deps.addEvent(db, r.id, 'apply', `${item.source === 'albamon' ? '알바몬' : '메일'} 지원 메일에서 등록`, user.id, now);
