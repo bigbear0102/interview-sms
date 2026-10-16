@@ -183,10 +183,22 @@ async function saveConfig(p, origin) {
       await setStatus('그룹웨어 아이디·비밀번호를 확인하는 중…', 'info');
       const v = await verifyGwLogin(cfg);
       if (!v.ok) { await chrome.storage.local.set({ gwBlocked: true }); await setStatus(gwFailText(v), 'error'); return; }
-      await chrome.storage.local.set({ gwBlocked: false });
+      await chrome.storage.local.set({ gwBlocked: false, gwForceLogin: true });
     }
   }
   setTimeout(() => run(true), 300);
+}
+
+// 이 크롬이 다른 사람(또는 다른 계정)으로 그룹웨어에 로그인돼 있으면 엉뚱한 메일함을 읽게 된다.
+// 그래서 새 계정을 저장한 뒤 처음 확인할 때는 그룹웨어 로그인 정보를 지우고 **저장한 내 계정으로 다시 로그인**한다.
+// (이 크롬에서 열어 둔 그룹웨어 창은 로그아웃될 수 있다)
+async function clearGwCookies(cfg) {
+  const domain = cfg.gwCookieDomain || 'willvi.co.kr';
+  const list = await chrome.cookies.getAll({ domain });
+  for (const c of list) {
+    const url = (c.secure ? 'https://' : 'http://') + c.domain.replace(/^\./, '') + c.path;
+    await chrome.cookies.remove({ url, name: c.name, storeId: c.storeId }).catch(() => {});
+  }
 }
 
 // ---------------- 그룹웨어 메일에서 알바몬 지원 메일 가져오기 ----------------
@@ -264,6 +276,8 @@ async function scanGroupware(cfg, force) {
   if (!force && Date.now() - last < GW_EVERY_MS) return null;
   const base = cfg.gwMailUrl || GW_MAIL_DEFAULT;
   await chrome.storage.local.set({ gwLastScan: Date.now() });
+  const who = String(cfg.gwId).split('@')[0].trim();
+  if (cfg.gwForceLogin) { await clearGwCookies(cfg); await chrome.storage.local.set({ gwForceLogin: false }); }
 
   let tab = await openTab(base);
   try {
@@ -293,11 +307,11 @@ async function scanGroupware(cfg, force) {
     }
     if (!list.total) return { level: 'warn', text: '그룹웨어 메일함 목록을 읽지 못했어요. 메일함이 비어 있거나, 느리거나, 화면이 바뀌었을 수 있어요. 5분 뒤 다시 확인해요.' };
     const mails = list.mails;
-    if (!mails.length) return { level: 'ok', text: `그룹웨어 확인 완료: 메일 ${list.total}통 중 알바몬 지원 메일이 없어요.` };
+    if (!mails.length) return { level: 'ok', text: `그룹웨어(${who}) 확인 완료: 메일 ${list.total}통 중 알바몬 지원 메일이 없어요.` };
     const seenArr = (await chrome.storage.local.get('gwSeen')).gwSeen || [];
     const seen = new Set(seenArr);
     const todo = mails.filter((m) => !seen.has(m.id)).slice(0, GW_MAX_PER_SCAN);
-    if (!todo.length) return { level: 'ok', text: `그룹웨어 확인 완료: 알바몬 지원 메일 ${mails.length}통, 새 메일은 없어요.` };
+    if (!todo.length) return { level: 'ok', text: `그룹웨어(${who}) 확인 완료: 알바몬 지원 메일 ${mails.length}통, 새 메일은 없어요.` };
     let added = 0, dup = 0, skipped = 0, failed = 0;
     if (todo.length) await setStatus(`그룹웨어 메일 ${todo.length}건 읽는 중…`);
     const bodies = (await exec(tab.id, pageFetchBodies, [todo]).catch(() => [])) || [];
@@ -310,7 +324,7 @@ async function scanGroupware(cfg, force) {
     }
     await chrome.storage.local.set({ gwSeen: [...seen].slice(-SEEN_CAP) });
     if (failed && failed === bodies.length) return { level: 'error', text: `그룹웨어 메일 ${failed}건의 내용을 받지 못했어요. 그룹웨어 로그인이 풀렸거나 화면 구조가 바뀌었을 수 있어요. 다음 확인 때 다시 시도해요.` };
-    return { level: failed ? 'warn' : 'ok', text: `그룹웨어 메일 ${added}건 새로 가져왔어요${dup ? `(이미 있는 ${dup}건)` : ''}${skipped ? `, 지원 메일이 아니어서 건너뜀 ${skipped}건` : ''}${failed ? `, 받지 못한 ${failed}건은 다음에 다시 시도` : ''}.` };
+    return { level: failed ? 'warn' : 'ok', text: `그룹웨어(${who}) 메일 ${added}건 새로 가져왔어요${dup ? `(이미 있는 ${dup}건)` : ''}${skipped ? `, 지원 메일이 아니어서 건너뜀 ${skipped}건` : ''}${failed ? `, 받지 못한 ${failed}건은 다음에 다시 시도` : ''}.` };
   } finally {
     chrome.tabs.remove(tab.id).catch(() => {});
   }
@@ -339,7 +353,7 @@ async function run(force = false) {
   running = true;
   runningSince = Date.now();
   try {
-    const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry', 'gwId', 'gwPw', 'gwOn', 'gwMailUrl', 'gwBlocked']);
+    const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry', 'gwId', 'gwPw', 'gwOn', 'gwMailUrl', 'gwBlocked', 'gwForceLogin', 'gwCookieDomain']);
     if (!cfg.agentToken) { await setStatus('연결 키가 없어요. 문자 관리 시스템의 수신함을 한 번 열면 자동으로 연결돼요.', 'error'); return; }
     cfg.serverUrl = (cfg.serverUrl || 'https://interview.bigbears.me').replace(/\/+$/, '');
     const parts = [];

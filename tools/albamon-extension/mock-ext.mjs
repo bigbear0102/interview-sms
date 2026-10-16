@@ -197,7 +197,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 await browser.installExtension(dir);
 const wt = await browser.waitForTarget((t) => t.type() === 'service_worker' && t.url().includes('background.js'), { timeout: 20000 });
 const sw = await wt.worker();
-const setCfg = (extra = {}) => sw.evaluate((c) => chrome.storage.local.set(c), { serverUrl: `http://127.0.0.1:${sysPort}`, agentToken: TOKEN, dry: false, gwOn: false, gwId: '', gwPw: '', gwLastScan: 0, gwSeen: [], gwBlocked: false, gwLoginBase: `http://127.0.0.1:${gwPort}`, gwMailUrl: `http://127.0.0.1:${gwPort}/mail/main.do`, ...extra });
+const setCfg = (extra = {}) => sw.evaluate((c) => chrome.storage.local.set(c), { serverUrl: `http://127.0.0.1:${sysPort}`, agentToken: TOKEN, dry: false, gwOn: false, gwId: '', gwPw: '', gwLastScan: 0, gwSeen: [], gwBlocked: false, gwForceLogin: false, gwCookieDomain: '127.0.0.1', gwLoginBase: `http://127.0.0.1:${gwPort}`, gwMailUrl: `http://127.0.0.1:${gwPort}/mail/main.do`, ...extra });
 const status = () => sw.evaluate(() => chrome.storage.local.get('lastStatus')).then((r) => r.lastStatus || '');
 const runAndWait = async (ms = 90000) => {
   await sw.evaluate(() => chrome.storage.local.remove('lastStatus'));
@@ -263,7 +263,7 @@ check(leaked.length === 0, '그룹웨어 비밀번호가 시스템으로 가는 
 
 // ---- 수신함 화면 ↔ 확장 연결 (그룹웨어 계정을 웹 화면에서 입력) ----
 await sw.evaluate(() => chrome.storage.local.clear());
-await sw.evaluate((c) => chrome.storage.local.set(c), { serverUrl: `http://127.0.0.1:${sysPort}`, gwLoginBase: `http://127.0.0.1:${gwPort}`, gwMailUrl: `http://127.0.0.1:${gwPort}/mail/main.do` });
+await sw.evaluate((c) => chrome.storage.local.set(c), { serverUrl: `http://127.0.0.1:${sysPort}`, gwCookieDomain: '127.0.0.1', gwLoginBase: `http://127.0.0.1:${gwPort}`, gwMailUrl: `http://127.0.0.1:${gwPort}/mail/main.do` });
 const web = await browser.newPage();
 const sentBefore = sysLog.length;
 await web.goto(`http://127.0.0.1:${sysPort}/applicants/inbox`, { waitUntil: 'load' });
@@ -291,6 +291,7 @@ check((await web.$eval('#gwok', (e) => e.hidden)) === true, '틀렸을 때는 "�
 check(gwFlagCalls === flagPre + 1 && gwViews.length === viewsPre, '저장 때 확인 요청은 한 번만, 메일은 읽지 않음');
 check((await sw.evaluate(() => chrome.storage.local.get('gwBlocked'))).gwBlocked === true, '틀리면 자동 재시도를 막음(계정 잠김 방지)');
 // (2) 올바른 비밀번호로 다시 저장
+const postsPre = gwLoginPosts;
 await web.$eval('#gwpw', (e) => { e.value = ''; });
 await web.type('#gwpw', GW_PW);
 await web.click('#gwform button');
@@ -308,6 +309,7 @@ check(!btn.disabled && !/처리 중/.test(btn.text), '저장 버튼이 "처리 �
 const htmlNow = await web.content();
 check(!htmlNow.includes(GW_PW), '화면 어디에도 비밀번호가 남지 않음');
 await sleep(3500);   // 저장 뒤 자동 실행이 끝날 시간
+check(gwLoginPosts > postsPre, '새 계정을 저장하면 이미 로그인된 세션이 있어도 저장한 계정으로 다시 로그인함(엉뚱한 메일함 방지)');
 const leaked2 = sysLog.slice(sentBefore).filter((l) => l.includes(GW_PW) || l.includes(encodeURIComponent(GW_PW)));
 check(leaked2.length === 0, '화면에서 저장해도 비밀번호가 시스템 서버로 가는 요청에 없음(' + (sysLog.length - sentBefore) + '건 검사)');
 await web.close();
