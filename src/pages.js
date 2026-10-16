@@ -431,7 +431,7 @@ export function renderCampaignDetail(d) {
       ${tableWrap(`<table class="cards cand"><thead><tr><th>사업장</th><th>이름</th><th>전화번호</th><th>상태</th><th>받은 답장</th><th>면접 결과</th><th></th></tr></thead><tbody>
         ${cands.length ? cands.map((c) => `<tr>
           <td class="c-site">${esc(c.site)}</td><td class="c-name">${esc(c.name)}</td><td class="c-phone nowrap">${esc(fmtPhone(c.phone))}</td>
-          <td class="c-status">${c.status === 'sent' && c.delivery === 'queued' ? phoneWaitBadge(c.sent_at) : badge(c.status)}${c.manual ? ' <small>(직접)</small>' : ''}${c.delivery === 'delivered' ? ' <small title="상대 휴대폰에 전달됨">✓ 전달</small>' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
+          <td class="c-status">${c.status === 'sent' && c.delivery === 'queued' ? phoneWaitBadge(c.sent_at) : badge(c.status)}${d.flagged && d.flagged.has(c.phone) ? ' <span class="badge no" title="지원자 관리: 블랙리스트 (참고용, 발송은 막지 않아요)">블랙리스트</span>' : ''}${c.manual ? ' <small>(직접)</small>' : ''}${c.delivery === 'delivered' ? ' <small title="상대 휴대폰에 전달됨">✓ 전달</small>' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
           <td class="c-reply msg">${esc(c.reply_text)}</td>
           <td class="c-outcome">${camp.purged_at ? esc(OUTCOMES[c.outcome] || '') : `<form method="post" action="/campaigns/${camp.id}/outcome" class="inline">
             <input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(d.backQuery)}">

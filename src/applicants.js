@@ -6,6 +6,9 @@ import { esc, icon, fmtTime } from './views.js';
 import { fmtPhone, pageHeader, tableWrap, emptyState } from './ui.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import { parseCsv, toCsv } from './csv.js';
+import {
+  getLinkSettings, saveLinkSettings, campaignHistory, noshowSuggestions, dismissSuggestion, DEFAULT_THRESHOLD
+} from './applicants-link.js';
 
 export const canUseApplicants = (user) => !!user; // 이후: user.role === 'super' 등으로 제한
 
@@ -152,13 +155,13 @@ export function interpretBlacklist(r) {
 
 // 여러 명 업로드. 이미 있는 내용(같은 번호 + 같은 지원 건, 이미 등록 중인 블랙리스트)은 올리지 않고 새 내용만 반영한다.
 // Workers 의 호출 수 한도 때문에 묶어서(batch) 처리한다.
-export async function bulkSave(db, rows, userId) {
+export async function bulkSave(db, rows, userId, { limit = MAX_PASTE, source = 'paste', label = '업로드' } = {}) {
   const now = Date.now();
   const batchId = `b${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const rejected = [];
   const warnings = [];
   const valid = [];
-  rows.slice(0, MAX_PASTE).forEach((r, i) => {
+  rows.slice(0, limit).forEach((r, i) => {
     const line = r.line ?? i + 1;
     const phone = normalizePhone(r.phone);
     const name = clip(r.name, 50);
@@ -203,17 +206,19 @@ export async function bulkSave(db, rows, userId) {
       contributes = true;
       stmts.push(stmt(db,
         `INSERT INTO applicants (name, phone, source, created_by, created_at, updated_at, batch_id) VALUES (?,?,?,?,?,?,?)`,
-        v.name, v.phone, 'paste', userId ?? null, now, now, batchId));
+        v.name, v.phone, source, userId ?? null, now, now, batchId));
       stmts.push(stmt(db,
         `INSERT INTO applicant_events (applicant_id, action, detail, user_id, at, batch_id)
-         SELECT id, 'create', '업로드 등록', ?, ?, ? FROM applicants WHERE phone=?`, userId ?? null, now, batchId, v.phone));
+         SELECT id, 'create', ?, ?, ?, ? FROM applicants WHERE phone=?`, `${label} 등록`, userId ?? null, now, batchId, v.phone));
     }
     if (v.ib.warn) warnings.push({ row: v.line, reason: v.ib.warn });
     if (p.name !== v.name) {
       warnings.push({ row: v.line, reason: `같은 번호가 이미 "${p.name}" 이름으로 있어서 기존 이름을 유지했어요(올린 이름: ${v.name})` });
     }
     const key = `${v.a}|${v.j}`;
-    if ((v.a || v.j) && !p.apps.has(key)) {
+    // 직무가 비어 있고 같은 '지원한 곳'이 이미 있으면 새 내용이 없는 것으로 본다
+    const sameWithoutJob = !!v.a && !v.j && [...p.apps].some((k) => k.startsWith(`${v.a}|`));
+    if ((v.a || v.j) && !p.apps.has(key) && !sameWithoutJob) {
       p.apps.add(key);
       contributes = true;
       stmts.push(stmt(db,
@@ -256,8 +261,15 @@ export async function bulkSave(db, rows, userId) {
   for (let i = 0; i < stmts.length; i += 40) await db.batch(stmts.slice(i, i + 40));
   return {
     created, added, duplicates, rejected, warnings, blacklisted, blSkipped: blSkipped.size,
-    truncated: rows.length > MAX_PASTE, batchId: contributed ? batchId : ''
+    truncated: rows.length > limit, batchId: contributed ? batchId : ''
   };
+}
+
+// 면접 안내(캠페인) 명단을 지원자로 등록한다(연결 설정이 켜져 있을 때 호출). 지원한 곳에는 사업장을 넣는다.
+export async function registerFromCampaign(db, campaignId, userId, { limit = 400 } = {}) {
+  const rows = await all(db, `SELECT name, phone, site FROM candidates WHERE campaign_id=? AND phone != '' ORDER BY id`, campaignId);
+  return bulkSave(db, rows.map((r, i) => ({ line: i + 1, name: r.name || '지원자', phone: r.phone, applied_to: r.site, job: '' })),
+    userId, { limit, source: 'linked', label: '면접 안내 연동' });
 }
 
 // 업로드 되돌리기: 그 업로드로 생긴 지원 건·블랙리스트·기록을 지우고, 이후 다른 변경이 없는 사람은 삭제한다.
@@ -285,6 +297,14 @@ const statusBadge = (blActive) => (blActive
   ? '<span class="badge no">블랙리스트</span>'
   : '<span class="badge mute">일반</span>');
 
+const STATUS_LABEL = { pending: '보내는 중', sending: '보내는 중', sent: '답 없음', attending: '참석', absent: '불참', unclear: '확인 필요', failed: '못 보냄' };
+const OUTCOME_LABEL = { showed: '출석', noshow: '노쇼', passed: '합격', hired: '입사', rejected: '불합격' };
+function historyHtml(list) {
+  if (!list.length) return '<p class="muted">면접 안내 기록이 없어요.</p>';
+  return `<ul>${list.map((h) => `<li><a href="/campaigns/${h.campaign_id}">${esc(h.campaign)}</a> · ${esc(h.site || '-')}${h.interview_at ? ` · ${esc(h.interview_at)}` : ''}
+    — ${esc(STATUS_LABEL[h.status] || h.status)}${h.outcome ? ` / <b>${esc(OUTCOME_LABEL[h.outcome] || h.outcome)}</b>` : ''}</li>`).join('')}</ul>`;
+}
+
 const reasonSelect = (selected = '') => `<select name="reason_code" class="bl-reason" required aria-label="사유">${
   REASONS.map(([k, v]) => `<option value="${k}"${selected === k ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
 
@@ -303,7 +323,7 @@ export function renderApplicantNew({ error = '', values = {} } = {}) {
     </div>`;
 }
 
-export async function renderApplicantDetail(db, id, { user, notice = '' } = {}) {
+export async function renderApplicantDetail(db, id, { user, notice = '', link = null } = {}) {
   const a = await first(db, `SELECT * FROM applicants WHERE id=?`, id);
   if (!a) return null;
   const apps = await all(db, `SELECT * FROM applicant_applications WHERE applicant_id=? ORDER BY id DESC`, id);
@@ -315,6 +335,7 @@ export async function renderApplicantDetail(db, id, { user, notice = '' } = {}) 
     `SELECT e.*, COALESCE(NULLIF(u.name,''), u.username) who FROM applicant_events e LEFT JOIN users u ON u.id=e.user_id
       WHERE e.applicant_id=? ORDER BY e.id DESC LIMIT 50`, id);
   const active = bls.find((b) => b.status === 'active');
+  const hist = link && link.history ? await campaignHistory(db, a.phone, user) : null;
 
   const blBox = active
     ? `<div class="notice warn" role="status">${icon('alert')}<div>
@@ -369,6 +390,7 @@ export async function renderApplicantDetail(db, id, { user, notice = '' } = {}) 
           </form></details>
         ${a.memo ? `<p class="muted" style="margin-top:8px">메모: ${esc(a.memo)}</p>` : ''}
       </section>
+      ${hist ? `<section class="section"><div class="shead"><h2>면접 안내 이력</h2><span class="muted">문자 시스템 연결</span></div><div class="card">${historyHtml(hist)}</div></section>` : ''}
       ${pastBl.length ? `<section class="section"><div class="shead"><h2>이전 블랙리스트 기록</h2></div>
         <div class="card" style="padding:0">${tableWrap(`<table><thead><tr><th>사유</th><th>등록</th><th>해제</th></tr></thead><tbody>
           ${pastBl.map((b) => `<tr><td>${esc(reasonLabel(b.reason_code, b.reason_text))}</td>
@@ -399,6 +421,7 @@ export async function exportApplicantsCsv(db) {
 // ---------------- 한 화면 표(스프레드시트형) ----------------
 const FLASH = {
   added: '지원자를 등록했어요.',
+  settings: '연결 설정을 저장했어요.',
   edited: '수정했어요.',
   blacklisted: '블랙리스트에 등록했어요.',
   released: '블랙리스트를 해제했어요.',
@@ -513,7 +536,7 @@ const SHEET_JS = `<script>
 
 // 첫 화면: 빠른 조회 + 입력 줄 + CSV 업로드 + 필터 + 표 + 쪽 넘기기
 export async function renderApplicantSheet(db, opts = {}) {
-  const { params = paramsFrom(new URLSearchParams()), flash = '', err = '', bulk = null, extra = {}, lookup = '' } = opts;
+  const { params = paramsFrom(new URLSearchParams()), flash = '', err = '', bulk = null, extra = {}, lookup = '', link = null, isSuper = false } = opts;
   const back = opts.back || listUrl(params);
   const where = [], args = [];
   if (params.q) {
@@ -556,6 +579,7 @@ export async function renderApplicantSheet(db, opts = {}) {
     `<a href="${esc(listUrl(params, { status: key, page: 1 }))}"${params.status === key ? ' aria-current="page"' : ''}>${label} <span class="n">${n}</span></a>`;
 
   const notices = [];
+  const suggestions = link && link.suggest ? await noshowSuggestions(db, link.threshold) : [];
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
   if (flash === 'undone') {
     notices.push(`<div class="notice ok">${icon('check')}<div><b>업로드를 되돌렸어요.</b> ${Number(extra.removed) || 0}명을 삭제했어요.${Number(extra.kept) ? ` ${Number(extra.kept)}명은 업로드 뒤에 정보가 바뀌어서 남겨 두었어요.` : ''}</div></div>`);
@@ -641,6 +665,16 @@ export async function renderApplicantSheet(db, opts = {}) {
   return `${SHEET_CSS}${pageHeader({ title: '지원자 관리', desc: '한 화면에서 등록하고, 수정하고, 블랙리스트를 관리해요. 문자 발송과는 별개로 동작해요.',
     actions: `<a class="btn secondary" href="/applicants/export.csv">${icon('download', 18)}엑셀로 저장</a>` })}
     ${notices.join('')}
+    ${suggestions.length ? `<details class="card" open style="margin-bottom:16px"><summary><b>블랙리스트 후보 제안 ${suggestions.length}명</b>
+      <span class="muted">면접 결과를 "노쇼"로 기록한 횟수가 ${link.threshold}회 이상이에요. 사람이 확인하고 등록해요.</span></summary>
+      <div style="margin-top:8px">${tableWrap(`<table class="cards"><thead><tr><th>이름</th><th>전화번호</th><th>노쇼</th><th></th></tr></thead><tbody>
+        ${suggestions.map((x) => `<tr><td><b>${esc(x.name)}</b></td><td data-label="전화번호">${esc(fmtPhone(x.phone))}</td><td data-label="노쇼">${x.n}회</td>
+          <td class="acts"><form method="post" action="/applicants/suggest/register" class="inline" data-confirm="블랙리스트로 등록할까요?">${hid}
+              <input type="hidden" name="phone" value="${esc(x.phone)}"><input type="hidden" name="name" value="${esc(x.name)}"><input type="hidden" name="n" value="${x.n}">
+              <button class="small btn danger">블랙리스트 등록</button></form>
+            <form method="post" action="/applicants/suggest/dismiss" class="inline">${hid}
+              <input type="hidden" name="phone" value="${esc(x.phone)}"><input type="hidden" name="n" value="${x.n}"><button class="small secondary">무시</button></form></td></tr>`).join('')}
+        </tbody></table>`)}</div></details>` : ''}
     <form method="get" action="/applicants" class="lookup">
       <input name="lookup" type="tel" inputmode="tel" value="${esc(lookup)}" placeholder="번호로 바로 확인 (010-1234-5678)" aria-label="번호로 바로 확인">
       <button class="secondary" style="flex:none">확인</button></form>
@@ -683,6 +717,17 @@ export async function renderApplicantSheet(db, opts = {}) {
         <p style="margin-top:8px"><a href="/applicants">필터 초기화</a></p>
       </details>
     </form>
+    ${link ? `<details class="card" style="margin-top:16px"><summary><b>문자 시스템 연결</b>
+      <span class="muted">${link.enabled ? '켜짐' : '꺼짐 (기본)'} — 면접 안내와 지원자 관리를 이어 줘요. 발송은 막지 않아요.</span></summary>
+      <form method="post" action="/applicants/settings" class="stack" style="margin-top:12px">${hid}
+        <label class="check"><input type="checkbox" name="enabled" value="1"${link.enabled ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span><b>연결 사용</b> <small>끄면 아래 항목은 모두 동작하지 않아요</small></span></label>
+        <label class="check"><input type="checkbox" name="register" value="1"${link.raw.register ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>면접 안내를 만들 때 명단을 지원자로 <b>자동 등록</b> <small>(중복은 올리지 않아요, 지원한 곳에는 사업장을 넣어요)</small></span></label>
+        <label class="check"><input type="checkbox" name="history" value="1"${link.raw.history ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>지원자 상세·기록에 <b>면접 안내 이력</b> 보이기</span></label>
+        <label class="check"><input type="checkbox" name="suggest" value="1"${link.raw.suggest ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>노쇼 기록이 많은 사람을 <b>블랙리스트 후보로 제안</b> <small>(등록은 사람이 승인해요)</small></span></label>
+        <label style="max-width:220px">제안 기준 (노쇼 횟수)<input type="number" name="threshold" min="1" max="20" value="${link.threshold}"${isSuper ? '' : ' disabled'}></label>
+        <label class="check"><input type="checkbox" name="flag" value="1"${link.raw.flag ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>면접 안내 명단을 올릴 때 블랙리스트 대상이 있으면 <b>참고용으로 표시</b></span></label>
+        ${isSuper ? '<div><button class="btn secondary">설정 저장</button></div>' : '<p class="muted">설정은 관리자만 바꿀 수 있어요.</p>'}
+      </form></details>` : ''}
     <div class="tabs" style="margin-top:12px">${tab('', '전체', c.total)}${tab('bl', '블랙리스트', c.bl)}${tab('ok', '일반', c.total - c.bl)}</div>
     <div class="card" style="padding:0">${table}</div>
     ${pager}
@@ -690,8 +735,8 @@ export async function renderApplicantSheet(db, opts = {}) {
 }
 
 // 표에서 "기록"을 누르면 불러오는 작은 조각 (지원 이력, 이전 블랙리스트, 변경 기록)
-export async function renderApplicantPanel(db, id) {
-  const a = await first(db, `SELECT id FROM applicants WHERE id=?`, id);
+export async function renderApplicantPanel(db, id, { user = null, link = null } = {}) {
+  const a = await first(db, `SELECT id, phone FROM applicants WHERE id=?`, id);
   if (!a) return null;
   const apps = await all(db, `SELECT * FROM applicant_applications WHERE applicant_id=? ORDER BY id DESC LIMIT 20`, id);
   const bls = await all(db,
@@ -702,7 +747,8 @@ export async function renderApplicantPanel(db, id) {
     `SELECT e.*, COALESCE(NULLIF(u.name,''), u.username) who FROM applicant_events e LEFT JOIN users u ON u.id=e.user_id
       WHERE e.applicant_id=? ORDER BY e.id DESC LIMIT 20`, id);
   const li = (items) => items.length ? `<ul>${items.join('')}</ul>` : '<p class="muted">없어요.</p>';
-  return `<h4>지원 이력</h4>${li(apps.map((x) => `<li>${esc(x.applied_to || '-')} · ${esc(x.job || '-')} <small class="muted">${esc(fmtTime(x.created_at).slice(0, 10))}</small></li>`))}
+  const hist = link && link.history ? await campaignHistory(db, a.phone, user) : null;
+  return `${hist ? `<h4>면접 안내 이력</h4>${historyHtml(hist)}` : ''}<h4>지원 이력</h4>${li(apps.map((x) => `<li>${esc(x.applied_to || '-')} · ${esc(x.job || '-')} <small class="muted">${esc(fmtTime(x.created_at).slice(0, 10))}</small></li>`))}
     <h4>블랙리스트 기록</h4>${li(bls.map((b) => `<li>${esc(reasonLabel(b.reason_code, b.reason_text))} — ${b.status === 'active' ? '<b>등록 중</b>' : '해제됨'}
       <small class="muted">${esc(fmtTime(b.created_at).slice(0, 10))} ${esc(b.by_name || '')}${b.released_at ? ` → ${esc(fmtTime(b.released_at).slice(0, 10))} ${esc(b.rel_name || '')}${b.release_note ? ` (${esc(b.release_note)})` : ''}` : ''}</small></li>`))}
     <h4>변경 기록</h4>${li(evs.map((e) => `<li>${esc(ACTION_LABEL[e.action] || e.action)}${e.detail ? ` — ${esc(e.detail)}` : ''} <small class="muted">${esc(fmtTime(e.at))} ${esc(e.who || '')}</small></li>`))}`;
@@ -730,8 +776,9 @@ export async function handleApplicants(c) {
     const params = paramsFrom(sp);
     const lookup = String(sp.get('lookup') || '').trim().slice(0, 30);
     if (lookup) await audit(db, user, 'applicant.lookup', '');
+    const link = await getLinkSettings(db);
     return page('지원자 관리', await renderApplicantSheet(db, {
-      params, back: listUrl(params), lookup,
+      params, back: listUrl(params), lookup, link, isSuper: user.role === 'super',
       flash: sp.get('ok') || '', err: sp.get('err') || '',
       extra: { removed: sp.get('n'), kept: sp.get('k') }
     }));
@@ -773,6 +820,41 @@ export async function handleApplicants(c) {
       `created=${result.created} added=${result.added} duplicates=${result.duplicates} blacklisted=${result.blacklisted} rejected=${result.rejected.length}`);
     return page('지원자 관리', await renderApplicantSheet(db, { params, back, bulk: result }));
   }
+  // 문자 시스템 연결 설정(관리자) / 노쇼 후보 제안 처리
+  if (path === '/applicants/settings' && method === 'POST') {
+    if (user.role !== 'super') return html(pg('접근 불가', '<p>연결 설정은 관리자만 바꿀 수 있어요.</p>', 'applicants'), 403);
+    const f = await readForm(request);
+    await saveLinkSettings(db, {
+      enabled: f.enabled === '1', register: f.register === '1', history: f.history === '1',
+      suggest: f.suggest === '1', flag: f.flag === '1', threshold: f.threshold
+    });
+    await audit(db, user, 'applicant.link_settings', `enabled=${f.enabled === '1' ? 1 : 0}`);
+    return redirect(withParam(safeBack(f.back) || '/applicants', 'ok', 'settings'));
+  }
+  if (path === '/applicants/suggest/register' && method === 'POST') {
+    const f = await readForm(request);
+    const back = safeBack(f.back) || '/applicants';
+    const phone = normalizePhone(f.phone);
+    const n = Math.max(1, parseInt(f.n, 10) || 1);
+    const r = await saveApplicant(db, { name: f.name || '지원자', phone }, user.id, 'linked');
+    if (!r.ok) return redirect(withParam(back, 'err', 'invalid'));
+    const now = Date.now();
+    const dup = await first(db, `SELECT id FROM blacklist WHERE applicant_id=? AND status='active'`, r.id);
+    if (!dup) {
+      await run(db, `INSERT INTO blacklist (applicant_id, reason_code, reason_text, created_by, created_at) VALUES (?,?,?,?,?)`,
+        r.id, 'noshow', `면접 노쇼 ${n}회 기록 (후보 제안 승인)`, user.id, now);
+      await run(db, `UPDATE applicants SET updated_at=? WHERE id=?`, now, r.id);
+      await addEvent(db, r.id, 'blacklist', '면접 무단 불참 (노쇼 후보 제안 승인)', user.id, now);
+      await audit(db, user, 'applicant.suggest_register', `id=${r.id} n=${n}`);
+    }
+    return redirect(withParam(back, 'ok', 'blacklisted'));
+  }
+  if (path === '/applicants/suggest/dismiss' && method === 'POST') {
+    const f = await readForm(request);
+    await dismissSuggestion(db, normalizePhone(f.phone), f.n, user.id);
+    await audit(db, user, 'applicant.suggest_dismiss', '');
+    return redirect(safeBack(f.back) || '/applicants');
+  }
   // 업로드 되돌리기
   const bm = path.match(/^\/applicants\/batch\/([A-Za-z0-9]+)\/undo$/);
   if (bm && method === 'POST') {
@@ -790,12 +872,12 @@ export async function handleApplicants(c) {
   const action = m[2];
 
   if (method === 'GET' && action === 'panel') {
-    const frag = await renderApplicantPanel(db, id);
+    const frag = await renderApplicantPanel(db, id, { user, link: await getLinkSettings(db) });
     if (frag === null) return html('', 404);
     return html(frag);
   }
   if (method === 'GET' && !action) {
-    const body = await renderApplicantDetail(db, id, { user });
+    const body = await renderApplicantDetail(db, id, { user, link: await getLinkSettings(db) });
     if (!body) return html(pg('없음', '<p>지원자를 찾을 수 없어요.</p>', 'applicants'), 404);
     await audit(db, user, 'applicant.view', `id=${id}`);
     return page('지원자 상세', body);

@@ -25,7 +25,8 @@ import {
 import { mailConfigured } from './mailer.js';
 import { renderPhoneHelp } from './pages-help.js';
 import { renderPeople } from './people.js';
-import { handleApplicants } from './applicants.js';
+import { handleApplicants, registerFromCampaign } from './applicants.js';
+import { getLinkSettings, flaggedInCampaign } from './applicants-link.js';
 import { renderLanding } from './landing.js';
 import { OUTCOMES, setOutcome, queueAutoReminders } from './reminders.js';
 import { phoneApiUrl, isPublicCloud } from './admin.js';
@@ -268,6 +269,26 @@ async function handle(request, env, ctx) {
       retentionDays: Number(f.retention_days) || 90, userId: user.id, candidates: parsed.candidates, autoRemind: f.auto_remind === '1', defaultSite
     });
     await audit(db, user, 'campaign.create', `campaign=${r.campaignId} accepted=${r.accepted} rejected=${r.rejected.length}`);
+    // 지원자 관리 연결(설정이 켜져 있을 때만). 실패해도 면접 안내 만들기는 계속한다.
+    let linkNotice = '';
+    try {
+      const link = await getLinkSettings(db);
+      if (link.register) {
+        const reg = await registerFromCampaign(db, r.campaignId, user.id);
+        if (reg.created || reg.added) {
+          linkNotice += `<div class="notice info">${icon('info')}<div>지원자 관리에 <b>${reg.created}명</b>을 새로 등록했어요${reg.added ? ` (이미 있던 ${reg.added}명에게 지원 건 추가)` : ''}.</div></div>`;
+        }
+      }
+      if (link.flag) {
+        const flagged = await flaggedInCampaign(db, r.campaignId);
+        if (flagged.size) {
+          const label = { noshow: '면접 무단 불참', absent: '근무 중 무단 이탈', false_info: '서류·정보 허위', misconduct: '업무상 부적절한 행위', other: '기타' };
+          linkNotice += `<div class="notice warn" role="status">${icon('alert')}<div><b>참고: 이 명단에 블랙리스트로 등록된 ${flagged.size}명이 있어요.</b> 발송은 막지 않아요.<ul style="margin:8px 0 0;padding-left:20px">${[...flagged.values()].slice(0, 20).map((x) => `<li>${esc(x.name)} — ${esc(label[x.reason_code] || x.reason_code)}</li>`).join('')}</ul></div></div>`;
+        }
+      }
+    } catch (e) {
+      console.error('지원자 연결 처리 실패', e && e.message);
+    }
     let scheduledAt = null;
     let scheduleError = '';
     if (f.send_mode === 'schedule') {
@@ -288,7 +309,7 @@ async function handle(request, env, ctx) {
     return html(pg('올리기 완료', `<header class="phead"><div><h1>명단을 올렸어요</h1></div></header>
       <div class="col">
         <div class="notice ok">${icon('check')}<div><b>${r.accepted}명을 불러왔어요.</b></div></div>
-        ${rej}${nextStep}
+        ${rej}${linkNotice}${nextStep}
         <a class="btn big" href="/campaigns/${r.campaignId}">${scheduledAt ? '예약 내용 확인하기' : '다음: 보내기 화면으로'}</a>
       </div>`, 'interview'));
   }
@@ -390,7 +411,10 @@ async function handle(request, env, ctx) {
     const [tone, stateText] = camp.purged_at ? ['info', '개인정보 보관 기간이 지나 이름과 전화번호를 지웠어요. 숫자만 남아 있어요.'] : (STATE[camp.status] || ['info', camp.status]);
     const stateNotice = `<div class="notice ${tone}">${icon(tone === 'ok' ? 'check' : tone === 'warn' ? 'alert' : 'info')}<div>${esc(stateText)}</div></div>`;
     const canSend = !camp.purged_at && ['draft', 'scheduled'].includes(camp.status);
+    const flagged = (await getLinkSettings(db).catch(() => ({ flag: false }))).flag
+      ? await flaggedInCampaign(db, camp.id).catch(() => new Map()) : new Map();
     const body = renderCampaignDetail({
+      flagged,
       camp, totals, siteRows, siteTotal, cands, siteFilter, statusFilter, previewText, canSend, stateNotice, delivery: deliveryStats, outcomes: outcomeStats,
       backQuery: back, back: { href: '/campaigns', label: '면접 안내' }
     });

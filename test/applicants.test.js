@@ -357,3 +357,86 @@ test('필터, 정렬, 쪽 넘기기, 그리고 오래된 지원자도 자동 삭
   await purgeExpired(db, Date.now());
   assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicants`).first()).n, 120);
 });
+
+import { getLinkSettings, saveLinkSettings, noshowSuggestions } from '../src/applicants-link.js';
+
+async function withCampaign(db, admin) {
+  await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
+  await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'폰','u','p','t')`).run();
+  return admin.post('/campaigns/new', {
+    mode: 'many', csv: '사업장,이름,전화번호,면접일시\nA사,홍길동,010-8000-0001,10/20 14:00\nA사,김영희,010-8000-0002,10/20 14:30\n',
+    gateway_id: '1', template: '{이름}님', send_mode: 'manual', name: '면접 안내 시험'
+  });
+}
+
+test('연결: 기본은 꺼짐 — 면접 안내를 만들어도 지원자가 생기지 않는다', async () => {
+  const { admin, db } = await setup();
+  const s = await getLinkSettings(db);
+  assert.equal(s.enabled, false);
+  assert.equal(s.register, false);
+  const res = await withCampaign(db, admin);
+  assert.equal(res.status, 200);
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicants`).first()).n, 0);
+});
+
+test('연결 설정은 관리자만 바꾼다, 항목은 연결이 켜져 있어야 동작', async () => {
+  const { admin, staff, db } = await setup();
+  const denied = await staff.post('/applicants/settings', { enabled: '1', register: '1' });
+  assert.equal(denied.status, 403);
+  await saveLinkSettings(db, { enabled: false, register: true, history: true, suggest: true, flag: true, threshold: 2 });
+  let s = await getLinkSettings(db);
+  assert.equal(s.register, false);          // 연결이 꺼져 있으면 항목도 꺼진 것으로 본다
+  assert.equal(s.raw.register, true);
+  assert.equal(s.threshold, 2);
+  const ok = await admin.post('/applicants/settings', { back: '/applicants', enabled: '1', register: '1', suggest: '1', threshold: '4' });
+  assert.equal(ok.headers.get('location'), '/applicants?ok=settings');
+  s = await getLinkSettings(db);
+  assert.equal(s.enabled, true);
+  assert.equal(s.register, true);
+  assert.equal(s.history, false);
+  assert.equal(s.threshold, 4);
+});
+
+test('연결 켜짐: 면접 안내 명단 자동 등록(중복 제외), 블랙리스트 참고 표시, 이력, 노쇼 후보 제안', async () => {
+  const { admin, db } = await setup();
+  // 홍길동은 이미 블랙리스트
+  await admin.post('/applicants/new', { name: '홍길동', phone: '010-8000-0001', applied_to: 'A사', job: '현장' });
+  const pid = (await db.prepare(`SELECT id FROM applicants WHERE phone='01080000001'`).first()).id;
+  await admin.post(`/applicants/${pid}/blacklist`, { reason_code: 'noshow', reason_text: '' });
+  await admin.post('/applicants/settings', { enabled: '1', register: '1', history: '1', suggest: '1', flag: '1', threshold: '2' });
+  const res = await withCampaign(db, admin);
+  const html = visible(await res.text());
+  assert.match(html, /지원자 관리에 1명\s*을 새로 등록했어요/);   // 김영희만 신규
+  assert.ok(!html.includes('이미 있던'));                              // 홍길동은 같은 지원한 곳이 이미 있어 새 내용 없음
+  assert.match(html, /블랙리스트로 등록된 1명/);
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicants`).first()).n, 2);
+  // 면접 안내 상세에 참고 배지
+  const detail = await (await admin.call('/campaigns/1')).text();
+  assert.match(detail, /참고용, 발송은 막지 않아요/);
+  // 지원자 기록에 면접 안내 이력
+  const panel = await (await admin.call(`/applicants/${pid}/panel`)).text();
+  assert.ok(panel.includes('면접 안내 이력'));
+  assert.ok(panel.includes('면접 안내 시험'));
+  // 노쇼 2회 기록 → 후보 제안(이미 블랙리스트인 홍길동 제외, 김영희 대상)
+  await db.prepare(`INSERT INTO campaigns (department_id,gateway_id,name,template,created_at,status) VALUES (1,1,'두번째','x',?, 'done')`).bind(Date.now()).run();
+  await db.prepare(`UPDATE candidates SET outcome='noshow' WHERE phone='01080000002'`).run();
+  await db.prepare(`INSERT INTO candidates (campaign_id,site,name,phone,status,outcome) VALUES (2,'A사','김영희','01080000002','attending','noshow')`).run();
+  const sug = await noshowSuggestions(db, 2);
+  assert.equal(sug.length, 1);
+  assert.equal(sug[0].phone, '01080000002');
+  assert.equal(sug[0].n, 2);
+  let page = visible(await (await admin.call('/applicants')).text());
+  assert.ok(page.includes('블랙리스트 후보 제안 1명'));
+  // 무시하면 사라지고, 더 늘면 다시 나온다
+  await admin.post('/applicants/suggest/dismiss', { back: '/applicants', phone: '01080000002', n: '2' });
+  assert.equal((await noshowSuggestions(db, 2)).length, 0);
+  await db.prepare(`INSERT INTO candidates (campaign_id,site,name,phone,status,outcome) VALUES (2,'B사','김영희','01080000002','attending','noshow')`).run();
+  assert.equal((await noshowSuggestions(db, 2)).length, 1);
+  // 승인하면 블랙리스트로 등록
+  const reg = await admin.post('/applicants/suggest/register', { back: '/applicants', phone: '01080000002', name: '김영희', n: '3' });
+  assert.equal(reg.headers.get('location'), '/applicants?ok=blacklisted');
+  const bl = await db.prepare(`SELECT reason_code, reason_text FROM blacklist b JOIN applicants a ON a.id=b.applicant_id WHERE a.phone='01080000002' AND b.status='active'`).first();
+  assert.equal(bl.reason_code, 'noshow');
+  assert.match(bl.reason_text, /노쇼 3회/);
+  assert.equal((await noshowSuggestions(db, 2)).length, 0);
+});
