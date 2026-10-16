@@ -527,3 +527,24 @@ test('지원한 곳·직무 자동 완성(datalist)', async () => {
   const detail = await (await admin.call(`/applicants/${id}`)).text();
   assert.match(detail, /<datalist id="dl-applied">/);
 });
+
+test('연결 설정: 연결 사용이 꺼져 있으면 하위 항목은 회색(비활성), 꺼서 저장해도 값은 보존', async () => {
+  const { admin, db } = await setup();
+  // 꺼짐(기본): fieldset 이 disabled
+  let html = await (await admin.call('/applicants')).text();
+  assert.match(html, /<fieldset class="linkopts" id="linkopts" disabled>/);
+  // 켜고 항목을 고르면 활성
+  await admin.post('/applicants/settings', { back: '/applicants', enabled: '1', register: '1', suggest: '1', threshold: '5' });
+  html = await (await admin.call('/applicants')).text();
+  assert.match(html, /<fieldset class="linkopts" id="linkopts">/);
+  // 연결을 끄고 저장(하위 칸은 비활성이라 전송되지 않음) → 이전에 고른 항목 값이 지워지지 않는다
+  await admin.post('/applicants/settings', { back: '/applicants' });
+  const s = await getLinkSettings(db);
+  assert.equal(s.enabled, false);
+  assert.equal(s.raw.register, true);
+  assert.equal(s.raw.suggest, true);
+  assert.equal(s.threshold, 5);
+  html = await (await admin.call('/applicants')).text();
+  assert.match(html, /name="register" value="1" checked/);   // 회색이지만 이전 선택은 보인다
+  assert.match(html, /<fieldset class="linkopts" id="linkopts" disabled>/);
+});

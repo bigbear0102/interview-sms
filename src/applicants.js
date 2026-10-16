@@ -535,6 +535,9 @@ const SHEET_CSS = `<style>
 .sheet td.sel,.sheet th.sel{width:34px;padding-right:0}
 @media (max-width:640px){.sheet tr{position:relative}.sheet td.sel{position:absolute;right:12px;top:12px;width:auto;padding:0;display:block}.sheet td.sel::before{content:none!important}.sheet td.sel input{width:26px;height:26px}.sheet td:nth-child(2){padding-right:44px}.sheet td.acts{white-space:normal;flex-wrap:wrap;row-gap:4px}}
 .addbox>form{margin:12px 0 0}
+fieldset.linkopts{border:0;margin:0;padding:0 0 0 28px;display:grid;gap:12px;min-width:0}
+fieldset.linkopts:disabled{opacity:.45}
+fieldset.linkopts:disabled label{cursor:not-allowed}
 .sheet details.more{display:inline-block;vertical-align:top}
 .sheet details.more[open]{display:block;width:100%;margin-top:6px}
 .sheet details.more>summary{list-style:none}
@@ -611,6 +614,8 @@ const SHEET_JS = `<script>
     });
     refresh();
   }
+  var lm = document.querySelector('#linkform input[name=enabled]'), lo = document.getElementById('linkopts');
+  if (lm && lo) lm.addEventListener('change', function () { lo.disabled = !lm.checked; });
   var ab = document.getElementById('addbox');
   if (ab && window.matchMedia('(min-width: 761px)').matches) ab.open = true;
   var f = document.getElementById('csvfile');
@@ -836,13 +841,15 @@ export async function renderApplicantSheet(db, opts = {}) {
     ${pager}
     ${link ? `<details class="card" style="margin-top:24px"><summary><b>문자 시스템 연결</b>
       <span class="muted">${link.enabled ? '켜짐' : '꺼짐 (기본)'} — 면접 안내와 지원자 관리를 이어 줘요. 발송은 막지 않아요.</span></summary>
-      <form method="post" action="/applicants/settings" class="stack" style="margin-top:12px">${hid}
-        <label class="check"><input type="checkbox" name="enabled" value="1"${link.enabled ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span><b>연결 사용</b> <small>끄면 아래 항목은 모두 동작하지 않아요</small></span></label>
+      <form method="post" action="/applicants/settings" id="linkform" class="stack" style="margin-top:12px">${hid}
+        <label class="check"><input type="checkbox" name="enabled" value="1"${link.enabled ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span><b>연결 사용</b> <small>켜야 아래 항목을 고를 수 있어요. 끄면 아래 항목은 모두 동작하지 않아요</small></span></label>
+        <fieldset class="linkopts" id="linkopts"${link.enabled ? '' : ' disabled'}>
         <label class="check"><input type="checkbox" name="register" value="1"${link.raw.register ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>면접 안내를 만들 때 명단을 지원자로 <b>자동 등록</b> <small>(중복은 올리지 않아요, 지원한 곳에는 사업장을 넣어요)</small></span></label>
         <label class="check"><input type="checkbox" name="history" value="1"${link.raw.history ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>지원자 상세·기록에 <b>면접 안내 이력</b> 보이기</span></label>
         <label class="check"><input type="checkbox" name="suggest" value="1"${link.raw.suggest ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>노쇼 기록이 많은 사람을 <b>블랙리스트 후보로 제안</b> <small>(등록은 사람이 승인해요)</small></span></label>
         <label style="max-width:220px">제안 기준 (노쇼 횟수)<input type="number" name="threshold" min="1" max="20" value="${link.threshold}"${isSuper ? '' : ' disabled'}></label>
         <label class="check"><input type="checkbox" name="flag" value="1"${link.raw.flag ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>면접 안내 명단을 올릴 때 블랙리스트 대상이 있으면 <b>참고용으로 표시</b></span></label>
+        </fieldset>
         ${isSuper ? '<div><button class="btn secondary">설정 저장</button></div>' : '<p class="muted">설정은 관리자만 바꿀 수 있어요.</p>'}
       </form></details>` : ''}
     <datalist id="dl-applied">${appliedOpts.map((o) => `<option value="${esc(o.v)}">`).join('')}</datalist>
@@ -990,10 +997,11 @@ export async function handleApplicants(c) {
   if (path === '/applicants/settings' && method === 'POST') {
     if (user.role !== 'super') return html(pg('접근 불가', '<p>연결 설정은 관리자만 바꿀 수 있어요.</p>', 'applicants'), 403);
     const f = await readForm(request);
-    await saveLinkSettings(db, {
-      enabled: f.enabled === '1', register: f.register === '1', history: f.history === '1',
-      suggest: f.suggest === '1', flag: f.flag === '1', threshold: f.threshold
-    });
+    const cur = await getLinkSettings(db);
+    const on = f.enabled === '1';
+    await saveLinkSettings(db, on
+      ? { enabled: true, register: f.register === '1', history: f.history === '1', suggest: f.suggest === '1', flag: f.flag === '1', threshold: f.threshold }
+      : { enabled: false, register: cur.raw.register, history: cur.raw.history, suggest: cur.raw.suggest, flag: cur.raw.flag, threshold: cur.threshold });
     await audit(db, user, 'applicant.link_settings', `enabled=${f.enabled === '1' ? 1 : 0}`);
     return redirect(withParam(safeBack(f.back) || '/applicants', 'ok', 'settings'));
   }
