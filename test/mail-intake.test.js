@@ -284,3 +284,22 @@ test('원가중심점: 같은 공고에 한 번에 적용·기억, 새 메일에
   await post(`/applicants/inbox/${id2}/cost`, { cost_center: '', apply_all: '1' });
   assert.equal((await db.prepare(`SELECT COUNT(*) n FROM inbox_cost_rules`).first()).n, 0);
 });
+
+test('원가중심점 목록: 붙여넣기로 추가, 찾기, 목록이 있으면 목록 밖 이름은 거절', async () => {
+  const { db, call, post } = await setup();
+  await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('홍길동(여, 32세)', '900000021'))), Date.now());
+  const id = (await db.prepare(`SELECT id FROM applicant_inbox`).first()).id;
+  // 목록이 없으면 자유 입력
+  assert.equal((await post(`/applicants/inbox/${id}/cost`, { cost_center: '아무거나' })).headers.get('location'), '/applicants/inbox?ok=cost');
+  const lines = Array.from({ length: 300 }, (_, i) => `원가센터${i}`).concat(['아마노코리아(현장HR)', '아마노코리아(파견)', '아마노코리아(현장HR)']).join('\r\n');
+  assert.equal((await post('/applicants/inbox/cost-centers/add', { names: lines })).headers.get('location'), '/applicants/inbox/cost-centers?ok=ccadd');
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM cost_centers`).first()).n, 302);
+  const page = await (await call('/applicants/inbox/cost-centers?q=' + encodeURIComponent('아마노'))).text();
+  assert.ok(visible(page).includes('전체 302개'));
+  assert.ok(visible(page).includes('아마노코리아(파견)'));
+  assert.ok(!visible(page).includes('원가센터1'));
+  // 목록이 생기면 목록 밖 이름은 거절, 안의 이름은 저장
+  assert.equal((await post(`/applicants/inbox/${id}/cost`, { cost_center: '아무거나' })).headers.get('location'), '/applicants/inbox?err=cclist');
+  assert.equal((await post(`/applicants/inbox/${id}/cost`, { cost_center: '아마노코리아(파견)' })).headers.get('location'), '/applicants/inbox?ok=cost');
+  assert.match(await (await call('/applicants/inbox')).text(), /<option value="아마노코리아\(현장HR\)">/);
+});
