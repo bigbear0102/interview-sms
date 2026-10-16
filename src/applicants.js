@@ -9,6 +9,8 @@ import { parseCsv, toCsv } from './csv.js';
 import {
   getLinkSettings, saveLinkSettings, campaignHistory, noshowSuggestions, dismissSuggestion, DEFAULT_THRESHOLD
 } from './applicants-link.js';
+import { peopleTabs, handleInbox } from './applicants-inbox.js';
+import { pendingInboxCount } from './mail-intake.js';
 
 export const canUseApplicants = (user) => !!user; // 이후: user.role === 'super' 등으로 제한
 
@@ -88,7 +90,7 @@ export function applicantsFromText(text) {
 // ---------------- 데이터 처리 ----------------
 const clip = (s, n) => String(s ?? '').trim().slice(0, n);
 
-async function addEvent(db, applicantId, action, detail, userId, at = Date.now()) {
+export async function addEvent(db, applicantId, action, detail, userId, at = Date.now()) {
   await run(db, `INSERT INTO applicant_events (applicant_id, action, detail, user_id, at) VALUES (?,?,?,?,?)`,
     applicantId, action, clip(detail, 200), userId ?? null, at);
 }
@@ -676,6 +678,7 @@ export async function renderApplicantSheet(db, opts = {}) {
 
   const notices = [];
   const suggestions = link && link.suggest ? await noshowSuggestions(db, link.threshold) : [];
+  const inboxPending = await pendingInboxCount(db).catch(() => 0);
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
   if (flash === 'undone') {
     notices.push(`<div class="notice ok">${icon('check')}<div><b>업로드를 되돌렸어요.</b> ${Number(extra.removed) || 0}명을 삭제했어요.${Number(extra.kept) ? ` ${Number(extra.kept)}명은 업로드 뒤에 정보가 바뀌어서 남겨 두었어요.` : ''}</div></div>`);
@@ -768,7 +771,7 @@ export async function renderApplicantSheet(db, opts = {}) {
 
   return `${SHEET_CSS}${pageHeader({ title: '지원자 관리', desc: '한 화면에서 등록하고, 수정하고, 블랙리스트를 관리해요. 문자 발송과는 별개로 동작해요.',
     actions: `<a class="btn secondary" href="/applicants/export.csv">${icon('download', 18)}엑셀로 저장</a>` })}
-    <div class="tabs"><a href="/applicants" aria-current="page">지원자 목록</a><a href="/people">면접 안내 이력</a></div>
+    ${peopleTabs('list', inboxPending)}
     ${notices.join('')}
     ${suggestions.length ? `<details class="card" open style="margin-bottom:16px"><summary><b>블랙리스트 후보 제안 ${suggestions.length}명</b>
       <span class="muted">면접 결과를 "노쇼"로 기록한 횟수가 ${link.threshold}회 이상이에요. 사람이 확인하고 등록해요.</span></summary>
@@ -889,10 +892,16 @@ export function applicantTemplateCsv() {
 // c: { request, url, path, method, db, user, readForm, html, redirect, pg, audit }
 // 해당하지 않는 경로면 null 을 돌려준다.
 export async function handleApplicants(c) {
-  const { url, path, method, db, user, readForm, html, redirect, pg, audit, request } = c;
+  const { url, path, method, db, user, readForm, html, redirect, pg, audit, request, env } = c;
   if (!path.startsWith('/applicants')) return null;
   if (!canUseApplicants(user)) return html(pg('접근 불가', '<p>이 화면을 볼 권한이 없어요.</p>', 'applicants'), 403);
   const page = (title, body) => html(pg(title, body, 'applicants'));
+
+  // 메일 수신함(알바몬 지원 알림)
+  if (path.startsWith('/applicants/inbox')) {
+    const r = await handleInbox({ ...c, env: env || {} }, { saveApplicant, addEvent, safeBack, withParam });
+    if (r) return r;
+  }
 
   if (path === '/applicants' && method === 'GET') {
     const sp = url.searchParams;

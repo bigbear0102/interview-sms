@@ -26,6 +26,7 @@ import { mailConfigured } from './mailer.js';
 import { renderPhoneHelp } from './pages-help.js';
 import { renderPeople } from './people.js';
 import { handleApplicants, registerFromCampaign } from './applicants.js';
+import { getIntakeToken, ingestRaw, MAX_MAIL_BYTES } from './mail-intake.js';
 import { getLinkSettings, flaggedInCampaign } from './applicants-link.js';
 import { renderLanding } from './landing.js';
 import { OUTCOMES, setOutcome, queueAutoReminders } from './reminders.js';
@@ -450,7 +451,7 @@ async function handle(request, env, ctx) {
   // 지원자·블랙리스트 관리 (문자 시스템과 별개의 모듈)
   if (path.startsWith('/applicants')) {
     const res = await handleApplicants({
-      request, url, path, method, db, user, pg, html, redirect, audit,
+      request, url, path, method, db, user, pg, html, redirect, audit, env,
       readForm: async (req) => form(await req.text())
     });
     if (res) return res;
@@ -599,8 +600,28 @@ export async function handleRequest(request, env, ctx) {
   }
 }
 
+// 메일 수신(Cloudflare Email Routing → Worker): 알바몬 지원 알림을 지원자 수신함에 쌓는다.
+// 수신 주소는 비밀 토큰이 들어간 apply-<토큰>@도메인 한 개만 받고, 나머지는 거절한다.
+export async function handleEmail(message, env) {
+  try {
+    const token = await getIntakeToken(env.DB);
+    const local = String(message.to || '').toLowerCase().split('@')[0];
+    if (!token || local !== `apply-${token}`) { message.setReject('Address not found'); return { ok: false, reason: 'address' }; }
+    if (message.rawSize && message.rawSize > MAX_MAIL_BYTES) { message.setReject('Message too large'); return { ok: false, reason: 'too_large' }; }
+    const buf = new Uint8Array(await new Response(message.raw).arrayBuffer());
+    const r = await ingestRaw(env.DB, buf);
+    return r;
+  } catch (e) {
+    await recordError(env, 'mail', e, 'intake').catch(() => {});
+    return { ok: false, reason: 'error' };
+  }
+}
+
 export default {
   fetch: handleRequest,
+  email(message, env, ctx) {
+    ctx.waitUntil(handleEmail(message, env));
+  },
   // Cloudflare Cron Trigger (Workers 배포 시)
   scheduled(event, env, ctx) {
     ctx.waitUntil(runScheduled(env, event.scheduledTime));
