@@ -216,7 +216,8 @@ check(/이용권/.test(s), '상태 문구에 이용권 확인 안내');
 await setCfg({ gwOn: true, gwId: GW_ID, gwPw: 'wrong-password' });
 s = await runAndWait();
 console.log('  상태(틀린 비밀번호):', s);
-check(/로그인이 안 돼요/.test(s), '그룹웨어 비밀번호가 틀리면 "로그인이 안 돼요"로 알림');
+check(/로그인이 안 돼요/.test(s) && /아이디 또는 비밀번호/.test(s), '그룹웨어 비밀번호가 틀리면 "로그인이 안 돼요"와 해야 할 일을 알림');
+check((await sw.evaluate(() => chrome.storage.local.get('lastLevel'))).lastLevel === 'error', '틀린 비밀번호는 "막힘(error)" 단계로 기록');
 check(mailIn.length === 0 && gwViews.length === 0, '로그인이 안 되면 메일을 열지 않음');
 
 await setCfg({ gwOn: true, gwId: GW_ID, gwPw: GW_PW });
@@ -229,6 +230,8 @@ const before = gwViews.length;
 await setCfg({ gwOn: true, gwId: GW_ID, gwPw: GW_PW, gwSeen: (await sw.evaluate(() => chrome.storage.local.get('gwSeen'))).gwSeen });
 await runAndWait();
 check(gwViews.length === before, '이미 가져온 메일은 다시 열지 않음');
+const sNone = (await sw.evaluate(() => chrome.storage.local.get(['lastStatus', 'lastLevel'])));
+check(/새 메일은 없어요/.test(sNone.lastStatus) && sNone.lastLevel === 'ok', '새 메일이 없을 때도 "확인 완료: 새 메일은 없어요"로 알림');
 // 메일 주소(아이디@도메인)로 입력해도 아이디 부분으로 로그인한다
 await sw.evaluate(() => chrome.storage.local.set({ gwSeen: [], gwLastScan: 0 }));
 await setCfg({ gwOn: true, gwId: GW_ID + '@willvi.co.kr', gwPw: GW_PW });

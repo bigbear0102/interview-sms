@@ -8,6 +8,7 @@ export const EXT_BRIDGE_JS = String.raw`
   var form = document.getElementById('gwform');
   if (!st || !form) return;
   var present = false, queued = [], autoTried = false;
+  var last = document.getElementById('extlast');
   var idEl = document.getElementById('gwid'), pwEl = document.getElementById('gwpw'), ok = document.getElementById('gwok');
   function post(m) { m.source = 'interview-page'; window.postMessage(m, window.location.origin); }
   function show(s) {
@@ -15,7 +16,11 @@ export const EXT_BRIDGE_JS = String.raw`
     t.push('확장 프로그램: 연결됨');
     t.push(s.hasKey ? '연결 키 있음' : '연결 키 자동 연결 중…');
     t.push(s.gwId ? ('그룹웨어 계정 저장됨 (' + s.gwId + (s.hasPw ? ', 비밀번호 저장됨' : ', 비밀번호 없음') + ')') : '그룹웨어 계정 아직 없음');
-    if (s.lastStatus) t.push('최근: ' + s.lastStatus);
+    if (last) {
+      last.hidden = !s.lastStatus;
+      last.textContent = s.lastStatus ? ('최근 결과: ' + s.lastStatus) : '';
+      last.className = 'notice ' + (s.lastLevel === 'error' || s.lastLevel === 'warn' ? 'warn' : s.lastLevel === 'ok' ? 'ok' : '');
+    }
     st.textContent = t.join(' · ');
     st.className = 'notice ok';
     if (s.gwId && !idEl.value) idEl.value = s.gwId;
@@ -49,6 +54,7 @@ export const EXT_BRIDGE_JS = String.raw`
   var key = document.getElementById('newkey');
   if (key && key.textContent.trim()) queued.push({ type: 'save', agentToken: key.textContent.trim() });
   post({ type: 'hello' });
+  setInterval(function () { if (present && !document.hidden) post({ type: 'hello' }); }, 3000);
   setTimeout(function () {
     if (!present) { st.textContent = '이 PC의 크롬에서 확장 프로그램이 보이지 않아요. 아직 설치 전이면 위의 "확장 프로그램 내려받기"로 설치하고, 설치했다면 이 페이지를 새로고침해 주세요.'; st.className = 'notice warn'; }
   }, 1800);

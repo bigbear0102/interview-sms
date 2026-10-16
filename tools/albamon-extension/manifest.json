@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "문자 관리 시스템 - 연락처 가져오기",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "내 크롬에서 알바몬 이력서의 연락처를 읽어 문자 관리 시스템 수신함에 채워 줍니다. 알바몬 아이디·비밀번호는 다루지 않고, 그룹웨어 아이디·비밀번호는 이 PC에만 저장합니다.",
   "permissions": ["alarms", "storage", "tabs", "scripting"],
   "host_permissions": ["https://*.albamon.com/*", "https://interview.bigbears.me/*", "https://gw.willvi.co.kr/*", "https://mail.willvi.co.kr/*"],
