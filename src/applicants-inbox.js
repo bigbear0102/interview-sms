@@ -15,6 +15,7 @@ export function peopleTabs(active, pending = 0) {
   const t = (key, href, label, badge = '') =>
     `<a href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}${badge}</a>`;
   return `<div class="tabs">${t('list', '/applicants', '지원자 목록')}${
+    t('postings', '/applicants/postings', '공고별 정리')}${
     t('inbox', '/applicants/inbox', '메일 수신함', pending ? ` <span class="n">${pending}</span>` : '')}${
     t('history', '/people', '면접 안내 이력')}</div>`;
 }
@@ -110,16 +111,17 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
     return `${note}<form method="post" action="/applicants/inbox/${r.id}/fetch" class="inline"><button class="small secondary">${r.fetch_state === 'failed' ? '다시 요청' : '연락처 가져오기'}</button></form>`;
   };
 
-  const table = rows.length ? tableWrap(`<table class="cards sheet"><thead><tr><th>지원자</th><th>공고</th><th>원가중심점</th><th>정보</th><th>받은 시각</th><th>처리</th></tr></thead><tbody>
+  const table = rows.length ? tableWrap(`<table class="cards sheet"><thead><tr><th>지원자</th><th>공고</th><th>원가중심점·직무</th><th>정보</th><th>받은 시각</th><th>처리</th></tr></thead><tbody>
     ${rows.map((r) => `<tr>
       <td><b>${esc(r.name)}</b>${isSuper && r.owner_name ? ` <small class="muted">(${esc(r.owner_name)} 담당)</small>` : ''}${r.gender || r.age ? ` <small class="muted">${esc([r.gender, r.age ? r.age + '세' : ''].filter(Boolean).join(', '))}</small>` : ''}</td>
       <td data-label="공고">${esc(r.company || '-')}<br><small class="muted">${esc(r.job_title)}</small></td>
-      <td data-label="원가중심점">${r.status === 'pending'
+      <td data-label="원가중심점·직무">${r.status === 'pending'
     ? `<form method="post" action="/applicants/inbox/${r.id}/cost" style="display:grid;gap:6px;min-width:200px">
-          <input name="cost_center" data-cc-search value="${esc(r.cost_center)}" placeholder="예: 아마노코리아(현장HR)" maxlength="80" autocomplete="off" aria-label="${esc(r.name)} 원가중심점">
+          <input name="cost_center" data-cc-search value="${esc(r.cost_center)}" placeholder="원가중심점 (예: 아마노코리아(현장HR))" maxlength="80" autocomplete="off" aria-label="${esc(r.name)} 원가중심점">
+          <input name="job" value="${esc(r.job || '')}" placeholder="직무 (선택)" maxlength="100" autocomplete="off" aria-label="${esc(r.name)} 직무">
           <label style="font-size:13px;display:flex;gap:6px;align-items:center"><input type="checkbox" name="apply_all" value="1" checked> 같은 공고 모두 적용·기억</label>
           <button class="small secondary">저장</button></form>`
-    : esc(r.cost_center || '-')}</td>
+    : esc([r.cost_center, r.job].filter(Boolean).join(' / ') || '-')}</td>
       <td data-label="정보"><small>${esc([r.address, r.education, r.career].filter(Boolean).join(' · ') || '-')}</small></td>
       <td data-label="받은 시각" class="nowrap">${esc(fmtTime(r.received_at))}</td>
       <td data-label="처리" class="acts">${r.status === 'pending'
@@ -341,13 +343,14 @@ export async function handleInbox(c, deps) {
 
   if (action === 'cost') {
     const cc = String(f.cost_center || '').trim().slice(0, 80);
+    const jb = String(f.job || '').trim().slice(0, 100);
     if (cc && (await first(db, `SELECT COUNT(*) n FROM cost_centers`)).n && !(await first(db, `SELECT 1 x FROM cost_centers WHERE name=?`, cc))) return redirect('/applicants/inbox?err=cclist');
     if (f.apply_all === '1' && item.recruit_no) {
-      if (cc) await run(db, `INSERT INTO inbox_cost_rules (recruit_no, cost_center, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(recruit_no) DO UPDATE SET cost_center=excluded.cost_center, updated_by=excluded.updated_by, updated_at=excluded.updated_at`, item.recruit_no, cc, user.id, now);
+      if (cc) await run(db, `INSERT INTO inbox_cost_rules (recruit_no, cost_center, job, updated_by, updated_at) VALUES (?,?,?,?,?) ON CONFLICT(recruit_no) DO UPDATE SET cost_center=excluded.cost_center, job=excluded.job, updated_by=excluded.updated_by, updated_at=excluded.updated_at`, item.recruit_no, cc, jb, user.id, now);
       else await run(db, `DELETE FROM inbox_cost_rules WHERE recruit_no=?`, item.recruit_no);
-      await run(db, `UPDATE applicant_inbox SET cost_center=? WHERE recruit_no=? AND status='pending'`, cc, item.recruit_no);
+      await run(db, `UPDATE applicant_inbox SET cost_center=?, job=? WHERE recruit_no=? AND status='pending'`, cc, jb, item.recruit_no);
     } else {
-      await run(db, `UPDATE applicant_inbox SET cost_center=? WHERE id=?`, cc, id);
+      await run(db, `UPDATE applicant_inbox SET cost_center=?, job=? WHERE id=?`, cc, jb, id);
     }
     await audit(db, user, 'applicant.inbox_cost', `inbox=${id} all=${f.apply_all === '1' ? 1 : 0}`);
     return redirect('/applicants/inbox?ok=cost');
@@ -357,7 +360,7 @@ export async function handleInbox(c, deps) {
     const phone = normalizePhone(f.phone);
     const name = String(f.name || item.name).trim().slice(0, 50);
     if (!name || !isValidMobile(phone)) return redirect('/applicants/inbox?err=invalid');
-    const r = await deps.saveApplicant(db, { name, phone, applied_to: item.cost_center || item.company, job: item.job_title }, user.id, 'mail');
+    const r = await deps.saveApplicant(db, { name, phone, applied_to: item.cost_center, job: item.job, recruit_no: item.recruit_no, posting_title: item.job_title, company_raw: item.company }, user.id, 'mail');
     if (!r.ok) return redirect('/applicants/inbox?err=invalid');
     await run(db, `UPDATE applicant_inbox SET status='registered', applicant_id=?, handled_by=?, handled_at=? WHERE id=?`, r.id, user.id, now, id);
     await deps.addEvent(db, r.id, 'apply', `${item.source === 'albamon' ? '알바몬' : '메일'} 지원 메일에서 등록`, user.id, now);

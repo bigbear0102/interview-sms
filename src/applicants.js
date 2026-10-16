@@ -10,6 +10,7 @@ import {
   getLinkSettings, saveLinkSettings, campaignHistory, noshowSuggestions, dismissSuggestion, DEFAULT_THRESHOLD
 } from './applicants-link.js';
 import { peopleTabs, handleInbox } from './applicants-inbox.js';
+import { handlePostings, unclassifiedCount } from './applicants-postings.js';
 import { pendingInboxCount } from './mail-intake.js';
 
 export const canUseApplicants = (user) => !!user; // 이후: user.role === 'super' 등으로 제한
@@ -37,7 +38,7 @@ const KST = 9 * 3600000;
 const ALIAS = {
   name: ['이름', '성명', '지원자', '지원자명', 'name'],
   phone: ['전화번호', '휴대폰', '휴대폰번호', '연락처', '핸드폰', '핸드폰번호', 'phone', 'mobile'],
-  applied_to: ['지원한곳', '지원처', '지원회사', '지원사', '회사', '회사명', '사업장', '사업장명', '지원사업장', 'applied', '근무지'],
+  applied_to: ['원가중심점', '원가중심', '지원한곳', '지원처', '지원회사', '지원사', '회사', '회사명', '사업장', '사업장명', '지원사업장', 'applied', '근무지'],
   job: ['직무', '직종', '지원직무', '포지션', 'job', 'position'],
   blacklist: ['블랙리스트', '블랙리스트여부', '블랙', '블랙여부', 'blacklist'],
   reason: ['사유', '블랙리스트사유', '등록사유', '사유구분', 'reason'],
@@ -96,7 +97,7 @@ export async function addEvent(db, applicantId, action, detail, userId, at = Dat
 }
 
 // 한 명 등록(또는 같은 번호가 있으면 지원 건만 추가). 반환: { ok, id, created, error }
-export async function saveApplicant(db, { name, phone, applied_to = '', job = '' }, userId, source = 'manual') {
+export async function saveApplicant(db, { name, phone, applied_to = '', job = '', recruit_no = '', posting_title = '', company_raw = '' }, userId, source = 'manual') {
   const p = normalizePhone(phone);
   const n = clip(name, 50);
   if (!n) return { ok: false, error: '이름을 적어 주세요.' };
@@ -111,12 +112,15 @@ export async function saveApplicant(db, { name, phone, applied_to = '', job = ''
     created = true;
     await addEvent(db, row.id, 'create', source === 'paste' ? '붙여넣기 등록' : '직접 등록', userId, now);
   }
-  const a = clip(applied_to, 100), j = clip(job, 100);
-  if (a || j) {
-    const dup = await first(db, `SELECT id FROM applicant_applications WHERE applicant_id=? AND applied_to=? AND job=?`, row.id, a, j);
+  const a = clip(applied_to, 100), j = clip(job, 100), rn = clip(recruit_no, 30);
+  if (a || j || rn) {
+    // 같은 공고로 다시 지원한 건은 한 번만 남긴다(공고번호가 있을 때)
+    const dup = rn
+      ? await first(db, `SELECT id FROM applicant_applications WHERE applicant_id=? AND recruit_no=?`, row.id, rn)
+      : await first(db, `SELECT id FROM applicant_applications WHERE applicant_id=? AND applied_to=? AND job=?`, row.id, a, j);
     if (!dup) {
-      await run(db, `INSERT INTO applicant_applications (applicant_id, applied_to, job, created_by, created_at) VALUES (?,?,?,?,?)`,
-        row.id, a, j, userId ?? null, now);
+      await run(db, `INSERT INTO applicant_applications (applicant_id, applied_to, job, created_by, created_at, recruit_no, posting_title, company_raw) VALUES (?,?,?,?,?,?,?,?)`,
+        row.id, a, j, userId ?? null, now, rn, clip(posting_title, 200), clip(company_raw, 100));
       if (!created) await addEvent(db, row.id, 'apply', '지원 건 추가', userId, now);
     }
   }
@@ -349,7 +353,7 @@ export function renderApplicantNew({ error = '', values = {} } = {}) {
         <h3>한 명 등록</h3>
         <label>이름<input name="name" value="${esc(values.name || '')}" required autocomplete="off"></label>
         <label>전화번호<input name="phone" type="tel" inputmode="tel" value="${esc(values.phone || '')}" placeholder="010-1234-5678" required autocomplete="off"></label>
-        <label>지원한 곳<input name="applied_to" value="${esc(values.applied_to || '')}" placeholder="예: 아마노코리아(현장HR)" autocomplete="off"></label>
+        <label>원가중심점<input name="applied_to" value="${esc(values.applied_to || '')}" placeholder="예: 아마노코리아(현장HR)" autocomplete="off"></label>
         <label>직무<input name="job" value="${esc(values.job || '')}" placeholder="예: 현장 관리" autocomplete="off"></label>
         <div class="form-actions"><button class="btn">등록하기</button></div>
       </form>
@@ -406,12 +410,13 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
     <div class="col">
       ${blBox}
       <section class="section"><div class="shead"><h2>지원 이력</h2></div>
-        <div class="card" style="padding:0">${apps.length ? tableWrap(`<table><thead><tr><th>지원한 곳</th><th>직무</th><th>등록일</th></tr></thead><tbody>
-          ${apps.map((x) => `<tr><td>${esc(x.applied_to || '-')}</td><td>${esc(x.job || '-')}</td><td>${esc(fmtTime(x.created_at).slice(0, 10))}</td></tr>`).join('')}</tbody></table>`)
+        <div class="card" style="padding:0">${apps.length ? tableWrap(`<table><thead><tr><th>원가중심점</th><th>직무</th><th>지원한 공고</th><th>등록일</th></tr></thead><tbody>
+          ${apps.map((x) => `<tr><td>${x.applied_to ? esc(x.applied_to) : (x.recruit_no ? '<span class="badge wait">정리 필요</span> <a href="/applicants/postings">공고별 정리</a>' : '-')}</td><td>${esc(x.job || '-')}</td>
+            <td>${x.posting_title ? `${esc(x.posting_title)}<br><small class="muted">공고번호 ${esc(x.recruit_no)}${x.company_raw ? ' · ' + esc(x.company_raw) : ''}</small>` : '-'}</td><td>${esc(fmtTime(x.created_at).slice(0, 10))}</td></tr>`).join('')}</tbody></table>`)
           : emptyState({ title: '등록된 지원 이력이 없어요' })}</div>
         <details style="margin-top:12px"><summary>지원 건 추가</summary>
           <form method="post" action="/applicants/${a.id}/apply" class="stack card" style="margin-top:8px;max-width:520px">
-            <label>지원한 곳<input name="applied_to" list="dl-applied" autocomplete="off"></label>
+            <label>원가중심점<input name="applied_to" list="dl-applied" autocomplete="off"></label>
             <label>직무<input name="job" list="dl-job" autocomplete="off"></label>
             <div><button class="btn secondary">추가</button></div>
           </form></details>
@@ -461,7 +466,7 @@ export async function exportApplicantsCsv(db) {
         (SELECT applied_to FROM applicant_applications WHERE applicant_id=a.id ORDER BY id DESC LIMIT 1) applied_to,
         (SELECT job FROM applicant_applications WHERE applicant_id=a.id ORDER BY id DESC LIMIT 1) job
        FROM applicants a LEFT JOIN blacklist b ON b.applicant_id=a.id AND b.status='active' ORDER BY a.id`);
-  return toCsv([['이름', '전화번호', '지원한 곳(최근)', '직무(최근)', '상태', '블랙리스트 사유', '메모', '등록일']].concat(
+  return toCsv([['이름', '전화번호', '원가중심점(최근)', '직무(최근)', '상태', '블랙리스트 사유', '메모', '등록일']].concat(
     rows.map((r) => [r.name, r.phone, r.applied_to || '', r.job || '', r.reason_code ? '블랙리스트' : '일반',
       r.reason_code ? reasonLabel(r.reason_code, r.reason_text) : '', r.memo, fmtTime(r.created_at)])));
 }
@@ -661,6 +666,7 @@ export async function renderApplicantSheet(db, opts = {}) {
     `SELECT a.id, a.name, a.phone, a.created_at, b.id bl_id, b.reason_code, b.reason_text,
         (SELECT applied_to FROM applicant_applications WHERE applicant_id=a.id ORDER BY id DESC LIMIT 1) applied_to,
         (SELECT job FROM applicant_applications WHERE applicant_id=a.id ORDER BY id DESC LIMIT 1) job,
+        EXISTS (SELECT 1 FROM applicant_applications WHERE applicant_id=a.id AND applied_to='' AND recruit_no != '') unclassified,
         (SELECT COUNT(*) FROM applicant_applications WHERE applicant_id=a.id) apps
        ${base} ${W} ORDER BY ${order} LIMIT ${PAGE_SIZE} OFFSET ${(pageNo - 1) * PAGE_SIZE}`, ...args);
   const c = await first(db,
@@ -679,6 +685,8 @@ export async function renderApplicantSheet(db, opts = {}) {
   const notices = [];
   const suggestions = link && link.suggest ? await noshowSuggestions(db, link.threshold) : [];
   const inboxPending = await pendingInboxCount(db, opts.viewer || null).catch(() => 0);
+  const needClass = await unclassifiedCount(db).catch(() => 0);
+  if (needClass) notices.push(`<div class="notice warn">${icon('alert')}<div>원가중심점이 아직 없는 공고가 <b>${needClass}개</b> 있어요. <a href="/applicants/postings"><b>공고별로 한꺼번에 정리하기 →</b></a></div></div>`);
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
   if (flash === 'undone') {
     notices.push(`<div class="notice ok">${icon('check')}<div><b>업로드를 되돌렸어요.</b> ${Number(extra.removed) || 0}명을 삭제했어요.${Number(extra.kept) ? ` ${Number(extra.kept)}명은 업로드 뒤에 정보가 바뀌어서 남겨 두었어요.` : ''}</div></div>`);
@@ -724,12 +732,12 @@ export async function renderApplicantSheet(db, opts = {}) {
   }
 
   const hid = `<input type="hidden" name="back" value="${esc(back)}">`;
-  const table = rows.length ? tableWrap(`<table class="cards sheet"><thead><tr><th class="sel"><input type="checkbox" id="chkall" aria-label="전체 선택"></th><th>이름</th><th>전화번호</th><th>지원한 곳</th><th>직무</th><th>상태</th><th>등록일</th><th></th></tr></thead><tbody>
+  const table = rows.length ? tableWrap(`<table class="cards sheet"><thead><tr><th class="sel"><input type="checkbox" id="chkall" aria-label="전체 선택"></th><th>이름</th><th>전화번호</th><th>원가중심점</th><th>직무</th><th>상태</th><th>등록일</th><th></th></tr></thead><tbody>
     ${rows.map((r) => `<tr>
       <td class="sel" data-label="선택"><input type="checkbox" class="rowchk" name="ids" value="${r.id}" form="bulkform" aria-label="${esc(r.name)} 선택"></td>
       <td><span class="v"><b>${esc(r.name)}</b></span><input class="e" form="ef-${r.id}" name="name" value="${esc(r.name)}" required aria-label="이름"></td>
       <td class="nowrap" data-label="전화번호"><span class="v">${esc(fmtPhone(r.phone))}</span><input class="e" form="ef-${r.id}" name="phone" value="${esc(fmtPhone(r.phone))}" required aria-label="전화번호"></td>
-      <td data-label="지원한 곳"><span class="v">${esc(r.applied_to || '-')}${r.apps > 1 ? ` <small>외 ${r.apps - 1}건</small>` : ''}</span><input class="e" form="ef-${r.id}" name="applied_to" list="dl-applied" value="${esc(r.applied_to || '')}" aria-label="지원한 곳"></td>
+      <td data-label="원가중심점"><span class="v">${r.applied_to ? esc(r.applied_to) : (r.unclassified ? '<span class="badge wait">정리 필요</span>' : '-')}${r.apps > 1 ? ` <small>외 ${r.apps - 1}건</small>` : ''}</span><input class="e" form="ef-${r.id}" name="applied_to" list="dl-applied" value="${esc(r.applied_to || '')}" aria-label="원가중심점"></td>
       <td data-label="직무"><span class="v">${esc(r.job || '-')}</span><input class="e" form="ef-${r.id}" name="job" list="dl-job" value="${esc(r.job || '')}" aria-label="직무"></td>
       <td data-label="상태">${statusBadge(r.bl_id)}${r.bl_id ? `<br><small>${esc(reasonLabel(r.reason_code, r.reason_text))}</small>` : ''}</td>
       <td data-label="등록일">${esc(fmtTime(r.created_at).slice(0, 10))}</td>
@@ -787,11 +795,11 @@ export async function renderApplicantSheet(db, opts = {}) {
       <input name="lookup" type="tel" inputmode="tel" value="${esc(lookup)}" placeholder="번호로 바로 확인 (010-1234-5678)" aria-label="번호로 바로 확인">
       <button class="secondary" style="flex:none">확인</button></form>
     ${lookupHtml}
-    <details class="card addbox" id="addbox" style="margin-bottom:12px"><summary><b>+ 지원자 추가</b> <span class="muted">이름 · 전화번호 · 지원한 곳 · 직무</span></summary>
+    <details class="card addbox" id="addbox" style="margin-bottom:12px"><summary><b>+ 지원자 추가</b> <span class="muted">이름 · 전화번호 · 원가중심점 · 직무</span></summary>
     <form id="addform" method="post" action="/applicants/new" class="addbar">${hid}
       <input name="name" placeholder="이름" required autocomplete="off" aria-label="이름">
       <input name="phone" type="tel" inputmode="tel" placeholder="전화번호" required autocomplete="off" aria-label="전화번호">
-      <input name="applied_to" list="dl-applied" placeholder="지원한 곳" autocomplete="off" aria-label="지원한 곳">
+      <input name="applied_to" list="dl-applied" placeholder="원가중심점" autocomplete="off" aria-label="원가중심점">
       <input name="job" list="dl-job" placeholder="직무" autocomplete="off" aria-label="직무">
       <button class="btn">${icon('plus', 18)}추가</button>
     </form>
@@ -812,12 +820,12 @@ export async function renderApplicantSheet(db, opts = {}) {
     <form method="get" action="/applicants">
       <div style="display:flex;gap:8px;max-width:520px">
         ${params.status ? `<input type="hidden" name="status" value="${esc(params.status)}">` : ''}
-        <input name="q" value="${esc(params.q)}" placeholder="이름, 전화번호, 지원한 곳, 직무로 찾기" aria-label="검색">
+        <input name="q" value="${esc(params.q)}" placeholder="이름, 전화번호, 원가중심점, 직무로 찾기" aria-label="검색">
         <button class="secondary" style="flex:none">찾기</button>
       </div>
       <details style="margin-top:8px"${filterActive ? ' open' : ''}><summary class="muted">상세 필터·정렬</summary>
         <div class="filters">
-          <select name="applied" aria-label="지원한 곳"><option value="">지원한 곳 전체</option>${opt(appliedOpts, params.applied)}</select>
+          <select name="applied" aria-label="원가중심점"><option value="">원가중심점 전체</option>${opt(appliedOpts, params.applied)}</select>
           <select name="job" aria-label="직무"><option value="">직무 전체</option>${opt(jobOpts, params.job)}</select>
           <select name="reason" aria-label="블랙리스트 사유"><option value="">사유 전체</option>${REASONS.map(([k, v]) => `<option value="${k}"${params.reason === k ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select>
           <label style="font-weight:400">등록일 시작<input type="date" name="from" value="${esc(params.from)}"></label>
@@ -896,6 +904,12 @@ export async function handleApplicants(c) {
   if (!path.startsWith('/applicants')) return null;
   if (!canUseApplicants(user)) return html(pg('접근 불가', '<p>이 화면을 볼 권한이 없어요.</p>', 'applicants'), 403);
   const page = (title, body) => html(pg(title, body, 'applicants'));
+
+  // 공고별 정리
+  if (path.startsWith('/applicants/postings')) {
+    const r = await handlePostings(c);
+    if (r) return r;
+  }
 
   // 메일 수신함(알바몬 지원 알림)
   if (path.startsWith('/applicants/inbox')) {

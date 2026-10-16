@@ -185,12 +185,12 @@ export async function saveParsed(db, p, now = Date.now(), ownerId = null) {
   if (dup) return { ok: true, duplicate: true, id: dup.id };
   const clip = (s, n) => String(s || '').slice(0, n);
   // 같은 공고에 이미 정해 둔 원가중심점이 있으면 자동으로 붙인다
-  const rule = p.recruitNo ? await first(db, `SELECT cost_center FROM inbox_cost_rules WHERE recruit_no=?`, clip(p.recruitNo, 30)) : null;
+  const rule = p.recruitNo ? await first(db, `SELECT cost_center, job FROM inbox_cost_rules WHERE recruit_no=?`, clip(p.recruitNo, 30)) : null;
   const r = await run(db,
-    `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at, cost_center, owner_user_id)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at, cost_center, owner_user_id, job)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     p.source, p.applyNo, clip(p.recruitNo, 30), clip(p.company, 100), clip(p.jobTitle, 200), clip(p.name, 50), clip(p.gender, 4),
-    p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), safeResumeUrl(p.resumeUrl).slice(0, 500), now, rule ? rule.cost_center : '', ownerId);
+    p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), safeResumeUrl(p.resumeUrl).slice(0, 500), now, rule ? rule.cost_center : '', ownerId, rule ? rule.job : '');
   return { ok: true, id: Number(r.meta.last_row_id) };
 }
 

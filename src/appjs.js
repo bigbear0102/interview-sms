@@ -173,4 +173,13 @@ export const APP_JS = String.raw`
     } else if (e.key === 'Escape') { hide(); }
   });
 })();
+
+// 제안 버튼(data-fill): 눌러서 같은 양식의 원가중심점 칸에 채운다
+document.addEventListener('click', function (e) {
+  var b = e.target.closest && e.target.closest('button[data-fill]');
+  if (!b) return;
+  var card = b.closest('section') || document;
+  var inp = card.querySelector('input[name=cost_center]');
+  if (inp) { inp.value = b.getAttribute('data-fill'); inp.focus(); }
+});
 `;

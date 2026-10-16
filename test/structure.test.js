@@ -91,7 +91,7 @@ test('지원자 줄 행동: 수정 · 기록 + 더 보기 메뉴', async () => {
   assert.match(html, /<details class="more">/);
   assert.match(html, /블랙리스트로 등록/);
   assert.match(html, /상세 화면 열기/);
-  assert.match(html, /class="tabs"><a href="\/applicants" aria-current="page">지원자 목록<\/a><a href="\/applicants\/inbox">메일 수신함<\/a><a href="\/people">면접 안내 이력<\/a>/);
+  assert.match(html, /class="tabs"><a href="\/applicants" aria-current="page">지원자 목록<\/a><a href="\/applicants\/postings">공고별 정리<\/a><a href="\/applicants\/inbox">메일 수신함<\/a><a href="\/people">면접 안내 이력<\/a>/);
 });
 
 test('공통 스크립트: 확인 대화상자, 제출 중 잠금, 표 머리글 scope', async () => {

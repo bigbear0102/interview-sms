@@ -145,9 +145,13 @@ test('수신함 화면: 수신 주소(관리자), 대기 목록, 등록(연락�
   const ap = await db.prepare(`SELECT id, name, phone, source FROM applicants`).first();
   assert.equal(ap.phone, '01012345678');
   assert.equal(ap.source, 'mail');
-  const app = await db.prepare(`SELECT applied_to, job FROM applicant_applications WHERE applicant_id=?`).bind(ap.id).first();
-  assert.equal(app.applied_to, '㈜테스트-회사');
-  assert.match(app.job, /현장 관리/);
+  const app = await db.prepare(`SELECT applied_to, job, recruit_no, posting_title, company_raw FROM applicant_applications WHERE applicant_id=?`).bind(ap.id).first();
+  // 원가중심점·직무는 정리 전이라 비어 있고, 알바몬 공고 정보는 따로 보관된다
+  assert.equal(app.applied_to, '');
+  assert.equal(app.job, '');
+  assert.equal(app.recruit_no, '111222333');
+  assert.match(app.posting_title, /현장 관리/);
+  assert.equal(app.company_raw, '㈜테스트-회사');
   assert.equal(await pendingInboxCount(db), 1);
   // 이미 처리한 건은 다시 등록되지 않는다
   r = await post(`/applicants/inbox/${id1}/register`, { name: '홍길동', phone: '010-1234-5678' });
@@ -392,4 +396,85 @@ test('이력서 링크는 알바몬 https 주소만 저장', () => {
   assert.equal(safeResumeUrl('https://www.albamon.com.evil.com/x'), '');
   assert.equal(safeResumeUrl('http://www.albamon.com/x'), '');
   assert.equal(safeResumeUrl('javascript:alert(1)'), '');
+});
+import { readFileSync } from 'node:fs';
+
+import { bracketName, suggestCostCenters, classifyPosting, postingGroups, unclassifiedCount } from '../src/applicants-postings.js';
+
+test('공고별 정리: 대괄호 고객사 추출과 원가중심점 제안', async () => {
+  assert.equal(bracketName('[아마노코리아(주)] 문자 발송 및 간단 상담 직원 모집 (단기)'), '아마노코리아');
+  assert.equal(bracketName('효성화학 (mpro)/신입가능'), '');
+  const { db, post } = await setup();
+  await post('/applicants/inbox/cost-centers/add', { names: '아마노코리아(현장HR)\n아마노코리아(파견)\n효성안양공장(도급)' });
+  assert.deepEqual(await suggestCostCenters(db, '[아마노코리아(주)] 직원 모집'), ['아마노코리아(파견)', '아마노코리아(현장HR)']);
+  assert.deepEqual(await suggestCostCenters(db, '대괄호 없는 제목'), []);
+});
+
+test('공고별 정리: 한 번 입력하면 등록된 지원자·수신함 대기 건 모두에 적용되고, 이후 같은 공고 메일에도 자동', async () => {
+  const { db, call, post } = await setup();
+  const mail = (name, no) => ingestRaw(db, new Uint8Array(mailQP(bodyHtml(name + '(여, 30세)', no))), Date.now());
+  await mail('홍길동', '900000051'); await mail('박민수', '900000052'); await mail('최수아', '900000053');
+  // 두 명은 등록(정리 전), 한 명은 수신함 대기
+  for (const [nm, ph] of [['홍길동', '010-1111-0001'], ['박민수', '010-1111-0002']]) {
+    const id = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name=?`).bind(nm).first()).id;
+    await post(`/applicants/inbox/${id}/register`, { name: nm, phone: ph });
+  }
+  assert.equal(await unclassifiedCount(db), 1);
+  // 지원자 목록에 "정리 필요" 안내와 배지
+  const list = await (await call('/applicants')).text();
+  assert.ok(visible(list).includes('공고별로 한꺼번에 정리하기'));
+  assert.ok(visible(list).includes('정리 필요'));
+  // 공고별 정리 화면: 한 공고에 3명
+  let page = await (await call('/applicants/postings')).text();
+  assert.ok(visible(page).includes('지원자 3명'));
+  assert.match(page, /name="cost_center" data-cc-search/);
+  // 원가중심점 없이 저장하면 거절
+  let r = await post('/applicants/postings/save', { recruit_no: '111222333', cost_center: '', job: '' });
+  assert.match(r.headers.get('location'), /err=empty/);
+  // 저장: 등록 2명 + 수신함 1명 = 3건에 적용
+  r = await post('/applicants/postings/save', { recruit_no: '111222333', cost_center: '아마노코리아(현장HR)', job: '주차관리' });
+  assert.match(r.headers.get('location'), /ok=saved&n=3/);
+  const apps = (await db.prepare(`SELECT applied_to, job FROM applicant_applications`).all()).results;
+  assert.deepEqual(apps.map((x) => [x.applied_to, x.job]), [['아마노코리아(현장HR)', '주차관리'], ['아마노코리아(현장HR)', '주차관리']]);
+  const inb = await db.prepare(`SELECT cost_center, job FROM applicant_inbox WHERE name='최수아'`).first();
+  assert.deepEqual([inb.cost_center, inb.job], ['아마노코리아(현장HR)', '주차관리']);
+  assert.equal(await unclassifiedCount(db), 0);
+  // 정리 필요 탭은 비고, 정리 끝 탭에 나온다
+  assert.ok(visible(await (await call('/applicants/postings')).text()).includes('정리할 공고가 없어요'));
+  assert.ok(visible(await (await call('/applicants/postings?tab=done')).text()).includes('정리 끝'));
+  // 이후 같은 공고의 새 메일은 자동으로 원가중심점·직무가 붙고, 등록하면 바로 정리된 상태
+  await mail('정다은', '900000054');
+  const id4 = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='정다은'`).first()).id;
+  await post(`/applicants/inbox/${id4}/register`, { name: '정다은', phone: '010-1111-0004' });
+  const a4 = await db.prepare(`SELECT applied_to, job, posting_title FROM applicant_applications ORDER BY id DESC LIMIT 1`).first();
+  assert.deepEqual([a4.applied_to, a4.job], ['아마노코리아(현장HR)', '주차관리']);
+  assert.match(a4.posting_title, /현장 관리/);
+  assert.equal(await unclassifiedCount(db), 0);
+  // 원가중심점 목록이 있으면 목록 밖 이름은 거절
+  await post('/applicants/inbox/cost-centers/add', { names: '아마노코리아(현장HR)' });
+  r = await post('/applicants/postings/save', { recruit_no: '111222333', cost_center: '목록에없음', job: '' });
+  assert.match(r.headers.get('location'), /err=cclist/);
+});
+
+test('공고별 정리: 같은 공고로 다시 지원하면 지원 건을 중복으로 만들지 않는다', async () => {
+  const { db, post } = await setup();
+  const mail = (no) => ingestRaw(db, new Uint8Array(mailQP(bodyHtml('홍길동(여, 30세)', no))), Date.now());
+  await mail('900000061'); await mail('900000062');   // 같은 공고, 같은 사람이 두 번 지원
+  for (const row of (await db.prepare(`SELECT id FROM applicant_inbox ORDER BY id`).all()).results) {
+    await post(`/applicants/inbox/${row.id}/register`, { name: '홍길동', phone: '010-2222-0001' });
+  }
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicant_applications`).first()).n, 1);
+});
+
+test('마이그레이션 정리 규칙: 예전에 "지원한 곳=근무회사명, 직무=공고 제목"으로 들어간 건을 원본 보존하며 비운다', async () => {
+  const db = openSqliteD1(':memory:', fileURLToPath(new URL('../migrations', import.meta.url)));
+  // 0020 이전 상태를 흉내 내서 정리 문장만 다시 실행한다
+  await db.prepare(`INSERT INTO applicants (id, name, phone, source, created_at, updated_at) VALUES (1,'홍길동','01011112222','mail',1,1)`).run();
+  await db.prepare(`INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, received_at, status, applicant_id) VALUES ('albamon','9','111','㈜우리회사','[고객사] 직원 모집','홍길동',1,'registered',1)`).run();
+  await db.prepare(`INSERT INTO applicant_applications (applicant_id, applied_to, job, created_at) VALUES (1,'㈜우리회사','[고객사] 직원 모집',1), (1,'수동입력곳','수동직무',2)`).run();
+  const sql = readFileSync(new URL('../migrations/0020_postings.sql', import.meta.url), 'utf8');
+  await db.prepare(sql.slice(sql.indexOf('UPDATE applicant_applications'))).run();
+  const rows = (await db.prepare(`SELECT applied_to, job, recruit_no, posting_title, company_raw FROM applicant_applications ORDER BY id`).all()).results;
+  assert.deepEqual(rows[0], { applied_to: '', job: '', recruit_no: '111', posting_title: '[고객사] 직원 모집', company_raw: '㈜우리회사' });
+  assert.deepEqual(rows[1], { applied_to: '수동입력곳', job: '수동직무', recruit_no: '', posting_title: '', company_raw: '' });   // 직접 입력한 건은 그대로
 });
