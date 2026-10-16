@@ -552,3 +552,21 @@ test('처리됨 → 다시 대기로: 무시한 건도, 등록한 건도 돌아�
   assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicants WHERE phone='01033330001'`).first()).n, 1);
   assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicant_applications WHERE applicant_id=(SELECT id FROM applicants WHERE phone='01033330001')`).first()).n, 1);
 });
+
+test('연결 키 자동 발급(JSON): 로그인한 사람의 키가 만들어지고, 화면 스크립트가 확장에 넣을 수 있다', async () => {
+  const { db, post, call } = await setup();
+  const r = await post('/applicants/inbox/agent-token.json', {});
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.match(j.token, /^ag_[0-9a-f]{48}$/);
+  const me = await db.prepare(`SELECT id FROM users WHERE username='boss'`).first();
+  assert.equal(await hasAgentToken(db, me.id), true);
+  assert.deepEqual(await verifyAgentToken(db, j.token), { userId: me.id });
+  // 화면에는 자동 연결 안내가 있고 카드가 펼쳐져 있다
+  const page = await (await call('/applicants/inbox')).text();
+  assert.ok(visible(page).includes('연결 키는 입력할 필요가 없어요'));
+  assert.match(page, /<details class="card" style="margin-bottom:16px" open><summary><b>내 그룹웨어 메일 가져오기/);
+  // 로그인하지 않으면 만들 수 없다
+  const anon = await handleRequest(new Request('https://interview.example.test/applicants/inbox/agent-token.json', { method: 'POST', headers: { origin: 'https://interview.example.test' } }), { DB: db, ENCRYPTION_KEY: 'k', PUBLIC_BASE_URL: 'https://interview.example.test' }, { waitUntil() {} });
+  assert.notEqual(anon.status, 200);
+});

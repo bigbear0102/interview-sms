@@ -64,8 +64,9 @@ const mailIn = [];      // /api/agent/mail 로 받아 해석한 결과
 const PAGE = `<!doctype html><meta charset=utf-8><title>수신함</title>
 <div id="extstate" class="notice">확인 중…</div>
 <form id="gwform"><input id="gwid"><input id="gwpw" type="password"><button type="submit">내 확장에 저장</button></form>
-<div id="gwok" hidden>저장됨</div><span id="newkey" hidden>${TOKEN}</span><script>${EXT_BRIDGE_JS}</script>`;
+<div id="gwok" hidden>저장됨</div><script>${EXT_BRIDGE_JS}</script>`;
 const sys = http.createServer((req, res) => {
+  if (req.url === '/applicants/inbox/agent-token.json' && req.method === 'POST') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ token: TOKEN })); }
   if (req.url.startsWith('/applicants/inbox')) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(PAGE); }
   let raw = '';
   req.on('data', (c) => (raw += c));
@@ -243,7 +244,7 @@ console.log('  화면 상태:', t1);
 check(/확장 프로그램: 연결됨/.test(t1), '화면이 확장 프로그램을 알아봄');
 await sleep(1500);
 const afterKey = await sw.evaluate(() => chrome.storage.local.get(['agentToken', 'serverUrl']));
-check(afterKey.agentToken === TOKEN, '새로 만든 연결 키가 확장에 자동으로 들어감');
+check(afterKey.agentToken === TOKEN, '연결 키가 없으면 화면이 자동으로 만들어 확장에 넣음(입력 불필요)');
 await web.type('#gwid', GW_ID);
 await web.type('#gwpw', GW_PW);
 await web.click('#gwform button');

@@ -7,13 +7,13 @@ export const EXT_BRIDGE_JS = String.raw`
   var st = document.getElementById('extstate');
   var form = document.getElementById('gwform');
   if (!st || !form) return;
-  var present = false, queued = [];
+  var present = false, queued = [], autoTried = false;
   var idEl = document.getElementById('gwid'), pwEl = document.getElementById('gwpw'), ok = document.getElementById('gwok');
   function post(m) { m.source = 'interview-page'; window.postMessage(m, window.location.origin); }
   function show(s) {
     var t = [];
     t.push('확장 프로그램: 연결됨');
-    t.push(s.hasKey ? '연결 키 있음' : '연결 키 없음(아래 "내 연결 키 만들기")');
+    t.push(s.hasKey ? '연결 키 있음' : '연결 키 자동 연결 중…');
     t.push(s.gwId ? ('그룹웨어 계정 저장됨 (' + s.gwId + (s.hasPw ? ', 비밀번호 저장됨' : ', 비밀번호 없음') + ')') : '그룹웨어 계정 아직 없음');
     if (s.lastStatus) t.push('최근: ' + s.lastStatus);
     st.textContent = t.join(' · ');
@@ -26,6 +26,15 @@ export const EXT_BRIDGE_JS = String.raw`
     if (d.type === 'ready' || d.type === 'state') {
       present = true; show(d.state);
       while (queued.length) post(queued.shift());
+      // 확장에 연결 키가 없으면 자동으로 만들어서 넣는다(입력할 필요 없음)
+      if (d.state && !d.state.hasKey && !autoTried) {
+        autoTried = true;
+        st.textContent = '확장 프로그램: 연결됨 · 연결 키를 자동으로 만드는 중…';
+        fetch('/applicants/inbox/agent-token.json', { method: 'POST', credentials: 'same-origin' })
+          .then(function (r) { return r.json(); })
+          .then(function (j) { if (j && j.token) post({ type: 'save', agentToken: j.token }); })
+          .catch(function () { st.textContent = '연결 키를 자동으로 만들지 못했어요. 아래 "연결 키 직접 만들기(고급)"를 눌러 주세요.'; });
+      }
     } else if (d.type === 'saved') {
       show(d.state);
       if (ok) { ok.hidden = false; setTimeout(function () { ok.hidden = true; }, 6000); }

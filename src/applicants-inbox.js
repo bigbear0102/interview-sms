@@ -93,7 +93,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
 
   const tokenSet = await hasAgentToken(db, viewer ? viewer.id : null);
   const autoOn = isSuper ? await getAutoRegister(db) : false;
-  const agentCard = `<details class="card" style="margin-bottom:16px"${agentToken ? ' open' : ''}><summary><b>내 그룹웨어 메일 가져오기 (확장 프로그램)</b> <span class="muted">${tokenSet ? '내 연결 키 있음' : '내 연결 키 없음'} · 내 PC의 크롬에서 내 계정으로 가져와요</span></summary>
+  const agentCard = `<details class="card" style="margin-bottom:16px" open><summary><b>내 그룹웨어 메일 가져오기 (확장 프로그램)</b> <span class="muted">${tokenSet ? '내 연결 키 있음' : '내 연결 키 없음'} · 내 PC의 크롬에서 내 계정으로 가져와요</span></summary>
     <div style="margin-top:12px" class="stack">
       <div class="notice" role="note">${icon('check')}<div><b>이렇게 가져와요</b>: 내 PC 크롬의 확장이 <b>내 그룹웨어 메일함</b>(예: bigbear@willvi.co.kr)에 내 계정으로 로그인해서 알바몬 지원 메일을 찾아 내 수신함에 넣어요. 그래서 <b>그룹웨어 메일 주소(또는 아이디)와 비밀번호</b>를 아래에 넣어요.</div></div>
       <p class="muted" style="font-size:14px">알바몬 이력서의 연락처는 <b>"클릭해야 보여요"</b>. 그래서 담당자 PC의 크롬(이미 알바몬에 로그인된 상태)이 연락처 보기를 눌러 읽어 와요.
@@ -104,7 +104,8 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
       <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
         <li>아래 <b>확장 프로그램 내려받기</b>를 눌러 파일을 받고, 압축을 풀어요.</li>
         <li>크롬 주소창에 <code>chrome://extensions</code> 를 입력 → 오른쪽 위 <b>개발자 모드</b> 켜기 → <b>압축해제된 확장 프로그램을 로드합니다</b> → 풀어 둔 <code>albamon-extension</code> 폴더 선택. (한 번만 하면 돼요)</li>
-        <li>아래 <b>내 연결 키 만들기</b>를 누르면 확장에 자동으로 연결돼요. 이어서 <b>내 그룹웨어 메일 주소(또는 아이디)와 비밀번호</b>를 아래 칸에 넣고 <b>내 확장에 저장</b>을 눌러요. 비밀번호는 <b>이 PC 크롬의 확장에만 저장</b>되고 이 시스템(서버)으로는 보내지 않아요.</li>
+        <li><b>연결 키는 입력할 필요가 없어요.</b> 확장이 설치된 크롬에서 이 화면을 열면 <b>자동으로 연결</b>돼요. (위 상태 표시에 "연결 키 있음"이 보이면 끝)</li>
+        <li><b>내 그룹웨어 메일 주소(또는 아이디)와 비밀번호</b>를 아래 칸에 넣고 <b>내 확장에 저장</b>을 눌러요. 비밀번호는 <b>이 PC 크롬의 확장에만 저장</b>되고 이 시스템(서버)으로는 보내지 않아요.</li>
         <li>그 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 둬요.</li>
         <li>확장이 <b>내 그룹웨어 메일함</b>에서 알바몬 지원 메일을 찾아 <b>내 수신함</b>에 모아 줘요. (메일을 열기 때문에 그룹웨어에서 <b>읽음</b>으로 바뀌어요)</li>
         <li>수신함에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 알아서 연락처를 채워 줘요. 채워진 뒤 <b>등록</b>만 누르면 돼요.</li>
@@ -119,7 +120,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
       ${agentToken ? `<span id="newkey" hidden>${esc(agentToken)}</span>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <a class="btn small" href="/applicants/inbox/extension.zip" download>확장 프로그램 내려받기 (v${esc(EXTENSION_VERSION)})</a>
-        <form method="post" action="/applicants/inbox/agent-token" class="inline" data-confirm="${tokenSet ? '내 연결 키를 새로 만들까요? 이전 키로 연결된 내 확장 프로그램은 멈춰요.' : '내 연결 키를 만들까요?'}"><button class="btn secondary small">${tokenSet ? '내 연결 키 다시 만들기' : '내 연결 키 만들기'}</button></form>
+        <form method="post" action="/applicants/inbox/agent-token" class="inline" data-confirm="${tokenSet ? '내 연결 키를 새로 만들까요? 이전 키로 연결된 내 확장 프로그램은 멈춰요.' : '내 연결 키를 만들까요?'}"><button class="btn secondary small" title="자동 연결이 안 될 때만 쓰세요">${tokenSet ? '연결 키 직접 다시 만들기(고급)' : '연결 키 직접 만들기(고급)'}</button></form>
         ${isSuper ? `<form method="post" action="/applicants/inbox/auto" class="inline"><input type="hidden" name="on" value="${autoOn ? 0 : 1}">
           <button class="btn secondary small">연락처를 가져오면 바로 지원자로 등록: <b>${autoOn ? '켜짐 (끄기)' : '꺼짐 (켜기)'}</b></button></form>` : ''}
       </div>
@@ -357,6 +358,12 @@ export async function handleInbox(c, deps) {
     await setAutoRegister(db, f.on === '1');
     await audit(db, user, 'applicant.inbox_auto', `on=${f.on === '1' ? 1 : 0}`);
     return redirect('/applicants/inbox?ok=auto');
+  }
+  if (path === '/applicants/inbox/agent-token.json' && method === 'POST') {
+    // 화면이 확장에 연결 키를 자동으로 넣어 줄 때 쓰는 경로(내 키를 새로 만든다)
+    const token = await createAgentToken(db, user.id);
+    await audit(db, user, 'applicant.agent_token', 'auto');
+    return new Response(JSON.stringify({ token }), { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
   }
   if (path === '/applicants/inbox/agent-token' && method === 'POST') {
     const token = await createAgentToken(db, user.id);
