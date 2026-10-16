@@ -32,6 +32,7 @@ npm start                # Node 서버 (회사 서버 이전용, .env 필요)
 | `src/csv.js` / `src/views.js` / `src/d1.js` | CSV, HTML·KST 시각, D1 헬퍼 |
 | `src/admin.js` | 설정 화면(폰 연결 마법사, 부서, 관리자). 초보자용 문구는 `docs/GUIDE.md` 와 맞춘다 |
 | `src/ui.js` | 화면 공통 요소: 뱃지, 응답 막대, 숫자 카드, 머리말, 전화번호/시각 형식, 아이콘 |
+| `src/applicants.js` | 지원자·블랙리스트 모듈(별개 데이터, 라우팅 `/applicants`, 권한은 `canUseApplicants`) |
 | `src/pages.js` | 홈 요약, 문자 보내기, 문자함(받은/보낸/예약), 면접 안내 목록 화면 |
 | `/send`, `/messages` (worker.js) | 직접 보내는 문자: `queueDirect`(큐/예약) → Cron `processQueue` 가 발송, `cancelDirect`(예약 취소) |
 | `migrations/*.sql` | D1 스키마 (번호 순서 적용) |

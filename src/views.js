@@ -313,6 +313,7 @@ export const NAV = [
   { key: 'send', href: '/send', label: '문자 보내기', short: '보내기', icon: 'send' },
   { key: 'inbox', href: '/messages', label: '문자함', icon: 'inbox' },
   { key: 'interview', href: '/campaigns', label: '면접 안내', short: '면접', icon: 'clipboard' },
+  { key: 'applicants', href: '/applicants', label: '지원자 관리', short: '지원자', icon: 'user', noTab: true },
   { key: 'settings', href: '/admin', label: '설정', icon: 'settings', superOnly: true }
 ];
 
@@ -323,7 +324,8 @@ export function page(user, title, body, nav = '', badges = {}) {
 
   const items = NAV.filter((n) => !n.superOnly || user.role === 'super');
   // 일반 관리자는 설정 대신 "내 계정" 탭
-  const tabItems = user.role === 'super' ? items : [...items, { key: 'account', href: '/password', label: '내 계정', icon: 'user' }];
+  const tabBase = items.filter((n) => !n.noTab); // 하단 탭은 5개를 넘기지 않도록 일부 메뉴는 제외
+  const tabItems = user.role === 'super' ? tabBase : [...tabBase, { key: 'account', href: '/password', label: '내 계정', icon: 'user' }];
   const link = (n, tab) => `<a href="${n.href}"${nav === n.key ? ' aria-current="page"' : ''}>${icon(n.icon, tab ? 22 : 18)}<span>${esc(tab ? n.short || n.label : n.label)}</span>${badges[n.key] ? `<i class="dot" aria-label="안 읽은 문자 ${badges[n.key]}건">${badges[n.key] > 99 ? '99+' : badges[n.key]}</i>` : ''}</a>`;
   return `<!doctype html><html lang="ko"><head>${head}</head><body>
 <a class="skip" href="#main">본문 바로가기</a>
@@ -334,6 +336,7 @@ export function page(user, title, body, nav = '', badges = {}) {
     <summary>${icon('user', 18)}<span class="label">${esc(user.name || user.username)}</span></summary>
     <div class="menu">
       <div class="who">${esc(user.name || user.username)}${user.email ? `<br>${esc(user.email)}` : ''}<br>${user.role === 'super' ? '관리자' : '일반 사용자'}</div>
+      <a href="/applicants">지원자 관리</a>
       <a href="/password">내 계정</a>
       <a href="/help/phone">폰 설치 안내</a>
       ${user.role === 'super' ? '<a href="/audit">기록 보기</a>' : ''}

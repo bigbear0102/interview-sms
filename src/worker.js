@@ -25,6 +25,7 @@ import {
 import { mailConfigured } from './mailer.js';
 import { renderPhoneHelp } from './pages-help.js';
 import { renderPeople } from './people.js';
+import { handleApplicants } from './applicants.js';
 import { renderLanding } from './landing.js';
 import { OUTCOMES, setOutcome, queueAutoReminders } from './reminders.js';
 import { phoneApiUrl, isPublicCloud } from './admin.js';
@@ -59,7 +60,7 @@ async function loadCampaign(db, user, id) {
 // 화면 위치(상단/하단 메뉴 강조)
 const navFor = (p) =>
   p === '/' ? 'home' : p.startsWith('/send') ? 'send' : p.startsWith('/messages') ? 'inbox'
-    : p.startsWith('/campaigns') ? 'interview' : (p.startsWith('/admin') || p.startsWith('/audit')) ? 'settings'
+    : p.startsWith('/campaigns') ? 'interview' : p.startsWith('/applicants') ? 'applicants' : (p.startsWith('/admin') || p.startsWith('/audit')) ? 'settings'
     : p.startsWith('/password') ? 'account' : '';
 
 async function handle(request, env, ctx) {
@@ -420,6 +421,15 @@ async function handle(request, env, ctx) {
   if (path === '/template.csv') {
     const csv = toCsv([['사업장(원가중심점)', '이름', '전화번호', '면접일시'], ['아마노코리아(현장HR)', '홍길동', '010-1234-5678', '10/20 14:00'], ['1002 서초점', '김철수', '010-2345-6789', '10/20 15:00']]);
     return new Response(csv, { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="candidates-template.csv"; filename*=UTF-8''${encodeURIComponent('지원자명단-양식.csv')}` } });
+  }
+
+  // 지원자·블랙리스트 관리 (문자 시스템과 별개의 모듈)
+  if (path.startsWith('/applicants')) {
+    const res = await handleApplicants({
+      request, url, path, method, db, user, pg, html, redirect, audit,
+      readForm: async (req) => form(await req.text())
+    });
+    if (res) return res;
   }
 
   if (path === '/people') {
