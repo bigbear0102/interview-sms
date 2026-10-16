@@ -130,6 +130,30 @@ export async function applyAdminAction(db, env, f, publicBase) {
         return { ok: true, msg: on ? '이 폰을 다시 쓰도록 했어요.' : '이 폰을 쓰지 않도록 했어요. 문자 보낼 폰 목록에서 빠져요.' };
       }
 
+      case 'gw_delete': {
+        const id = Number(f.gateway_id);
+        const g = await first(db, `SELECT id, name, active FROM gateways WHERE id=? AND deleted_at IS NULL`, id);
+        if (!g) return { ok: false, msg: '지울 폰을 찾지 못했어요.' };
+        if (g.active) return { ok: false, msg: '쓰고 있는 폰은 지울 수 없어요. 먼저 "이 폰 쓰지 않기"를 눌러 주세요.' };
+        // 이 폰으로 보낼 예정인 문자가 남아 있으면 지우지 않는다
+        const pending = (await first(db,
+          `SELECT (SELECT COUNT(*) FROM messages WHERE gateway_id=? AND status IN ('scheduled','sending'))
+                + (SELECT COUNT(*) FROM campaigns WHERE gateway_id=? AND status IN ('scheduled','sending')) n`, id, id)).n;
+        if (pending > 0) return { ok: false, msg: '이 폰으로 보낼 예정인 문자나 면접 안내가 남아 있어요. 먼저 취소하거나 끝난 뒤에 지워 주세요.' };
+        const refs = (await first(db,
+          `SELECT (SELECT COUNT(*) FROM campaigns WHERE gateway_id=?) + (SELECT COUNT(*) FROM messages WHERE gateway_id=?)
+                + (SELECT COUNT(*) FROM inbound WHERE gateway_id=?) n`, id, id, id)).n;
+        if (refs === 0) {
+          await run(db, `DELETE FROM gateways WHERE id=?`, id);
+          return { ok: true, msg: `"${g.name}" 폰을 지웠어요.` };
+        }
+        // 기록이 있으면 행은 남기고 목록에서 숨긴다. 접속 정보(비밀번호, 암호화 비밀번호, 서명 키)와 웹훅 주소는 지운다.
+        await run(db,
+          `UPDATE gateways SET deleted_at=?, active=0, username='', password='', passphrase='', signing_key='', own_number='', hook_token=? WHERE id=?`,
+          Date.now(), `deleted-${randomToken(16)}`, id);
+        return { ok: true, msg: `"${g.name}" 폰을 지웠어요. 이미 보낸 문자와 면접 안내 기록은 그대로 남아 있어요.` };
+      }
+
       case 'user': {
         const name = (f.name || '').trim();
         const email = normalizeEmail(f.email);
@@ -244,7 +268,7 @@ document.addEventListener('click', function (e) {
 export async function renderAdmin(db, env, publicBase, result = null) {
   const deps = await all(db, `SELECT * FROM departments ORDER BY name`);
   const gws = await all(db,
-    `SELECT g.id,g.name,g.username,g.active,g.own_number,g.department_id,g.health,g.health_note,g.last_seen_at,g.health_checked_at,(g.passphrase != '') AS locked,d.name dept FROM gateways g JOIN departments d ON d.id=g.department_id ORDER BY g.active DESC, g.id`);
+    `SELECT g.id,g.name,g.username,g.active,g.own_number,g.department_id,g.health,g.health_note,g.last_seen_at,g.health_checked_at,(g.passphrase != '') AS locked,d.name dept FROM gateways g JOIN departments d ON d.id=g.department_id WHERE g.deleted_at IS NULL ORDER BY g.active DESC, g.id`);
   const users = await listUsers(db);
   const orderedDeps = sortDepartments(deps);
   const apiUrl = phoneApiUrl(env);
@@ -312,7 +336,11 @@ export async function renderAdmin(db, env, publicBase, result = null) {
         ${g.active ? `<div class="pbtns">
           <form method="post" class="inline"><input type="hidden" name="do" value="gw_check"><input type="hidden" name="gateway_id" value="${g.id}">
             <button class="btn secondary small">${icon('check', 16)}연결 확인</button></form>
-        </div>` : ''}
+        </div>` : `<div class="pbtns">
+          <form method="post" class="inline" data-confirm="이 폰을 목록에서 지울까요? 이미 보낸 문자와 면접 안내 기록은 남아요. 되돌릴 수 없어요.">
+            <input type="hidden" name="do" value="gw_delete"><input type="hidden" name="gateway_id" value="${g.id}">
+            <button class="btn danger small">삭제</button></form>
+        </div>`}
       </div>
       <details class="pmore">
         <summary>더 보기</summary>
