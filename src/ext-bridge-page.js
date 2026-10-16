@@ -20,8 +20,15 @@ export const EXT_BRIDGE_JS = String.raw`
     clearTimeout(waitTimer);
     if (on) waitTimer = setTimeout(function () { busy(false); fail('확장 프로그램에서 답이 오지 않았어요. 확장 프로그램을 새로고침(chrome://extensions)했다면 이 페이지도 새로고침(F5)한 뒤 다시 눌러 주세요.'); }, 12000);
   }
+  // 입력칸 아래 오류와 같은 문구면 위의 "최근 결과"는 숨긴다(같은 말이 두 번 보이지 않게)
+  function dedupe() {
+    if (!last || !err) return;
+    var lt = (last.textContent || '').replace(/^최근 결과: [^·]*· /, '').trim();
+    if (!err.hidden && lt && err.textContent.trim() === lt) last.hidden = true;
+  }
   function fail(msg) {
     if (err) { err.hidden = false; err.textContent = msg; }
+    dedupe();
     if (ok) ok.hidden = true;
     pwEl.setAttribute('aria-invalid', 'true'); pwEl.focus();
   }
@@ -46,6 +53,7 @@ export const EXT_BRIDGE_JS = String.raw`
     }
     st.textContent = t.join(' · ');
     st.className = 'notice ' + (old ? 'warn' : 'ok');
+    dedupe();
     if (s.gwId && !idEl.value) idEl.value = s.gwId;
   }
   window.addEventListener('message', function (e) {
