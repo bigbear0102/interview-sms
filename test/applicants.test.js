@@ -249,3 +249,111 @@ test('업로드로 블랙리스트까지 한 번에 등록: 제목 줄 있는 CS
   const tpl = await (await admin.call('/applicants/template.csv')).text();
   assert.ok(tpl.includes('블랙리스트,사유,사유 설명'));
 });
+
+import { purgeExpired } from '../src/core.js';
+
+test('업로드: 중복은 올리지 않고 새 내용만 반영, 이름이 다르면 알려 줌', async () => {
+  const { admin, db } = await setup();
+  const first = '이름,전화번호,지원한 곳,직무\n홍길동,010-1111-0001,A사,현장\n김영희,010-1111-0002,A사,물류';
+  let html = visible(await (await admin.post('/applicants/bulk', { back: '/applicants', text: first })).text());
+  assert.ok(html.includes('2명을 새로 등록했어요'));
+  // 똑같은 파일을 다시 올리면 아무것도 올리지 않는다
+  html = visible(await (await admin.post('/applicants/bulk', { back: '/applicants', text: first })).text());
+  assert.ok(html.includes('새로 올릴 내용이 없었어요'));
+  assert.ok(html.includes('중복 2건은 올리지 않았어요'));
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicants`).first()).n, 2);
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicant_applications`).first()).n, 2);
+  // 일부만 새 내용: 홍길동은 새 지원 건, 박민수는 신규, 김영희는 중복(이름 다름 경고)
+  const second = '이름,전화번호,지원한 곳,직무\n홍길동,010-1111-0001,B사,경비\n김영희씨,010-1111-0002,A사,물류\n박민수,010-1111-0003,A사,경비';
+  html = visible(await (await admin.post('/applicants/bulk', { back: '/applicants', text: second })).text());
+  assert.ok(html.includes('1명을 새로 등록했어요'));
+  assert.ok(html.includes('이미 있던 1명에게 새 내용을 추가했어요'));
+  assert.ok(html.includes('중복 1건은 올리지 않았어요'));
+  assert.ok(html.includes('기존 이름을 유지했어요'));
+  const name = await db.prepare(`SELECT name FROM applicants WHERE phone='01011110002'`).first();
+  assert.equal(name.name, '김영희');
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicants`).first()).n, 3);
+  // 같은 파일 안에서 같은 줄이 반복돼도 한 번만
+  const dupInFile = '이름,전화번호,지원한 곳,직무\n최수아,010-1111-0004,A사,현장\n최수아,010-1111-0004,A사,현장';
+  html = visible(await (await admin.post('/applicants/bulk', { back: '/applicants', text: dupInFile })).text());
+  assert.ok(html.includes('중복 1건은 올리지 않았어요'));
+});
+
+test('업로드 되돌리기: 새 사람은 삭제, 이후 바뀐 사람은 남김', async () => {
+  const { admin, db } = await setup();
+  const html = await (await admin.post('/applicants/bulk', { back: '/applicants',
+    text: '이름,전화번호,지원한 곳,직무,블랙리스트,사유\n가,010-2222-0001,A사,현장,Y,면접 무단 불참\n나,010-2222-0002,A사,물류,,' })).text();
+  const m = html.match(/\/applicants\/batch\/([A-Za-z0-9]+)\/undo/);
+  assert.ok(m, '되돌리기 버튼');
+  // 업로드 뒤에 한 사람을 직접 수정
+  const keep = await db.prepare(`SELECT id FROM applicants WHERE phone='01022220002'`).first();
+  await admin.post(`/applicants/${keep.id}/edit`, { name: '나', phone: '010-2222-0002', memo: '확인함' });
+  const r = await admin.post(`/applicants/batch/${m[1]}/undo`, { back: '/applicants' });
+  assert.equal(r.status, 303);
+  assert.match(r.headers.get('location'), /ok=undone&n=1&k=1/);
+  const left = await db.prepare(`SELECT name FROM applicants`).all();
+  assert.deepEqual(left.results.map((x) => x.name), ['나']);
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM blacklist`).first()).n, 0);
+  // 이미 되돌린 업로드는 다시 되돌릴 수 없다
+  const again = await admin.post(`/applicants/batch/${m[1]}/undo`, { back: '/applicants' });
+  assert.match(again.headers.get('location'), /err=noactive/);
+});
+
+test('블랙리스트 사유 수정, 번호 바로 확인', async () => {
+  const { admin, db } = await setup();
+  await admin.post('/applicants/new', { name: '홍길동', phone: '010-3333-0001', applied_to: 'A사', job: '현장' });
+  const id = (await db.prepare(`SELECT id FROM applicants`).first()).id;
+  await admin.post(`/applicants/${id}/blacklist`, { back: '/applicants', reason_code: 'noshow', reason_text: '' });
+  // 사유 수정(기타는 설명 필수)
+  let r = await admin.post(`/applicants/${id}/reason`, { back: '/applicants', reason_code: 'other', reason_text: '' });
+  assert.equal(r.headers.get('location'), '/applicants?err=reason');
+  r = await admin.post(`/applicants/${id}/reason`, { back: '/applicants', reason_code: 'misconduct', reason_text: '현장 폭언' });
+  assert.equal(r.headers.get('location'), '/applicants?ok=reasoned');
+  const bl = await db.prepare(`SELECT reason_code, reason_text FROM blacklist WHERE status='active'`).first();
+  assert.equal(bl.reason_code, 'misconduct');
+  assert.equal(bl.reason_text, '현장 폭언');
+  const ev = await db.prepare(`SELECT detail FROM applicant_events WHERE action='blacklist_edit'`).first();
+  assert.match(ev.detail, /면접 무단 불참 → 업무상 부적절한 행위/);
+  // 번호로 바로 확인: 블랙리스트 / 일반 / 없음 / 잘못된 번호
+  let page = visible(await (await admin.call('/applicants?lookup=' + encodeURIComponent('010-3333-0001'))).text());
+  assert.ok(page.includes('블랙리스트예요'));
+  assert.ok(page.includes('업무상 부적절한 행위'));
+  await admin.post(`/applicants/${id}/release`, { back: '/applicants', note: '' });
+  page = visible(await (await admin.call('/applicants?lookup=01033330001')).text());
+  assert.ok(page.includes('블랙리스트는 아니에요'));
+  page = visible(await (await admin.call('/applicants?lookup=01099990000')).text());
+  assert.ok(page.includes('등록된 지원자가 아니에요'));
+  page = visible(await (await admin.call('/applicants?lookup=123')).text());
+  assert.ok(page.includes('휴대폰 번호를 확인해 주세요'));
+});
+
+test('필터, 정렬, 쪽 넘기기, 그리고 오래된 지원자도 자동 삭제되지 않음', async () => {
+  const { admin, db } = await setup();
+  const rows = ['이름,전화번호,지원한 곳,직무,블랙리스트,사유'];
+  for (let i = 1; i <= 120; i++) {
+    const n = String(i).padStart(4, '0');
+    rows.push(`지원${n},010-5555-${n},${i % 2 ? 'A사' : 'B사'},${i % 3 ? '현장' : '물류'},${i === 7 ? 'Y' : ''},${i === 7 ? '면접 무단 불참' : ''}`);
+  }
+  // 200명 제한 안에서 한 번에 올린다
+  const res = await admin.post('/applicants/bulk', { back: '/applicants', text: rows.join('\n') });
+  assert.ok(visible(await res.text()).includes('120명을 새로 등록했어요'));
+  let page = await (await admin.call('/applicants')).text();
+  assert.ok(visible(page).includes('1 / 3쪽'));      // 50명씩 3쪽
+  assert.ok(visible(page).includes('총 120명'));
+  page = await (await admin.call('/applicants?page=3')).text();
+  assert.ok(visible(page).includes('3 / 3쪽'));
+  // 지원한 곳 필터
+  page = visible(await (await admin.call('/applicants?applied=' + encodeURIComponent('A사'))).text());
+  assert.ok(page.includes('총 60명'));
+  // 사유 필터 + 블랙리스트 탭
+  page = visible(await (await admin.call('/applicants?reason=noshow&status=bl')).text());
+  assert.ok(page.includes('지원0007'));
+  assert.ok(page.includes('총 1명'));
+  // 이름순 정렬
+  page = await (await admin.call('/applicants?sort=name')).text();
+  assert.ok(page.indexOf('지원0001') < page.indexOf('지원0002'));
+  // 오래된 지원자: 보관 만료 파기 작업이 지원자 데이터에 영향을 주지 않는다
+  await db.prepare(`UPDATE applicants SET created_at=1, updated_at=1`).run();
+  await purgeExpired(db, Date.now());
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicants`).first()).n, 120);
+});
