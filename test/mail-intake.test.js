@@ -175,3 +175,83 @@ test('수신 주소 다시 만들기는 관리자만, 새 주소가 만들어진
   const t2 = await getIntakeToken(db);
   assert.notEqual(t1, t2);
 });
+
+import { createAgentToken, verifyAgentToken, requestFetch, getAutoRegister } from '../src/mail-intake.js';
+
+test('에이전트 API: 토큰 인증, 요청 목록, 결과 저장, 자동 등록', async () => {
+  const { db, env, call, post } = await setup();
+  await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('홍길동(여, 32세)', '900000001'))), Date.now());
+  await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('박민수(남, 30세)', '900000002'))), Date.now());
+  const id1 = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='홍길동'`).first()).id;
+  const api = (path, init = {}, token) => handleRequest(new Request('https://interview.example.test' + path, {
+    ...init, headers: { ...(token ? { authorization: 'Bearer ' + token } : {}), ...(init.headers || {}) }
+  }), env, { waitUntil() {} });
+
+  // 토큰이 없거나 틀리면 401
+  assert.equal((await api('/api/agent/inbox')).status, 401);
+  const token = await createAgentToken(db);
+  assert.match(token, /^ag_[0-9a-f]{48}$/);
+  assert.equal(await verifyAgentToken(db, token), true);
+  assert.equal(await verifyAgentToken(db, 'ag_' + '0'.repeat(48)), false);
+  assert.equal((await api('/api/agent/inbox', {}, 'ag_' + '0'.repeat(48))).status, 401);
+
+  // 요청하지 않은 건은 목록에 없다
+  let list = await (await api('/api/agent/inbox', {}, token)).json();
+  assert.equal(list.items.length, 0);
+  // 화면에서 한 건 요청 → 에이전트 목록에 나타남
+  const rq = await post(`/applicants/inbox/${id1}/fetch`, {});
+  assert.equal(rq.headers.get('location'), '/applicants/inbox?ok=fetch');
+  list = await (await api('/api/agent/inbox', {}, token)).json();
+  assert.equal(list.items.length, 1);
+  assert.equal(list.items[0].name, '홍길동');
+  assert.match(list.items[0].resume_url, /email-apply-url-route/);
+
+  // 결과: 잘못된 번호는 실패 처리, 올바른 번호는 채움
+  let res = await api(`/api/agent/inbox/${id1}/result`, { method: 'POST', body: JSON.stringify({ ok: true, phone: '12345' }) }, token);
+  assert.equal((await res.json()).ok, false);
+  let row = await db.prepare(`SELECT phone, fetch_state FROM applicant_inbox WHERE id=?`).bind(id1).first();
+  assert.equal(row.fetch_state, 'failed');
+  await post(`/applicants/inbox/${id1}/fetch`, {});          // 다시 요청
+  res = await api(`/api/agent/inbox/${id1}/result`, { method: 'POST', body: JSON.stringify({ ok: true, phone: '010-9999-8888' }) }, token);
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.registered, false);
+  row = await db.prepare(`SELECT phone, fetch_state, status FROM applicant_inbox WHERE id=?`).bind(id1).first();
+  assert.equal(row.phone, '01099998888');
+  assert.equal(row.fetch_state, 'done');
+  assert.equal(row.status, 'pending');
+  // 수신함 화면: 연락처가 미리 채워져 있다
+  const page = await (await call('/applicants/inbox')).text();
+  assert.match(page, /value="010-9999-8888"/);
+  assert.match(page, /연락처 채워짐/);
+
+  // 자동 등록을 켜면 연락처를 가져오는 즉시 지원자로 등록
+  assert.equal(await getAutoRegister(db), false);
+  await post('/applicants/inbox/auto', { on: '1' });
+  assert.equal(await getAutoRegister(db), true);
+  const id2 = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='박민수'`).first()).id;
+  await post(`/applicants/inbox/${id2}/fetch`, {});
+  res = await api(`/api/agent/inbox/${id2}/result`, { method: 'POST', body: JSON.stringify({ ok: true, phone: '01077776666' }) }, token);
+  assert.equal((await res.json()).registered, true);
+  const ap = await db.prepare(`SELECT name, phone, source FROM applicants WHERE phone='01077776666'`).first();
+  assert.equal(ap.name, '박민수');
+  assert.equal(ap.source, 'mail');
+  assert.equal((await db.prepare(`SELECT status FROM applicant_inbox WHERE id=?`).bind(id2).first()).status, 'registered');
+});
+
+test('대기 전체 요청, 연결 키는 관리자 화면에서 한 번만 보여 줌', async () => {
+  const { db, call, post } = await setup();
+  await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('홍길동(여, 32세)', '900000001'))), Date.now());
+  await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('박민수(남, 30세)', '900000002'))), Date.now());
+  const r = await post('/applicants/inbox/fetch-all', {});
+  assert.match(r.headers.get('location'), /ok=fetchall&n=2/);
+  assert.equal(await requestFetch(db, null), 0);               // 이미 요청된 건은 다시 세지 않는다
+  const created = await post('/applicants/inbox/agent-token', {});
+  assert.equal(created.status, 200);
+  const html = await created.text();
+  const m = html.match(/ag_[0-9a-f]{48}/);
+  assert.ok(m, '새 연결 키가 한 번 표시됨');
+  const again = await (await call('/applicants/inbox')).text();
+  assert.ok(!/ag_[0-9a-f]{48}/.test(again), '다시 열면 키는 보이지 않음');
+  assert.match(again, /연결 키 있음/);
+});

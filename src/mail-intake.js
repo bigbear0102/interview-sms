@@ -207,3 +207,76 @@ export async function listInbox(db, status = 'pending', limit = 200) {
   const where = status === 'done' ? `status IN ('registered','ignored')` : `status='pending'`;
   return all(db, `SELECT * FROM applicant_inbox WHERE ${where} ORDER BY received_at DESC, id DESC LIMIT ${Number(limit) || 200}`);
 }
+
+// ---------------- 연락처 가져오기 요청 · 에이전트 ----------------
+import { sha256Hex } from './crypto.js';
+
+const AGENT_KEY = 'agent_token_hash';
+const AUTO_KEY = 'inbox_auto_register';
+
+export async function createAgentToken(db) {
+  const token = 'ag_' + hex(crypto.getRandomValues(new Uint8Array(24)));
+  await run(db, `INSERT INTO applicant_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+    AGENT_KEY, await sha256Hex(token));
+  return token;
+}
+
+export async function hasAgentToken(db) {
+  const r = await first(db, `SELECT value FROM applicant_settings WHERE key=?`, AGENT_KEY);
+  return !!(r && r.value);
+}
+
+export async function verifyAgentToken(db, token) {
+  const t = String(token || '');
+  if (!/^ag_[0-9a-f]{48}$/.test(t)) return false;
+  const r = await first(db, `SELECT value FROM applicant_settings WHERE key=?`, AGENT_KEY);
+  if (!r || !r.value) return false;
+  const h = await sha256Hex(t);
+  if (h.length !== r.value.length) return false;
+  let diff = 0;
+  for (let i = 0; i < h.length; i++) diff |= h.charCodeAt(i) ^ r.value.charCodeAt(i);
+  return diff === 0;
+}
+
+export async function getAutoRegister(db) {
+  const r = await first(db, `SELECT value FROM applicant_settings WHERE key=?`, AUTO_KEY);
+  return !!(r && r.value === '1');
+}
+export async function setAutoRegister(db, on) {
+  await run(db, `INSERT INTO applicant_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, AUTO_KEY, on ? '1' : '0');
+}
+
+// 가져오기 요청: 아직 연락처가 없고 대기 중인 건만. ids 가 없으면 대기 전체. 반환: 요청한 건수
+export async function requestFetch(db, ids = null) {
+  let sql = `UPDATE applicant_inbox SET fetch_state='requested', fetch_note='' WHERE status='pending' AND phone='' AND fetch_state != 'requested'`;
+  const args = [];
+  if (Array.isArray(ids)) {
+    if (!ids.length) return 0;
+    sql += ` AND id IN (${ids.map(() => '?').join(',')})`;
+    args.push(...ids);
+  }
+  const r = await run(db, sql, ...args);
+  return r.meta.changes || 0;
+}
+
+// 에이전트가 처리할 요청 목록(한 번에 적게)
+export async function agentQueue(db, limit = 5) {
+  return all(db,
+    `SELECT id, apply_no, name, resume_url FROM applicant_inbox
+      WHERE status='pending' AND fetch_state='requested' AND resume_url != ''
+      ORDER BY id LIMIT ${Math.min(Math.max(Number(limit) || 5, 1), 20)}`);
+}
+
+// 에이전트 결과 저장. 반환: { ok, phone? }
+export async function saveFetchResult(db, id, { ok, phone = '', note = '' }, now = Date.now()) {
+  const row = await first(db, `SELECT id, status FROM applicant_inbox WHERE id=?`, id);
+  if (!row || row.status !== 'pending') return { ok: false, reason: 'gone' };
+  const p = String(phone || '').replace(/\D/g, '');
+  if (ok && /^01[016789]\d{7,8}$/.test(p)) {
+    await run(db, `UPDATE applicant_inbox SET phone=?, fetch_state='done', fetch_note='', fetch_at=? WHERE id=?`, p, now, id);
+    return { ok: true, phone: p };
+  }
+  await run(db, `UPDATE applicant_inbox SET fetch_state='failed', fetch_note=?, fetch_at=? WHERE id=?`,
+    String(note || '연락처를 찾지 못했어요').slice(0, 200), now, id);
+  return { ok: false, reason: 'failed' };
+}

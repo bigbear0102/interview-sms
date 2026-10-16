@@ -25,7 +25,8 @@ import {
 import { mailConfigured } from './mailer.js';
 import { renderPhoneHelp } from './pages-help.js';
 import { renderPeople } from './people.js';
-import { handleApplicants, registerFromCampaign } from './applicants.js';
+import { handleApplicants, registerFromCampaign, saveApplicant, addEvent } from './applicants.js';
+import { handleAgentApi } from './agent-api.js';
 import { getIntakeToken, ingestRaw, MAX_MAIL_BYTES } from './mail-intake.js';
 import { getLinkSettings, flaggedInCampaign } from './applicants-link.js';
 import { renderLanding } from './landing.js';
@@ -121,6 +122,9 @@ async function handle(request, env, ctx) {
       return new Response(JSON.stringify({ ok: false, db: false }), { status: 503, headers: { 'Content-Type': 'application/json' } });
     }
   }
+
+  // 연락처 가져오기 에이전트(담당자 PC 프로그램)용 API: 세션 대신 에이전트 토큰으로 인증
+  if (path.startsWith('/api/agent/')) return handleAgentApi(request, env, url, { saveApplicant, addEvent });
 
   // CSRF 방어: 브라우저가 보낸 POST는 Origin 호스트가 현재 호스트와 같아야 한다
   if (method === 'POST') {

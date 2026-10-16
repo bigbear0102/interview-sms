@@ -9,3 +9,6 @@ data/
 data-*.log
 backups/
 exports/
+tools/albamon-agent/node_modules/
+tools/albamon-agent/chrome-profile/
+tools/albamon-agent/agent.config.json

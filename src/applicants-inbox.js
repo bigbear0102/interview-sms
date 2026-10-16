@@ -1,10 +1,11 @@
 // 메일 수신함: 알바몬 지원 알림 메일이 모이는 곳. 담당자가 이력서를 열어 연락처를 확인해 지원자로 등록한다.
 import { first, run } from './d1.js';
 import { esc, icon, fmtTime } from './views.js';
-import { pageHeader, tableWrap, emptyState } from './ui.js';
+import { fmtPhone, pageHeader, tableWrap, emptyState } from './ui.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import {
-  ensureIntakeToken, intakeAddress, intakeDomain, listInbox, pendingInboxCount
+  ensureIntakeToken, intakeAddress, intakeDomain, listInbox, pendingInboxCount,
+  requestFetch, createAgentToken, hasAgentToken, getAutoRegister, setAutoRegister
 } from './mail-intake.js';
 
 // 지원자 관리 화면 위쪽 분류 탭
@@ -35,12 +36,12 @@ const STATUS_BADGE = {
   ignored: '<span class="badge mute">무시</span>'
 };
 
-export async function renderInbox(db, env, { status = 'pending', isSuper = false, flash = '', err = '', origin = '' } = {}) {
+export async function renderInbox(db, env, { status = 'pending', isSuper = false, flash = '', err = '', origin = '', agentToken = '', fetched = 0 } = {}) {
   const pending = await pendingInboxCount(db);
   const rows = await listInbox(db, status === 'done' ? 'done' : 'pending');
   const doneCount = (await first(db, `SELECT COUNT(*) n FROM applicant_inbox WHERE status != 'pending'`)).n;
   const notices = [];
-  const FLASH = { registered: '지원자로 등록했어요.', ignored: '무시로 처리했어요.', restored: '다시 대기로 돌렸어요.', token: '수신 주소를 새로 만들었어요. 메일 전달 설정도 새 주소로 바꿔 주세요.' };
+  const FLASH = { fetch: '연락처 가져오기를 요청했어요. 에이전트가 켜져 있으면 곧 채워져요.', fetchall: `대기 중인 ${Number(fetched) || 0}건의 연락처 가져오기를 요청했어요.`, auto: '자동 등록 설정을 저장했어요.', registered: '지원자로 등록했어요.', ignored: '무시로 처리했어요.', restored: '다시 대기로 돌렸어요.', token: '수신 주소를 새로 만들었어요. 메일 전달 설정도 새 주소로 바꿔 주세요.' };
   const ERR = { invalid: '이름과 휴대폰 번호를 확인해 주세요. (예: 010-1234-5678)', gone: '이미 처리되었거나 찾을 수 없는 건이에요.' };
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
   if (ERR[err]) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div>${esc(ERR[err])}</div></div>`);
@@ -64,6 +65,27 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
       </div></details>`;
   }
 
+  const tokenSet = isSuper ? await hasAgentToken(db) : false;
+  const autoOn = isSuper ? await getAutoRegister(db) : false;
+  const agentCard = isSuper ? `<details class="card" style="margin-bottom:16px"${agentToken ? ' open' : ''}><summary><b>연락처 자동 가져오기 에이전트</b> <span class="muted">${tokenSet ? '연결 키 있음' : '연결 키 없음'} · 담당자 PC에서 알바몬에 로그인해 연락처를 읽어 와요</span></summary>
+    <div style="margin-top:12px" class="stack">
+      <p class="muted" style="font-size:14px">알바몬 이력서의 연락처는 <b>"클릭해야 보여요"</b>. 그래서 담당자 PC의 크롬이 알바몬에 로그인해 연락처 보기를 눌러 읽어 와요.
+        <b>알바몬 아이디·비밀번호는 그 PC에서만 입력</b>하고 이 시스템에는 저장하지 않아요. 여기서 <b>"연락처 가져오기"를 누른 건만</b> 처리해요.</p>
+      <div class="notice warn" role="note">${icon('alert')}<div>알바몬은 연락처를 열람할 때 <b>이용권이 차감될 수 있어요</b>. 에이전트는 차감·결제 확인 창이 보이면 누르지 않고 멈춰요. 처음에는 한두 건으로 확인해 보세요.</div></div>
+      ${agentToken ? `<div class="copybox"><div class="copylabel">에이전트 연결 키 (지금만 보여요. 에이전트 설정에 붙여넣으세요)</div><div class="copyvalue">${esc(agentToken)}</div>
+        <button type="button" class="btn secondary small" data-copy="${esc(agentToken)}">복사</button></div>` : ''}
+      <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
+        <li>이 PC에서 \`tools\\albamon-agent\\start.bat\`을 실행하고(처음에는 설치가 진행돼요), 안내에 따라 <b>시스템 주소와 연결 키</b>를 넣어요.</li>
+        <li>열린 크롬 창에서 <b>알바몬 기업회원으로 로그인</b>해요. 아이디·비밀번호를 터미널에 입력해도 되고, 크롬 창에 직접 로그인해도 돼요.</li>
+        <li>수신함에서 <b>연락처 가져오기</b>를 누른 건을 에이전트가 하나씩 열어 연락처를 채워 줘요. 채워진 뒤 <b>등록</b>만 누르면 돼요.</li>
+      </ol>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <form method="post" action="/applicants/inbox/agent-token" class="inline" data-confirm="${tokenSet ? '연결 키를 새로 만들까요? 이전 키로 실행 중인 에이전트는 멈춰요.' : '에이전트 연결 키를 만들까요?'}"><button class="btn secondary small">${tokenSet ? '연결 키 다시 만들기' : '연결 키 만들기'}</button></form>
+        <form method="post" action="/applicants/inbox/auto" class="inline"><input type="hidden" name="on" value="${autoOn ? 0 : 1}">
+          <button class="btn secondary small">연락처를 가져오면 바로 지원자로 등록: <b>${autoOn ? '켜짐 (끄기)' : '꺼짐 (켜기)'}</b></button></form>
+      </div>
+    </div></details>` : '';
+
   const tool = `<details class="card" style="margin-bottom:16px"><summary><b>이력서에서 연락처 가져오기 도구</b> <span class="muted">처음 한 번만 설치해요</span></summary>
     <div style="margin-top:12px" class="stack">
       <p class="muted" style="font-size:14px">알바몬 메일에는 연락처가 없어서, 이력서 페이지에서 확인해야 해요. 아래 버튼을 <b>브라우저 즐겨찾기 줄로 끌어다 놓으세요</b>.
@@ -71,6 +93,14 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
         (담당자 본인이 로그인한 화면의 글만 읽고, 아이디와 비밀번호는 다루지 않아요.)</p>
       <p><a class="btn" href="${esc(bookmarklet(origin))}" onclick="alert('이 버튼은 즐겨찾기 줄로 끌어다 놓아 쓰는 도구예요. 알바몬 이력서 페이지에서 눌러 주세요.');return false;">${icon('download', 18)}이력서 연락처 가져오기</a></p>
     </div></details>`;
+
+  const fetchUi = (r) => {
+    if (r.phone) return '<span class="badge ok">연락처 채워짐</span>';
+    if (r.fetch_state === 'requested') return '<span class="badge wait">에이전트 처리 대기</span>';
+    const note = r.fetch_state === 'failed'
+      ? `<span class="badge fail" title="${esc(r.fetch_note)}">가져오기 실패</span> <small class="muted">${esc(r.fetch_note)}</small>` : '';
+    return `${note}<form method="post" action="/applicants/inbox/${r.id}/fetch" class="inline"><button class="small secondary">${r.fetch_state === 'failed' ? '다시 요청' : '연락처 가져오기'}</button></form>`;
+  };
 
   const table = rows.length ? tableWrap(`<table class="cards sheet"><thead><tr><th>지원자</th><th>공고</th><th>정보</th><th>받은 시각</th><th>처리</th></tr></thead><tbody>
     ${rows.map((r) => `<tr>
@@ -81,9 +111,10 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
       <td data-label="처리" class="acts">${r.status === 'pending'
     ? `<div style="display:grid;gap:8px;min-width:240px">
           ${r.resume_url ? `<a class="btn secondary small" href="${esc(r.resume_url)}" target="_blank" rel="noopener noreferrer">${icon('clipboard', 16)}이력서 열기</a>` : ''}
+          <div>${fetchUi(r)}</div>
           <form method="post" action="/applicants/inbox/${r.id}/register" style="display:flex;gap:6px">
             <input type="hidden" name="name" value="${esc(r.name)}">
-            <input name="phone" type="tel" inputmode="tel" placeholder="연락처 010-0000-0000" required aria-label="${esc(r.name)} 연락처">
+            <input name="phone" type="tel" inputmode="tel" value="${esc(r.phone ? fmtPhone(r.phone) : '')}" placeholder="연락처 010-0000-0000" required aria-label="${esc(r.name)} 연락처">
             <button class="btn small" style="flex:none">등록</button></form>
           <form method="post" action="/applicants/inbox/${r.id}/ignore" class="inline"><button class="small secondary">무시</button></form>
         </div>`
@@ -100,8 +131,9 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   return `${pageHeader({ title: '지원자 관리', desc: '알바몬 지원 알림 메일을 모아서, 이력서를 확인하고 지원자로 등록해요.' })}
     ${peopleTabs('inbox', pending)}
     ${notices.join('')}
-    ${addressCard}${tool}
+    ${addressCard}${agentCard}${tool}
     <div class="tabs">${filterTab('pending', '대기', pending)}${filterTab('done', '처리됨', doneCount)}</div>
+    ${status === 'pending' && pending ? `<form method="post" action="/applicants/inbox/fetch-all" class="inline" style="margin-bottom:12px" data-confirm="대기 중인 ${pending}건의 연락처를 한꺼번에 가져오도록 요청할까요? 알바몬 이용권이 차감될 수 있어요."><button class="btn secondary small">대기 ${pending}건 모두 연락처 가져오기 요청</button></form>` : ''}
     <div class="card" style="padding:0">${table}</div>
     <script>document.addEventListener('click',function(e){var b=e.target.closest('[data-copy]');if(!b)return;navigator.clipboard.writeText(b.getAttribute('data-copy')).then(function(){var t=b.textContent;b.textContent='복사됐어요 ✓';setTimeout(function(){b.textContent=t;},1800);});});</script>`;
 }
@@ -193,7 +225,7 @@ export async function handleInbox(c, deps) {
     const sp = url.searchParams;
     return page('메일 수신함', await renderInbox(db, env, {
       status: sp.get('status') === 'done' ? 'done' : 'pending', isSuper: user.role === 'super',
-      flash: sp.get('ok') || '', err: sp.get('err') || '', origin: new URL(request.url).origin
+      flash: sp.get('ok') || '', err: sp.get('err') || '', origin: new URL(request.url).origin, fetched: sp.get('n') || 0
     }));
   }
   if (path === '/applicants/inbox/capture' && method === 'GET') {
@@ -206,12 +238,36 @@ export async function handleInbox(c, deps) {
     return redirect('/applicants/inbox?ok=token');
   }
 
-  const m = path.match(/^\/applicants\/inbox\/(\d+)\/(register|ignore|restore)$/);
+  if (path === '/applicants/inbox/fetch-all' && method === 'POST') {
+    const n = await requestFetch(db, null);
+    await audit(db, user, 'applicant.inbox_fetch_all', `n=${n}`);
+    return redirect(`/applicants/inbox?ok=fetchall&n=${n}`);
+  }
+  if (path === '/applicants/inbox/auto' && method === 'POST') {
+    if (user.role !== 'super') return html(pg('접근 불가', '<p>관리자만 할 수 있어요.</p>', 'applicants'), 403);
+    const f = await readForm(request);
+    await setAutoRegister(db, f.on === '1');
+    await audit(db, user, 'applicant.inbox_auto', `on=${f.on === '1' ? 1 : 0}`);
+    return redirect('/applicants/inbox?ok=auto');
+  }
+  if (path === '/applicants/inbox/agent-token' && method === 'POST') {
+    if (user.role !== 'super') return html(pg('접근 불가', '<p>관리자만 할 수 있어요.</p>', 'applicants'), 403);
+    const token = await createAgentToken(db);
+    await audit(db, user, 'applicant.agent_token', '');
+    return page('메일 수신함', await renderInbox(db, env, { isSuper: true, origin: new URL(request.url).origin, agentToken: token }));
+  }
+
+  const m = path.match(/^\/applicants\/inbox\/(\d+)\/(register|ignore|restore|fetch)$/);
   if (!m || method !== 'POST') return null;
   const id = Number(m[1]);
   const action = m[2];
   const item = await first(db, `SELECT * FROM applicant_inbox WHERE id=?`, id);
   if (!item) return redirect('/applicants/inbox?err=gone');
+  if (action === 'fetch') {
+    await requestFetch(db, [id]);
+    await audit(db, user, 'applicant.inbox_fetch', `inbox=${id}`);
+    return redirect('/applicants/inbox?ok=fetch');
+  }
   const f = await readForm(request);
   const now = Date.now();
 

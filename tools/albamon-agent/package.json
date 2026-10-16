@@ -1,0 +1,16 @@
+{
+  "name": "albamon-agent",
+  "private": true,
+  "version": "0.1.0",
+  "description": "담당자 PC에서 알바몬에 로그인해 지원자 연락처를 읽어 오는 도우미 (문자 관리 시스템 연동)",
+  "type": "module",
+  "scripts": {
+    "start": "node agent.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.14.0"
+  }
+}
