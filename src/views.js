@@ -246,6 +246,98 @@ table.sample th,table.sample td{white-space:nowrap}
 .tabs .n{opacity:.7;font-weight:400}
 .chip{display:inline-block;background:var(--chip);border-radius:999px;padding:4px 14px}
 
+/* ---------- 지원자 작업 공간: 상단 탭 · 새 지원 카드 · 연결 설정 ---------- */
+.wstabs{display:flex;align-items:center;gap:2px;margin:-6px 0 22px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+.wstabs::-webkit-scrollbar{display:none}
+.wstabs a{position:relative;flex:none;display:inline-flex;align-items:center;gap:7px;padding:12px 14px;margin-bottom:-1px;border-bottom:3px solid transparent;color:var(--muted);font-size:16px;font-weight:600;white-space:nowrap}
+.wstabs a:hover{color:var(--ink);text-decoration:none}
+.wstabs a[aria-current=page]{color:var(--ink);border-bottom-color:var(--ink)}
+.wstabs .cnt{min-width:22px;height:22px;padding:0 7px;border-radius:999px;font-size:12px;line-height:22px;text-align:center;font-weight:700;background:var(--blue-bg);color:var(--blue-t)}
+.wstabs .cnt.warn{background:var(--amber-bg);color:var(--amber-t)}
+.wstabs .push{margin-left:auto;font-weight:500;font-size:14px}
+.conn{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;font-size:14px;font-weight:600;background:var(--chip);color:var(--muted);white-space:nowrap}
+.conn i{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.conn.on{background:var(--green-bg);color:var(--green-t)}.conn.on i{background:var(--green)}
+.conn.idle{background:var(--amber-bg);color:var(--amber-t)}.conn.idle i{background:var(--amber-bar)}
+a.conn:hover{text-decoration:none;filter:brightness(.96)}
+.stats.tight{grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:16px}
+.stats.tight .stat{padding:12px 16px}.stats.tight .stat b{font-size:26px}
+.stat.on{outline:2px solid var(--ink);outline-offset:-2px}
+.applist{display:flex;flex-direction:column;gap:12px}
+.appcard{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 14px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);padding:16px 18px 14px}
+.appcard.ready{box-shadow:inset 4px 0 0 var(--green)}
+.appcard .sel{padding-top:4px}
+.appcard .head{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px}
+.appcard .name{font-size:18px;font-weight:700;letter-spacing:-.02em}
+.appcard .meta{color:var(--muted);font-size:14px}
+.appcard .when{margin-left:auto;color:var(--muted);font-size:13px;white-space:nowrap}
+.appcard .post{margin-top:2px;font-size:14px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.appcard .post b{color:var(--ink);font-weight:600}
+.appcard .states{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.appcard .cl{margin-top:4px}
+.appcard .cl>summary{display:inline-flex;align-items:center;min-height:32px;color:var(--blue);font-size:14px;font-weight:500;cursor:pointer}
+.appcard .classify{margin-top:8px;display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr) auto;gap:8px;align-items:end}
+.appcard .fl{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);font-weight:600}
+.appcard .classify input,.appcard .reg input{min-height:42px;padding:9px 12px;font-size:15px}
+.appcard .hint{grid-column:1/-1;flex-direction:row;align-items:center;gap:8px;color:var(--muted);font-size:13px;font-weight:400}
+.appcard .hint input{width:16px;height:16px}
+.appcard .foot{margin-top:8px;padding-top:10px;border-top:1px solid var(--line-soft);display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.appcard .foot .grow{flex:1}
+.appcard .reg{display:flex;gap:8px;align-items:center}
+.appcard .reg input{width:180px}
+.appcard .lk{background:none;border:0;color:var(--blue);padding:6px 8px;min-height:36px;font-size:14px;font-weight:500;border-radius:999px}
+.appcard .lk:hover{background:var(--blue-bg)}
+.appcard .lk.quiet{color:var(--muted)}
+@media(max-width:720px){.appcard{padding:14px}.appcard .classify{grid-template-columns:1fr 1fr}.appcard .classify .sv{grid-column:1/-1}.appcard .reg{width:100%}.appcard .reg input{flex:1;width:auto}.appcard .when{margin-left:0;width:100%}}
+.bulkdock{position:sticky;top:calc(var(--nav-h) + 8px);z-index:12;display:none;gap:8px 12px;align-items:center;flex-wrap:wrap;background:var(--ink);color:var(--bg);border-radius:var(--r-l);padding:10px 14px;margin-bottom:12px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.bulkdock.on{display:flex}
+.bulkdock b{font-size:15px;margin-right:auto}
+.bulkdock button{min-height:38px;padding:7px 16px;font-size:14px;background:var(--bg);color:var(--ink)}
+.bulkdock button:hover{filter:brightness(.95);background:var(--bg)}
+.bulkdock button.ghost{background:transparent;color:var(--bg);border-color:rgba(255,255,255,.45)}
+.listbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 10px 4px;font-size:14px}
+.selall{flex-direction:row;align-items:center;gap:8px;font-weight:500;color:var(--muted);font-size:14px;margin:0}
+.hero{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);padding:16px 20px;margin-bottom:16px}
+.hero b{font-size:17px}
+.csteps{counter-reset:cs;display:flex;flex-direction:column;gap:14px;margin-bottom:16px}
+.cstep{position:relative;display:block;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);padding:20px 20px 20px 66px}
+.cstep::before{counter-increment:cs;content:counter(cs);position:absolute;left:18px;top:18px;width:34px;height:34px;border-radius:50%;background:var(--ink);color:var(--bg);display:grid;place-items:center;font-weight:700}
+.cstep.done::before{content:"✓";background:var(--green);color:#fff}
+.cstep h2{font-size:18px;margin-bottom:4px}
+.cstep .stack{margin-top:12px}
+@media(max-width:640px){.cstep{padding:16px}.cstep::before{position:static;margin-bottom:10px}}
+.advanced{margin-top:8px}
+.advanced>summary{font-weight:600;padding:10px 4px;color:var(--muted)}
+.advanced .card{margin-top:12px}
+
+/* ---------- 대화 창(시트) · 지원자 상세 ---------- */
+dialog.sheet{border:0;border-radius:22px;padding:0;max-width:min(640px,calc(100vw - 24px));width:100%;background:var(--surface);color:var(--ink);box-shadow:0 24px 64px rgba(0,0,0,.35)}
+dialog.sheet::backdrop{background:rgba(0,0,0,.45)}
+dialog.sheet>form,dialog.sheet>.dlgbox{padding:24px;display:flex;flex-direction:column;gap:14px}
+dialog.sheet>.dlgbox>form{display:flex;flex-direction:column;gap:14px}
+dialog.sheet h2{margin:0}
+.dlg-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:4px}
+@media (max-width:640px){dialog.sheet{margin:auto 0 0;max-width:100vw;border-radius:22px 22px 0 0}dialog.sheet>form,dialog.sheet>.dlgbox{padding:20px 16px 24px}}
+.pd{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:20px;align-items:start}
+@media (max-width:900px){.pd{grid-template-columns:1fr}.pd aside{order:-1}}
+.pd-hero{display:flex;gap:16px;align-items:center;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);padding:20px;margin-bottom:20px}
+.pd-hero .nm{font-size:26px;font-weight:700;letter-spacing:-.02em;margin:0}
+.pd-hero .ph{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:var(--muted);font-variant-numeric:tabular-nums}
+.pd-hero .acts{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+@media (max-width:640px){.pd-hero .acts{margin-left:0;width:100%}.pd-hero .acts>*{flex:1}}
+.avatar{width:64px;height:64px;border-radius:50%;background:var(--blue-bg);color:var(--blue-t);display:grid;place-items:center;font-size:24px;font-weight:700;flex:none}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);padding:18px 20px;margin-bottom:14px;overflow:hidden}
+.panel h2{font-size:17px;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.panel.bad{background:var(--red-bg);border-color:transparent}
+.panel.bad h2{color:var(--red-t)}
+.panel.good{background:var(--green-bg);border-color:transparent}
+.panel.good h2{color:var(--green-t)}
+.aitem{padding:14px 0;border-top:1px solid var(--line-soft)}
+.aitem:first-of-type{border-top:0;padding-top:4px}
+.aitem .t{font-weight:600}
+.aitem .chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.aitem small{display:block}
+
 /* ---------- 홈 ---------- */
 .actions-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
 .action{display:flex;gap:14px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);padding:18px;color:var(--ink)}

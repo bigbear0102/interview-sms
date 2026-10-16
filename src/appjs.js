@@ -184,4 +184,13 @@ document.addEventListener('click', function (e) {
   var inp = card.querySelector('input[name=cost_center]');
   if (inp) { inp.value = b.getAttribute('data-fill'); inp.focus(); }
 });
+
+// 대화 창(data-dialog="아이디" 버튼으로 열고, data-close 버튼이나 바깥 눌러서 닫는다)
+document.addEventListener('click', function (e) {
+  var o = e.target.closest && e.target.closest('[data-dialog]');
+  if (o) { var d = document.getElementById(o.getAttribute('data-dialog')); if (d && d.showModal) { d.showModal(); var f = d.querySelector('input:not([type=hidden]),textarea'); if (f) f.focus(); } return; }
+  var c = e.target.closest && e.target.closest('[data-close]');
+  if (c) { var dd = c.closest('dialog'); if (dd) dd.close(); return; }
+  if (e.target.tagName === 'DIALOG' && e.target.classList.contains('sheet')) e.target.close();
+});
 `;

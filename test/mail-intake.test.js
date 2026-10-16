@@ -132,9 +132,10 @@ test('수신함 화면: 수신 주소(관리자), 대기 목록, 등록(연락�
   assert.ok(text.includes('홍길동'));
   assert.ok(text.includes('㈜테스트-회사'));
   assert.match(page, /target="_blank" rel="noopener noreferrer"/);
+  const connPage = await (await call('/applicants/inbox/connect')).text();
   const token = await getIntakeToken(db);
-  assert.ok(page.includes(`apply-${token}@bigbears.me`) || page.includes(`apply-${token}@`));
-  assert.match(page, /javascript:\(function\(\)/);
+  assert.ok(connPage.includes(`apply-${token}@bigbears.me`) || connPage.includes(`apply-${token}@`));
+  assert.match(connPage, /javascript:\(function\(\)/);
   // 연락처 없이/잘못된 연락처 → 거절
   const id1 = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='홍길동'`).first()).id;
   let r = await post(`/applicants/inbox/${id1}/register`, { name: '홍길동', phone: '123' });
@@ -164,7 +165,7 @@ test('수신함 화면: 수신 주소(관리자), 대기 목록, 등록(연락�
   assert.equal(await pendingInboxCount(db), 1);
   // 홈 "오늘 할 일"에 메일로 들어온 지원자
   const home = visible(await (await call('/')).text());
-  assert.ok(home.includes('메일로 들어온 지원자'));
+  assert.ok(home.includes('새 지원이 도착했어요'));
   // 가져오기 화면
   const cap = await (await call('/applicants/inbox/capture')).text();
   assert.match(cap, /id="pending-data"/);
@@ -175,7 +176,7 @@ test('수신 주소 다시 만들기는 관리자만, 새 주소가 만들어진
   const { db, post } = await setup();
   const t1 = await ensureIntakeToken(db);
   const r = await post('/applicants/inbox/token', {});
-  assert.equal(r.headers.get('location'), '/applicants/inbox?ok=token');
+  assert.equal(r.headers.get('location'), '/applicants/inbox/connect?ok=token');
   const t2 = await getIntakeToken(db);
   assert.notEqual(t1, t2);
 });
@@ -227,7 +228,7 @@ test('에이전트 API: 토큰 인증, 요청 목록, 결과 저장, 자동 등�
   // 수신함 화면: 연락처가 미리 채워져 있다
   const page = await (await call('/applicants/inbox')).text();
   assert.match(page, /value="010-9999-8888"/);
-  assert.match(page, /연락처 채워짐/);
+  assert.match(page, /연락처 있음/);
 
   // 자동 등록을 켜면 연락처를 가져오는 즉시 지원자로 등록
   assert.equal(await getAutoRegister(db), false);
@@ -255,9 +256,9 @@ test('대기 전체 요청, 연결 키는 관리자 화면에서 한 번만 보�
   const html = await created.text();
   const m = html.match(/ag_[0-9a-f]{48}/);
   assert.ok(m, '새 연결 키가 한 번 표시됨');
-  const again = await (await call('/applicants/inbox')).text();
+  const again = await (await call('/applicants/inbox/connect')).text();
   assert.ok(!/ag_[0-9a-f]{48}/.test(again), '다시 열면 키는 보이지 않음');
-  assert.match(again, /연결 키 있음/);
+  assert.match(visible(again), /연결 키 있음/);
 });
 
 test('원가중심점: 같은 공고에 한 번에 적용·기억, 새 메일에 자동, 등록 시 지원한 곳으로 저장', async () => {
@@ -422,7 +423,7 @@ test('공고별 정리: 한 번 입력하면 등록된 지원자·수신함 대�
   assert.equal(await unclassifiedCount(db), 1);
   // 지원자 목록에 "정리 필요" 안내와 배지
   const list = await (await call('/applicants')).text();
-  assert.ok(visible(list).includes('공고별로 한꺼번에 정리하기'));
+  assert.ok(visible(list).includes('공고 정리에서 한 번에 정하기'));
   assert.ok(visible(list).includes('정리 필요'));
   // 공고별 정리 화면: 한 공고에 3명
   let page = await (await call('/applicants/postings')).text();
@@ -495,21 +496,21 @@ test('내 메일 수신 주소: 사람마다 따로, 이름 바꾸기(중복·�
   const n1 = await getUserMailName(db, a.id);
   assert.match(n1, /^[0-9a-f]{12}$/);
   assert.equal(await getUserMailName(db, a.id), n1);   // 그대로 유지
-  let page = await (await a.call('/applicants/inbox')).text();
+  let page = await (await a.call('/applicants/inbox/connect')).text();
   assert.ok(page.includes(`apply-${n1}@bigbears.me`) || page.includes(`apply-${n1}@`));
   assert.ok(visible(page).includes('메일 자동 전달용 주소'));
-  assert.ok(visible(page).includes('내 그룹웨어 메일 가져오기'));
+  assert.ok(visible(page).includes('그룹웨어 계정 등록'));
   // 이름 바꾸기
   let r = await a.post('/applicants/inbox/my-address', { name: 'Hong-Gildong' });
-  assert.equal(r.headers.get('location'), '/applicants/inbox?ok=addr');
+  assert.equal(r.headers.get('location'), '/applicants/inbox/connect?ok=addr');
   assert.equal(await getUserMailName(db, a.id), 'hong-gildong');   // 소문자로
-  assert.equal((await b.post('/applicants/inbox/my-address', { name: 'hong-gildong' })).headers.get('location'), '/applicants/inbox?err=addr_taken');
+  assert.equal((await b.post('/applicants/inbox/my-address', { name: 'hong-gildong' })).headers.get('location'), '/applicants/inbox/connect?err=addr_taken');
   for (const bad of ['ab', '한글이름', 'has space', '-start', 'x'.repeat(31)]) {
     assert.equal((await setUserMailName(db, b.id, bad)).error, 'invalid', bad);
   }
   // 무작위로 다시 만들기
   r = await a.post('/applicants/inbox/my-address', { random: '1', name: 'whatever' });
-  assert.equal(r.headers.get('location'), '/applicants/inbox?ok=addr');
+  assert.equal(r.headers.get('location'), '/applicants/inbox/connect?ok=addr');
   assert.match(await getUserMailName(db, a.id), /^[0-9a-f]{12}$/);
   await a.post('/applicants/inbox/my-address', { name: 'hong-gildong' });
   assert.equal(await ownerForMailName(db, 'HONG-GILDONG'), a.id);
@@ -563,9 +564,9 @@ test('연결 키 자동 발급(JSON): 로그인한 사람의 키가 만들어지
   assert.equal(await hasAgentToken(db, me.id), true);
   assert.deepEqual(await verifyAgentToken(db, j.token), { userId: me.id });
   // 화면에는 자동 연결 안내가 있고 카드가 펼쳐져 있다
-  const page = await (await call('/applicants/inbox')).text();
-  assert.ok(visible(page).includes('연결 키는 입력할 필요가 없어요'));
-  assert.match(page, /<details class="card" style="margin-bottom:16px" open><summary><b>내 그룹웨어 메일 가져오기/);
+  const page = await (await call('/applicants/inbox/connect')).text();
+  assert.ok(visible(page).includes('연결 키도 자동으로 연결돼요'));
+  assert.match(page, /id="gwform"/);
   // 로그인하지 않으면 만들 수 없다
   const anon = await handleRequest(new Request('https://interview.example.test/applicants/inbox/agent-token.json', { method: 'POST', headers: { origin: 'https://interview.example.test' } }), { DB: db, ENCRYPTION_KEY: 'k', PUBLIC_BASE_URL: 'https://interview.example.test' }, { waitUntil() {} });
   assert.notEqual(anon.status, 200);

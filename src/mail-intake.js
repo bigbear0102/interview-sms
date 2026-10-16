@@ -274,6 +274,13 @@ export async function createAgentToken(db, userId = null) {
   return token;
 }
 
+// 내 연결 키가 있는지, 내 확장이 마지막으로 시스템에 접속한 시각
+export async function agentStatus(db, userId) {
+  if (userId == null) return { hasKey: await hasAgentToken(db, null), lastUsedAt: null };
+  const r = await first(db, `SELECT last_used_at FROM agent_tokens WHERE user_id=?`, userId);
+  return { hasKey: !!r, lastUsedAt: r ? r.last_used_at : null };
+}
+
 export async function hasAgentToken(db, userId = null) {
   if (userId != null) return !!(await first(db, `SELECT 1 x FROM agent_tokens WHERE user_id=?`, userId));
   const r = await first(db, `SELECT value FROM applicant_settings WHERE key=?`, AGENT_KEY);

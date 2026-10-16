@@ -7,6 +7,7 @@ import { fmtPhone, pageHeader, tableWrap, emptyState } from './ui.js';
 import { normalizePhone } from './parser.js';
 import { peopleTabs } from './applicants-inbox.js';
 import { pendingInboxCount } from './mail-intake.js';
+import { unclassifiedPostings } from './workspace.js';
 
 const ph = (n) => Array.from({ length: n }, () => '?').join(',');
 
@@ -58,7 +59,7 @@ export async function renderPeople(db, deps, q = '', viewer = null) {
     : emptyState({ title: term ? '찾는 사람이 없어요' : '아직 기록이 없어요', desc: '면접 안내를 보내면 사람별 이력이 여기에 쌓여요.' });
   return `${pageHeader({ title: '면접 안내 이력', back: { href: '/applicants', label: '지원자 관리' },
     desc: '같은 전화번호의 면접 안내를 한 사람으로 묶어 보여 줘요. 노쇼가 많은 사람이 위에 나와요. 개인정보 보관 기간이 지난 기록은 빠져요.' })}
-    ${peopleTabs('history', await pendingInboxCount(db, viewer).catch(() => 0))}
+    ${peopleTabs('history', await pendingInboxCount(db, viewer).catch(() => 0), await unclassifiedPostings(db).catch(() => 0))}
     <form method="get" style="display:flex;gap:8px;margin-bottom:16px;max-width:420px"><input name="q" value="${esc(term)}" placeholder="이름, 전화번호, 사업장" aria-label="검색">
       <button class="secondary" style="flex:none">찾기</button></form>
     <div class="card" style="padding:0">${body}</div>`;

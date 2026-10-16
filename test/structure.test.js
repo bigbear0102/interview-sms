@@ -84,14 +84,22 @@ test('사람 화면 통합: 면접 안내 이력은 지원자 관리 메뉴 아�
   assert.match(reg.headers.get('location'), /^\/applicants\/\d+$/);
 });
 
-test('지원자 줄 행동: 수정 · 기록 + 더 보기 메뉴', async () => {
+test('지원자 목록: 위쪽 탭(일의 순서), 행 누르면 상세, 추가·올리기 대화 창, 일괄 처리 막대', async () => {
   const { call, post } = await setup('super');
   await post('/applicants/new', { name: '홍길동', phone: '010-1111-0001', applied_to: 'A', job: '현장' });
   const html = await (await call('/applicants')).text();
-  assert.match(html, /<details class="more">/);
-  assert.match(html, /블랙리스트로 등록/);
-  assert.match(html, /상세 화면 열기/);
-  assert.match(html, /class="tabs"><a href="\/applicants" aria-current="page">지원자 목록<\/a><a href="\/applicants\/postings">공고별 정리<\/a><a href="\/applicants\/inbox">메일 수신함<\/a><a href="\/people">면접 안내 이력<\/a>/);
+  // 탭: 새 지원 → 지원자 → 공고 정리 → 면접 이력, 연결 설정은 오른쪽 끝
+  assert.match(html, /<nav class="wstabs"[^>]*><a href="\/applicants\/inbox">새 지원<\/a><a href="\/applicants" aria-current="page">지원자<\/a><a href="\/applicants\/postings">공고 정리<\/a><a href="\/people">면접 이력<\/a><a class="push" href="\/applicants\/inbox\/connect">/);
+  assert.match(html, /data-dialog="dlg-add"/);
+  assert.match(html, /data-dialog="dlg-import"/);
+  assert.match(html, /<tr data-href="\/applicants\/\d+">/);
+  assert.match(html, /class="bulkdock"/);
+  // 상세: 문자 보내기·수정·블랙리스트 등록 대화 창
+  const id = (html.match(/data-href="\/applicants\/(\d+)"/) || [])[1];
+  const d = await (await call('/applicants/' + id)).text();
+  assert.match(d, /href="\/send\?to=01011110001"/);
+  assert.match(d, /id="dlg-edit"/);
+  assert.match(d, /id="dlg-bl"/);
 });
 
 test('공통 스크립트: 확인 대화상자, 제출 중 잠금, 표 머리글 scope', async () => {

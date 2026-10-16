@@ -185,7 +185,7 @@ export async function renderHome(db, user, deps) {
 
   const todoItems = [
     review ? `<li><a href="/campaigns"><span class="n review">${review}</span><span class="t">확인이 필요한 답장<small>참석인지 불참인지 애매해서 사람이 봐야 해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
-    inboxPending ? `<li><a href="/applicants/inbox"><span class="n info">${inboxPending}</span><span class="t">메일로 들어온 지원자<small>이력서를 확인하고 지원자로 등록해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
+    inboxPending ? `<li><a href="/applicants/inbox"><span class="n info">${inboxPending}</span><span class="t">새 지원이 도착했어요<small>이력서를 확인하고 지원자로 등록해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
     unread ? `<li><a href="/messages?dir=in"><span class="n info">${unread}</span><span class="t">안 읽은 받은 문자<small>문자함에서 확인해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
     noreply7 ? `<li><a href="/campaigns"><span class="n wait">${noreply7}</span><span class="t">아직 답이 없는 사람 (최근 7일)<small>면접 안내에서 "답 없는 사람에게 다시 보내기"를 쓸 수 있어요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
     scheduled ? `<li><a href="/messages?dir=scheduled"><span class="n mute">${scheduled}</span><span class="t">예약 대기 중인 발송<small>정해 둔 시간에 나가요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : ''

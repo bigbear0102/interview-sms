@@ -56,7 +56,7 @@ test('지원자 등록, 검색, 상세, 같은 번호는 한 사람으로 합침
   assert.ok(detail.includes('다른회사'));
   const list = visible(await (await admin.call('/applicants')).text());
   assert.ok(list.includes('홍길동'));
-  assert.ok(list.includes('외 1건'));
+  assert.ok(visible(list).includes('지원 2건'));
   const byJob = visible(await (await admin.call('/applicants?q=' + encodeURIComponent('경비'))).text());
   assert.ok(byJob.includes('홍길동'));
   const none = visible(await (await admin.call('/applicants?q=' + encodeURIComponent('없는사람'))).text());
@@ -93,7 +93,7 @@ test('블랙리스트: 기타는 사유 필수, 등록 → 목록 표시 → 수
   const ok = await staff.post(loc + '/blacklist', { reason_code: 'noshow', reason_text: '10/20 연락 없이 불참' });
   assert.equal(ok.status, 303);
   let detail = visible(await (await admin.call(loc)).text());
-  assert.ok(detail.includes('블랙리스트에 등록되어 있어요'));
+  assert.ok(detail.includes('블랙리스트') && detail.includes('사유'));
   assert.ok(detail.includes('면접 무단 불참'));
   let list = visible(await (await admin.call('/applicants?status=bl')).text());
   assert.ok(list.includes('홍길동'));
@@ -103,7 +103,7 @@ test('블랙리스트: 기타는 사유 필수, 등록 → 목록 표시 → 수
   const rel = await admin.post(loc + '/release', { note: '본인 확인 후 해제' });
   assert.equal(rel.status, 303);
   detail = visible(await (await admin.call(loc)).text());
-  assert.ok(!detail.includes('블랙리스트에 등록되어 있어요'));
+  assert.ok(detail.includes('일반 지원자'));
   assert.ok(detail.includes('이전 블랙리스트 기록'));
   assert.ok(detail.includes('블랙리스트 해제'));
   list = visible(await (await admin.call('/applicants?status=bl')).text());
@@ -143,9 +143,9 @@ test('한 화면 표: 입력 줄 추가, 표에서 바로 수정, 블랙리스�
   let page = await (await admin.call('/applicants?ok=added')).text();
   assert.ok(visible(page).includes('지원자를 등록했어요'));
   assert.ok(visible(page).includes('홍길동'));
-  assert.match(page, /id="addform"/);       // 입력 줄
+  assert.match(page, /id="dlg-add"/);       // 추가 대화 창
   assert.match(page, /id="csvfile"/);       // CSV 파일 올리기
-  assert.match(page, /js-edit/);            // 표에서 수정 버튼
+  assert.match(page, /data-href="\/applicants\/\d+"/);   // 행을 누르면 상세로
   const row = await db.prepare(`SELECT id FROM applicants`).first();
   const id = row.id;
   // 번호가 잘못되면 같은 화면에 오류 안내

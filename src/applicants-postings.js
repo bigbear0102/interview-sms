@@ -98,8 +98,8 @@ export async function renderPostings(db, { tab = 'todo', viewer = null, flash = 
     ? `<div class="notice ok">${icon('check')}<div><b>${Number(n) || 0}명</b>에게 적용했어요. 앞으로 같은 공고로 오는 지원도 자동으로 정리돼요.${todo.length ? ` 남은 공고 <b>${todo.length}개</b>` : ' 정리할 공고가 모두 끝났어요.'}</div></div>` : '';
   const errBox = ERR[err] ? `<div class="notice warn" role="alert">${icon('alert')}<div>${esc(ERR[err])}</div></div>` : '';
 
-  return `${pageHeader({ title: '공고별 정리', desc: '같은 공고로 지원한 사람들을 한 번에 정리해요. 공고마다 한 번만 입력하면 그 공고의 모든 지원자에게 적용돼요.' })}
-    ${peopleTabs('postings', pending)}
+  return `${pageHeader({ title: '공고 정리', desc: '같은 공고로 지원한 사람들을 한 번에 정리해요. 공고마다 한 번만 입력하면 그 공고의 모든 지원자에게 적용돼요.' })}
+    ${peopleTabs('postings', pending, todo.length)}
     ${notice}${errBox}
     <div class="tabs">${tabLink('todo', '정리 필요', todo.length)}${tabLink('done', '정리 끝', done.length)}</div>
     <datalist id="dl-pjob">${jobs.map((j) => `<option value="${esc(j.v)}">`).join('')}</datalist>
@@ -113,7 +113,7 @@ export async function handlePostings(c) {
   const pending = await pendingInboxCount(db, viewer).catch(() => 0);
   if (path === '/applicants/postings' && method === 'GET') {
     const sp = url.searchParams;
-    return html(pg('공고별 정리', await renderPostings(db, {
+    return html(pg('공고 정리', await renderPostings(db, {
       tab: sp.get('tab') === 'done' ? 'done' : 'todo', viewer, flash: sp.get('ok') || '', n: sp.get('n') || 0, err: sp.get('err') || '', pending
     }), 'applicants'));
   }

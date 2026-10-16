@@ -3,14 +3,15 @@
 // 데이터는 자동으로 지우지 않는다(오래 쓰지 않은 지원자도 계속 보관). 삭제는 관리자가 직접 한다.
 import { all, first, run, stmt } from './d1.js';
 import { esc, icon, fmtTime } from './views.js';
-import { fmtPhone, pageHeader, tableWrap, emptyState } from './ui.js';
+import { fmtPhone, pageHeader, tableWrap, emptyState, fmtWhen } from './ui.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import { parseCsv, toCsv } from './csv.js';
 import {
   getLinkSettings, saveLinkSettings, campaignHistory, noshowSuggestions, dismissSuggestion, DEFAULT_THRESHOLD
 } from './applicants-link.js';
 import { peopleTabs, handleInbox } from './applicants-inbox.js';
-import { handlePostings, unclassifiedCount } from './applicants-postings.js';
+import { handlePostings } from './applicants-postings.js';
+import { unclassifiedPostings } from './workspace.js';
 import { pendingInboxCount } from './mail-intake.js';
 
 export const canUseApplicants = (user) => !!user; // 이후: user.role === 'super' 등으로 제한
@@ -377,87 +378,99 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
   const dlA = await all(db, `SELECT DISTINCT applied_to v FROM applicant_applications WHERE applied_to != '' ORDER BY v LIMIT 100`);
   const dlJ = await all(db, `SELECT DISTINCT job v FROM applicant_applications WHERE job != '' ORDER BY v LIMIT 100`);
 
-  const blBox = active
-    ? `<div class="notice warn" role="status">${icon('alert')}<div>
-         <b>블랙리스트에 등록되어 있어요.</b><br>사유: ${esc(reasonLabel(active.reason_code, active.reason_text))}<br>
-         <small>${esc(fmtTime(active.created_at))} · ${esc(active.by_name || '-')}</small>
-         <details style="margin-top:12px"><summary>사유 수정</summary>
-           <form method="post" action="/applicants/${a.id}/reason" class="stack" style="margin-top:8px">
-             <label>사유${reasonSelect(active.reason_code)}</label>
-             <label>사유 설명 <small>(기타는 필수)</small><textarea name="reason_text" rows="3" maxlength="300">${esc(active.reason_text)}</textarea></label>
-             <div><button class="btn secondary">사유 저장</button></div>
-           </form></details>
-         <form method="post" action="/applicants/${a.id}/release" class="stack" style="margin-top:12px" data-confirm="블랙리스트에서 해제할까요?">
-           <label>해제 메모 <small>(선택)</small><input name="note" maxlength="200" placeholder="예: 본인 확인 후 해제"></label>
-           <div><button class="btn secondary">블랙리스트 해제</button></div>
-         </form></div></div>`
-    : `<details class="card"><summary><b>블랙리스트에 등록하기</b></summary>
-         <form method="post" action="/applicants/${a.id}/blacklist" class="stack" style="margin-top:12px">
-           <label>사유<select name="reason_code" id="bl-reason" required>
-             ${REASONS.map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select></label>
-           <label>사유 설명 <small id="bl-hint">(선택)</small>
-             <textarea name="reason_text" id="bl-text" rows="3" maxlength="300" placeholder="사실만 적어 주세요. 예: 10/20 면접에 연락 없이 불참"></textarea></label>
-           <div><button class="btn danger">블랙리스트 등록</button></div>
-         </form>
-         <script>(function(){var s=document.getElementById('bl-reason'),t=document.getElementById('bl-text'),h=document.getElementById('bl-hint');
-           function u(){var o=s.value==='other';t.required=o;h.textContent=o?'(필수)':'(선택)';}s.addEventListener('change',u);u();})();</script>
-       </details>`;
-
   const pastBl = bls.filter((b) => b.status !== 'active');
-  return `${pageHeader({ title: a.name, back: { href: '/applicants', label: '지원자 관리' },
-    desc: `${esc(fmtPhone(a.phone))} · ${statusBadge(!!active)}` })}
+  const latest = apps[0] || {};
+  const created = fmtTime(a.created_at).slice(0, 10);
+  const dialog = (idd, title, body) => `<dialog id="${idd}" class="sheet" aria-labelledby="${idd}-t"><div class="dlgbox"><h2 id="${idd}-t">${esc(title)}</h2>${body}</div></dialog>`;
+  const cancel = '<button type="button" class="secondary" data-close>닫기</button>';
+
+  const statusPanel = active
+    ? `<section class="panel bad" role="status"><h2>${icon('alert', 18)} 블랙리스트</h2>
+        <p><b>사유</b> ${esc(reasonLabel(active.reason_code, active.reason_text))}</p>
+        <p class="muted" style="font-size:14px;margin-top:4px">${esc(fmtTime(active.created_at))} · ${esc(active.by_name || '-')}</p>
+        <div class="row" style="margin-top:12px"><button type="button" class="secondary small" data-dialog="dlg-blr">사유 수정</button><button type="button" class="secondary small" data-dialog="dlg-rel">블랙리스트 해제</button></div></section>`
+    : `<section class="panel good"><h2>${icon('check', 18)} 일반 지원자</h2>
+        <p class="muted" style="font-size:14px">블랙리스트에 등록되어 있지 않아요.</p>
+        <div style="margin-top:12px"><button type="button" class="secondary small" data-dialog="dlg-bl">블랙리스트로 등록</button></div></section>`;
+
+  const appsPanel = apps.length ? apps.map((x) => `<div class="aitem">
+      <div class="t">${esc(x.posting_title || x.job || x.applied_to || '지원')}</div>
+      <div class="chips">${x.applied_to ? `<span class="badge info">${esc(x.applied_to)}</span>` : (x.recruit_no ? '<span class="badge wait">원가중심점 정리 필요</span>' : '')}${x.job ? `<span class="badge">${esc(x.job)}</span>` : ''}</div>
+      <small class="muted">${esc(fmtTime(x.created_at).slice(0, 10))}${x.recruit_no ? ` · 공고번호 ${esc(x.recruit_no)}` : ''}${x.company_raw ? ` · ${esc(x.company_raw)}` : ''}${x.recruit_no && !x.applied_to ? ' · <a href="/applicants/postings">공고 정리에서 정하기</a>' : ''}</small></div>`).join('')
+    : '<p class="muted">등록된 지원 이력이 없어요.</p>';
+
+  const evPanel = evs.length ? `<ul class="feed">${evs.slice(0, 8).map((e) => `<li>
+      <span class="who">${esc(ACTION_LABEL[e.action] || e.action)}</span>
+      <span class="what">${esc(e.detail)}${e.who ? ` · ${esc(e.who)}` : ''}</span>
+      <span class="when">${esc(fmtTime(e.at))}</span></li>`).join('')}</ul>${evs.length > 8 ? `<details><summary class="muted" style="padding:10px 16px">이전 기록 ${evs.length - 8}건 더 보기</summary><ul class="feed">${evs.slice(8).map((e) => `<li>
+      <span class="who">${esc(ACTION_LABEL[e.action] || e.action)}</span><span class="what">${esc(e.detail)}${e.who ? ` · ${esc(e.who)}` : ''}</span><span class="when">${esc(fmtTime(e.at))}</span></li>`).join('')}</ul></details>` : ''}` : emptyState({ title: '기록이 없어요' });
+
+  const dialogs = [
+    dialog('dlg-edit', '정보 수정', `<form method="post" action="/applicants/${a.id}/edit" class="stack">
+        <label>이름<input name="name" value="${esc(a.name)}" required></label>
+        <label>전화번호<input name="phone" type="tel" value="${esc(fmtPhone(a.phone))}" required></label>
+        ${apps.length ? `<label><span>원가중심점 <small>(가장 최근 지원 건)</small></span><input name="applied_to" list="dl-applied" value="${esc(latest.applied_to || '')}" autocomplete="off"></label>
+        <label><span>직무 <small>(가장 최근 지원 건)</small></span><input name="job" list="dl-job" value="${esc(latest.job || '')}" autocomplete="off"></label>` : ''}
+        <label><span>메모 <small>(사실만, 선택)</small></span><textarea name="memo" rows="3" maxlength="500">${esc(a.memo)}</textarea></label>
+        <div class="dlg-actions">${cancel}<button class="btn">저장</button></div></form>`),
+    dialog('dlg-app', '지원 건 추가', `<form method="post" action="/applicants/${a.id}/apply" class="stack">
+        <label>원가중심점<input name="applied_to" list="dl-applied" autocomplete="off" placeholder="예: 아마노코리아(현장HR)"></label>
+        <label>직무<input name="job" list="dl-job" autocomplete="off" placeholder="예: 주차관리"></label>
+        <div class="dlg-actions">${cancel}<button class="btn">추가</button></div></form>`),
+    active
+      ? dialog('dlg-blr', '블랙리스트 사유 수정', `<form method="post" action="/applicants/${a.id}/reason" class="stack">
+          <label>사유${reasonSelect(active.reason_code)}</label>
+          <label><span>사유 설명 <small>(기타는 필수)</small></span><textarea name="reason_text" rows="3" maxlength="300">${esc(active.reason_text)}</textarea></label>
+          <div class="dlg-actions">${cancel}<button class="btn">사유 저장</button></div></form>`)
+        + dialog('dlg-rel', '블랙리스트 해제', `<form method="post" action="/applicants/${a.id}/release" class="stack" data-confirm="블랙리스트에서 해제할까요?">
+          <label><span>해제 메모 <small>(선택)</small></span><input name="note" maxlength="200" placeholder="예: 본인 확인 후 해제"></label>
+          <div class="dlg-actions">${cancel}<button class="btn">해제하기</button></div></form>`)
+      : dialog('dlg-bl', '블랙리스트로 등록', `<form method="post" action="/applicants/${a.id}/blacklist" class="stack">
+          <label>사유${reasonSelect()}</label>
+          <label>사유 설명 <small id="bl-hint">(선택)</small><textarea name="reason_text" rows="3" maxlength="300" placeholder="사실만 적어 주세요. 예: 10/20 면접에 연락 없이 불참"></textarea></label>
+          <div class="dlg-actions">${cancel}<button class="btn danger">등록하기</button></div></form>`),
+    dialog('dlg-merge', '같은 사람 합치기', `<p class="muted" style="font-size:14px">번호를 바꾼 지원자가 두 건으로 나뉘어 있다면 하나로 합쳐요. 합칠 쪽의 지원 이력·블랙리스트·기록이 <b>이 지원자</b>로 옮겨지고, 합친 쪽은 삭제돼요.</p>
+        ${sameName.length ? `<div><b>이름이 같은 지원자</b><ul style="margin:8px 0 0;padding-left:18px">${sameName.map((x) => `<li style="margin:6px 0">${esc(fmtPhone(x.phone))}
+          <form method="post" action="/applicants/${a.id}/merge" class="inline" data-confirm="이 사람의 기록을 ${esc(a.name)}에게 합칠까요? 되돌릴 수 없어요."><input type="hidden" name="other_id" value="${x.id}"><button class="small secondary">합치기</button></form></li>`).join('')}</ul></div>` : ''}
+        <form method="post" action="/applicants/${a.id}/merge" class="stack" data-confirm="입력한 번호의 지원자를 이 사람에게 합칠까요? 되돌릴 수 없어요.">
+          <label>합칠 지원자의 전화번호<input name="other_phone" type="tel" placeholder="010-1234-5678" required></label>
+          <div class="dlg-actions">${cancel}<button class="btn secondary">합치기</button></div></form>`)
+  ].join('');
+
+  return `<a class="back" href="/applicants" style="display:inline-block;font-size:14px;margin-bottom:10px">← 지원자</a>
     ${notice}
-    <div class="col">
-      ${blBox}
-      <section class="section"><div class="shead"><h2>지원 이력</h2></div>
-        <div class="card" style="padding:0">${apps.length ? tableWrap(`<table><thead><tr><th>원가중심점</th><th>직무</th><th>지원한 공고</th><th>등록일</th></tr></thead><tbody>
-          ${apps.map((x) => `<tr><td>${x.applied_to ? esc(x.applied_to) : (x.recruit_no ? '<span class="badge wait">정리 필요</span> <a href="/applicants/postings">공고별 정리</a>' : '-')}</td><td>${esc(x.job || '-')}</td>
-            <td>${x.posting_title ? `${esc(x.posting_title)}<br><small class="muted">공고번호 ${esc(x.recruit_no)}${x.company_raw ? ' · ' + esc(x.company_raw) : ''}</small>` : '-'}</td><td>${esc(fmtTime(x.created_at).slice(0, 10))}</td></tr>`).join('')}</tbody></table>`)
-          : emptyState({ title: '등록된 지원 이력이 없어요' })}</div>
-        <details style="margin-top:12px"><summary>지원 건 추가</summary>
-          <form method="post" action="/applicants/${a.id}/apply" class="stack card" style="margin-top:8px;max-width:520px">
-            <label>원가중심점<input name="applied_to" list="dl-applied" autocomplete="off"></label>
-            <label>직무<input name="job" list="dl-job" autocomplete="off"></label>
-            <div><button class="btn secondary">추가</button></div>
-          </form></details>
-      </section>
-      <section class="section"><div class="shead"><h2>기본 정보 수정</h2></div>
-        <details><summary>이름·전화번호 수정</summary>
-          <form method="post" action="/applicants/${a.id}/edit" class="stack card" style="margin-top:8px;max-width:520px">
-            <label>이름<input name="name" value="${esc(a.name)}" required></label>
-            <label>전화번호<input name="phone" type="tel" value="${esc(fmtPhone(a.phone))}" required></label>
-            <label>메모 <small>(사실만, 선택)</small><textarea name="memo" rows="3" maxlength="500">${esc(a.memo)}</textarea></label>
-            <div><button class="btn secondary">저장</button></div>
-          </form></details>
-        ${a.memo ? `<p class="muted" style="margin-top:8px">메모: ${esc(a.memo)}</p>` : ''}
-      </section>
-      <datalist id="dl-applied">${dlA.map((o) => `<option value="${esc(o.v)}">`).join('')}</datalist>
-      <datalist id="dl-job">${dlJ.map((o) => `<option value="${esc(o.v)}">`).join('')}</datalist>
-      ${hist ? `<section class="section"><div class="shead"><h2>면접 안내 이력</h2><span class="muted">문자 시스템 연결</span></div><div class="card">${historyHtml(hist)}</div></section>` : ''}
-      ${pastBl.length ? `<section class="section"><div class="shead"><h2>이전 블랙리스트 기록</h2></div>
-        <div class="card" style="padding:0">${tableWrap(`<table><thead><tr><th>사유</th><th>등록</th><th>해제</th></tr></thead><tbody>
+    <header class="pd-hero">
+      <div class="avatar" aria-hidden="true">${esc(String(a.name).trim().slice(0, 1) || '?')}</div>
+      <div><h1 class="nm">${esc(a.name)}</h1>
+        <div class="ph"><a href="tel:${esc(a.phone)}">${esc(fmtPhone(a.phone))}</a><button type="button" class="lk" data-copy="${esc(fmtPhone(a.phone))}" style="background:none;border:0;color:var(--blue);min-height:32px;padding:4px 8px;font-size:14px">복사</button>${statusBadge(!!active)}</div>
+        <div class="muted" style="font-size:14px;margin-top:2px">등록 ${esc(created)} · 지원 ${apps.length}건</div></div>
+      <div class="acts"><a class="btn secondary" href="/send?to=${encodeURIComponent(a.phone)}">${icon('send', 18)}문자 보내기</a><button type="button" class="btn secondary" data-dialog="dlg-edit">정보 수정</button></div>
+    </header>
+    <div class="pd">
+      <div>
+        <section class="panel"><div class="shead" style="margin-bottom:6px"><h2 style="margin:0">지원 이력</h2><button type="button" class="tertiary small" data-dialog="dlg-app">${icon('plus', 16)}지원 건 추가</button></div>${appsPanel}</section>
+        ${hist ? `<section class="panel"><h2>면접 안내 이력 <small class="muted" style="font-weight:400">문자 시스템 연결</small></h2>${historyHtml(hist)}</section>` : ''}
+        ${a.memo ? `<section class="panel"><h2>메모</h2><p>${esc(a.memo)}</p></section>` : ''}
+        ${pastBl.length ? `<section class="panel"><h2>이전 블랙리스트 기록</h2>${tableWrap(`<table><thead><tr><th>사유</th><th>등록</th><th>해제</th></tr></thead><tbody>
           ${pastBl.map((b) => `<tr><td>${esc(reasonLabel(b.reason_code, b.reason_text))}</td>
             <td>${esc(fmtTime(b.created_at).slice(0, 10))}<br><small>${esc(b.by_name || '-')}</small></td>
-            <td>${esc(fmtTime(b.released_at).slice(0, 10))}<br><small>${esc(b.rel_name || '-')}${b.release_note ? ` · ${esc(b.release_note)}` : ''}</small></td></tr>`).join('')}</tbody></table>`)}</div></section>` : ''}
-      <section class="section"><div class="shead"><h2>변경 기록</h2></div>
-        <div class="card" style="padding:0">${evs.length ? `<ul class="feed">${evs.map((e) => `<li>
-          <span class="who">${esc(ACTION_LABEL[e.action] || e.action)}</span>
-          <span class="what">${esc(e.detail)}${e.who ? ` · ${esc(e.who)}` : ''}</span>
-          <span class="when">${esc(fmtTime(e.at))}</span></li>`).join('')}</ul>` : emptyState({ title: '기록이 없어요' })}</div>
-      </section>
-      <section class="section"><div class="shead"><h2>같은 사람 합치기</h2></div>
-        <p class="muted" style="margin-bottom:8px">번호를 바꾼 지원자가 두 건으로 나뉘어 있다면 하나로 합쳐요. 합칠 쪽의 지원 이력·블랙리스트·기록이 <b>이 지원자</b>로 옮겨지고, 합친 쪽은 삭제돼요.</p>
-        ${sameName.length ? `<div class="card" style="margin-bottom:12px"><b>이름이 같은 지원자</b><ul style="margin:8px 0 0;padding-left:18px">${sameName.map((x) => `<li style="margin:6px 0">${esc(fmtPhone(x.phone))}
-          <form method="post" action="/applicants/${a.id}/merge" class="inline" data-confirm="이 사람의 기록을 ${esc(a.name)}에게 합칠까요? 되돌릴 수 없어요."><input type="hidden" name="other_id" value="${x.id}"><button class="small secondary">이 사람을 여기에 합치기</button></form></li>`).join('')}</ul></div>` : ''}
-        <details><summary>번호로 찾아서 합치기</summary>
-          <form method="post" action="/applicants/${a.id}/merge" class="stack card" style="margin-top:8px;max-width:520px" data-confirm="입력한 번호의 지원자를 이 사람에게 합칠까요? 되돌릴 수 없어요.">
-            <label>합칠 지원자의 전화번호<input name="other_phone" type="tel" placeholder="010-1234-5678" required></label>
-            <div><button class="btn secondary">합치기</button></div>
-          </form></details>
-      </section>
-      ${user && user.role === 'super' ? `<form method="post" action="/applicants/${a.id}/delete" data-confirm="이 지원자와 모든 기록을 삭제할까요? 되돌릴 수 없어요.">
-        <button class="btn danger">지원자 삭제 (관리자)</button></form>` : ''}
-    </div>`;
+            <td>${esc(fmtTime(b.released_at).slice(0, 10))}<br><small>${esc(b.rel_name || '-')}${b.release_note ? ` · ${esc(b.release_note)}` : ''}</small></td></tr>`).join('')}</tbody></table>`)}</section>` : ''}
+        <section class="panel" style="padding:0"><h2 style="padding:18px 20px 0">변경 기록</h2>${evPanel}</section>
+      </div>
+      <aside>
+        ${statusPanel}
+        <section class="panel"><h2>관리</h2>
+          <div class="stack" style="gap:10px">
+            <button type="button" class="secondary small" data-dialog="dlg-merge">같은 사람 합치기</button>
+            ${user && user.role === 'super' ? `<form method="post" action="/applicants/${a.id}/delete" data-confirm="이 지원자와 모든 기록을 삭제할까요? 되돌릴 수 없어요."><button class="btn danger small">지원자 삭제 (관리자)</button></form>` : ''}
+          </div></section>
+      </aside>
+    </div>
+    ${dialogs}
+    <datalist id="dl-applied">${dlA.map((o) => `<option value="${esc(o.v)}">`).join('')}</datalist>
+    <datalist id="dl-job">${dlJ.map((o) => `<option value="${esc(o.v)}">`).join('')}</datalist>
+    <script>(function(){document.addEventListener('change',function(e){var s=e.target.closest&&e.target.closest('select.bl-reason');if(!s)return;var t=s.form.querySelector('[name=reason_text]');var o=s.value==='other';t.required=o;var h=s.form.querySelector('#bl-hint');if(h)h.textContent=o?'(필수)':'(선택)';});
+      document.addEventListener('click',function(e){var b=e.target.closest('[data-copy]');if(!b)return;navigator.clipboard.writeText(b.getAttribute('data-copy')).then(function(){var t=b.textContent;b.textContent='복사됐어요 ✓';setTimeout(function(){b.textContent=t;},1500);});});})();</script>`;
 }
 
 export async function exportApplicantsCsv(db) {
@@ -531,64 +544,55 @@ const kstDay = (s, plusDays = 0) => {
 };
 
 const SHEET_CSS = `<style>
-.addbar{display:grid;grid-template-columns:1.1fr 1.2fr 1.4fr 1.2fr auto;gap:8px;align-items:center;margin-bottom:16px}
-@media (max-width:760px){.addbar{grid-template-columns:1fr 1fr}.addbar .btn{grid-column:1/-1}}
-.filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:12px}
+.searchbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.searchbar>input[type=search]{flex:1 1 260px;min-width:0}
+.filterbox{flex:none}
+.filterbox>summary{list-style:none}
+.filterbox>summary::-webkit-details-marker{display:none}
+.filterbox[open]{flex:1 1 100%;order:3}
+.filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-top:12px}
 .pager{display:flex;gap:8px;align-items:center;justify-content:center;margin:16px 0;flex-wrap:wrap}
-.sheet tr[hidden]{display:none!important}
-.sheet td{word-break:keep-all}
-.sheet td:nth-child(2),.sheet td:nth-child(3),.sheet td:nth-child(7){white-space:nowrap}
-@media (max-width:640px){.sheet td:nth-child(2),.sheet td:nth-child(3),.sheet td:nth-child(7){white-space:normal}}
-.sheet td.sel,.sheet th.sel{width:34px;padding-right:0}
-@media (max-width:640px){.sheet tr{position:relative}.sheet td.sel{position:absolute;right:12px;top:12px;width:auto;padding:0;display:block}.sheet td.sel::before{content:none!important}.sheet td.sel input{width:26px;height:26px}.sheet td:nth-child(2){padding-right:44px}.sheet td.acts{white-space:normal;flex-wrap:wrap;row-gap:4px}}
-.addbox>form{margin:12px 0 0}
 fieldset.linkopts{border:0;margin:0;padding:0 0 0 28px;display:grid;gap:12px;min-width:0}
 fieldset.linkopts:disabled{opacity:.45}
 fieldset.linkopts:disabled label{cursor:not-allowed}
-.sheet details.more{display:inline-block;vertical-align:top}
-.sheet details.more[open]{display:block;width:100%;margin-top:6px}
-.sheet details.more>summary{list-style:none}
-.sheet details.more>summary::-webkit-details-marker{display:none}
-.sheet .menu{display:grid;gap:8px;margin-top:6px;padding:10px;border:1px solid var(--line);border-radius:14px;background:var(--surface-2,#fafafc);min-width:230px}
-.sheet .menu a{padding:6px 2px}
-.addbox>summary{cursor:pointer}
-.sheet td.sel input,.sheet th.sel input{width:18px;height:18px;min-height:0}
-.bulkbar{display:none;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--blue-bg,#e8f1fb)}
-.bulkbar.on{display:flex}
-.bulkbar select,.bulkbar input[type=text]{width:auto;min-width:150px;min-height:40px;padding:6px 10px}
-.bulkbar .only{display:none}
-.sheet .e{display:none}
-.sheet tr.editing .v{display:none}.sheet tr.editing .e{display:block;min-height:40px;padding:8px 10px}
-.sheet .js-save{display:none}.sheet tr.editing .js-save{display:inline-flex}.sheet tr.editing .js-edit{display:none}
-.sheet .acts{white-space:nowrap}.sheet .acts .small{margin:2px 2px 2px 0}
-.sheet details.bl{display:inline-block;vertical-align:top}
-.sheet details.bl[open]{display:block;margin-top:6px}
-.sheet details.bl form{display:grid;gap:6px;margin-top:6px;min-width:220px}
-.sheet tr.hist td{background:var(--surface-2,#fafafc)}
-.sheet .hbox{padding:4px 0;font-size:14px}
-.sheet .hbox h4{margin:10px 0 4px;font-size:14px}
-.sheet .hbox ul{margin:0;padding-left:18px}
-.lookup{display:flex;gap:8px;max-width:520px;margin-bottom:12px}
+.plistwrap{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);overflow:hidden}
+.plist{width:100%;border-collapse:collapse}
+.plist th{font-size:13px;color:var(--muted);font-weight:600;text-align:left;background:var(--surface-2);padding:12px 16px;white-space:nowrap}
+.plist td{padding:14px 16px;border-top:1px solid var(--line-soft);vertical-align:middle}
+.plist tbody tr{cursor:pointer}
+.plist tbody tr:hover td{background:var(--surface-2)}
+.plist .sel{width:34px;padding-right:0}
+.plist .sel input{width:18px;height:18px;min-height:0}
+.plist .pname{font-size:16px;font-weight:700;color:var(--ink);display:block}
+.plist .sub{display:block;color:var(--muted);font-size:14px;font-variant-numeric:tabular-nums}
+.plist .cc{font-weight:600}
+.plist .go{width:28px;color:var(--muted);font-size:20px;text-align:right}
+.plist .when{white-space:nowrap;color:var(--muted);font-size:14px}
+@media (max-width:720px){
+  .plist thead{display:none}
+  .plist,.plist tbody{display:block}
+  .plist tr{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 12px;padding:14px 14px;border-top:1px solid var(--line-soft)}
+  .plist tbody tr:first-child{border-top:0}
+  .plist td{display:block;padding:0;border:0}
+  .plist tbody tr:hover td{background:none}
+  .plist td.sel{grid-row:1/4;grid-column:1;padding-top:3px}
+  .plist td.who{grid-column:2}
+  .plist td.st{grid-column:3;grid-row:1;text-align:right}
+  .plist td.what{grid-column:2/4}
+  .plist td.when{grid-column:2;color:var(--muted);font-size:13px}
+  .plist td.go{display:none}
+}
+.bulkdock select,.bulkdock input[type=text]{width:auto;min-width:150px;min-height:38px;padding:6px 10px;background:var(--bg);color:var(--ink);border-color:transparent}
+.bulkdock .only{display:none}
 </style>`;
 
 const SHEET_JS = `<script>
 (function () {
+  // 행을 누르면 상세 화면으로(체크칸·링크는 제외)
   document.addEventListener('click', function (e) {
-    var ed = e.target.closest('.js-edit');
-    if (ed) { ed.closest('tr').classList.add('editing'); return; }
-    var h = e.target.closest('.js-hist');
-    if (h) {
-      var id = h.getAttribute('data-id'), row = document.getElementById('hist-' + id);
-      if (!row.hidden) { row.hidden = true; return; }
-      row.hidden = false;
-      var box = row.querySelector('.hbox');
-      if (!box.getAttribute('data-loaded')) {
-        fetch('/applicants/' + id + '/panel', { credentials: 'same-origin' })
-          .then(function (r) { return r.text(); })
-          .then(function (t) { box.innerHTML = t; box.setAttribute('data-loaded', '1'); })
-          .catch(function () { box.textContent = '기록을 불러오지 못했어요.'; });
-      }
-    }
+    var tr = e.target.closest && e.target.closest('.plist tbody tr');
+    if (!tr || e.target.closest('a,input,button,label,select')) return;
+    window.location.href = tr.getAttribute('data-href');
   });
   document.addEventListener('change', function (e) {
     var s = e.target.closest && e.target.closest('select.bl-reason');
@@ -623,8 +627,6 @@ const SHEET_JS = `<script>
   }
   var lm = document.querySelector('#linkform input[name=enabled]'), lo = document.getElementById('linkopts');
   if (lm && lo) lm.addEventListener('change', function () { lo.disabled = !lm.checked; });
-  var ab = document.getElementById('addbox');
-  if (ab && window.matchMedia('(min-width: 761px)').matches) ab.open = true;
   var f = document.getElementById('csvfile');
   if (f) f.addEventListener('change', async function (e) {
     var file = e.target.files[0]; if (!file) return;
@@ -685,7 +687,7 @@ export async function renderApplicantSheet(db, opts = {}) {
   const notices = [];
   const suggestions = link && link.suggest ? await noshowSuggestions(db, link.threshold) : [];
   const inboxPending = await pendingInboxCount(db, opts.viewer || null).catch(() => 0);
-  const needClass = await unclassifiedCount(db).catch(() => 0);
+  const needClass = await unclassifiedPostings(db).catch(() => 0);
   if (needClass) notices.push(`<div class="notice warn">${icon('alert')}<div>원가중심점이 아직 없는 공고가 <b>${needClass}개</b> 있어요. <a href="/applicants/postings"><b>공고별로 한꺼번에 정리하기 →</b></a></div></div>`);
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
   if (flash === 'undone') {
@@ -732,42 +734,18 @@ export async function renderApplicantSheet(db, opts = {}) {
   }
 
   const hid = `<input type="hidden" name="back" value="${esc(back)}">`;
-  const table = rows.length ? tableWrap(`<table class="cards sheet"><thead><tr><th class="sel"><input type="checkbox" id="chkall" aria-label="전체 선택"></th><th>이름</th><th>전화번호</th><th>원가중심점</th><th>직무</th><th>상태</th><th>등록일</th><th></th></tr></thead><tbody>
-    ${rows.map((r) => `<tr>
-      <td class="sel" data-label="선택"><input type="checkbox" class="rowchk" name="ids" value="${r.id}" form="bulkform" aria-label="${esc(r.name)} 선택"></td>
-      <td><span class="v"><b>${esc(r.name)}</b></span><input class="e" form="ef-${r.id}" name="name" value="${esc(r.name)}" required aria-label="이름"></td>
-      <td class="nowrap" data-label="전화번호"><span class="v">${esc(fmtPhone(r.phone))}</span><input class="e" form="ef-${r.id}" name="phone" value="${esc(fmtPhone(r.phone))}" required aria-label="전화번호"></td>
-      <td data-label="원가중심점"><span class="v">${r.applied_to ? esc(r.applied_to) : (r.unclassified ? '<span class="badge wait">정리 필요</span>' : '-')}${r.apps > 1 ? ` <small>외 ${r.apps - 1}건</small>` : ''}</span><input class="e" form="ef-${r.id}" name="applied_to" list="dl-applied" value="${esc(r.applied_to || '')}" aria-label="원가중심점"></td>
-      <td data-label="직무"><span class="v">${esc(r.job || '-')}</span><input class="e" form="ef-${r.id}" name="job" list="dl-job" value="${esc(r.job || '')}" aria-label="직무"></td>
-      <td data-label="상태">${statusBadge(r.bl_id)}${r.bl_id ? `<br><small>${esc(reasonLabel(r.reason_code, r.reason_text))}</small>` : ''}</td>
-      <td data-label="등록일">${esc(fmtTime(r.created_at).slice(0, 10))}</td>
-      <td class="acts">
-        <button type="button" class="small secondary js-edit">수정</button>
-        <button class="small js-save" form="ef-${r.id}">저장</button>
-        <button type="button" class="small secondary js-hist" data-id="${r.id}">기록</button>
-        <details class="more"><summary class="btn small secondary" aria-label="더 보기">더 보기</summary>
-          <div class="menu">
-        ${r.bl_id
-    ? `<form method="post" action="/applicants/${r.id}/release" class="inline" data-confirm="블랙리스트에서 해제할까요?">${hid}<button class="small secondary">블랙리스트 해제</button></form>
-          <details class="bl"><summary>사유 수정</summary>
-            <form method="post" action="/applicants/${r.id}/reason">${hid}${reasonSelect(r.reason_code)}
-              <input name="reason_text" maxlength="300" value="${esc(r.reason_text)}" placeholder="사유 설명 (기타는 필수)" aria-label="사유 설명"${r.reason_code === 'other' ? ' required' : ''}>
-              <button class="small btn secondary">저장</button></form></details>`
-    : `<details class="bl"><summary>블랙리스트로 등록</summary>
-            <form method="post" action="/applicants/${r.id}/blacklist">${hid}${reasonSelect()}
-              <input name="reason_text" maxlength="300" placeholder="사유 설명 (선택)" aria-label="사유 설명">
-              <button class="small btn danger">등록</button></form></details>`}
-            <a href="/applicants/${r.id}">상세 화면 열기</a>
-          </div>
-        </details>
-      </td></tr>
-      <tr class="hist" id="hist-${r.id}" hidden><td colspan="8"><div class="hbox">불러오는 중…</div></td></tr>`).join('')}
-    </tbody></table>`)
+  const relDate = (ms) => fmtWhen(ms).replace(/ \d\d:\d\d$/, '');
+  const table = rows.length ? `<div class="plistwrap"><table class="plist"><thead><tr><th class="sel"><input type="checkbox" id="chkall" aria-label="이 화면 전체 선택"></th><th scope="col">이름</th><th scope="col">원가중심점 · 직무</th><th scope="col">상태</th><th scope="col">등록</th><th class="go"></th></tr></thead><tbody>
+    ${rows.map((r) => `<tr data-href="/applicants/${r.id}">
+      <td class="sel"><input type="checkbox" class="rowchk" name="ids" value="${r.id}" form="bulkform" aria-label="${esc(r.name)} 선택"></td>
+      <td class="who"><a class="pname" href="/applicants/${r.id}">${esc(r.name)}</a><span class="sub">${esc(fmtPhone(r.phone))}</span></td>
+      <td class="what">${r.applied_to ? `<span class="cc">${esc(r.applied_to)}</span>` : (r.unclassified ? '<span class="badge wait">정리 필요</span>' : '<span class="muted">-</span>')}${r.job ? `<span class="sub">${esc(r.job)}</span>` : ''}${r.apps > 1 ? `<span class="sub">지원 ${r.apps}건</span>` : ''}</td>
+      <td class="st">${statusBadge(r.bl_id)}${r.bl_id ? `<span class="sub">${esc(reasonLabel(r.reason_code, r.reason_text))}</span>` : ''}</td>
+      <td class="when">${esc(relDate(r.created_at))}</td>
+      <td class="go" aria-hidden="true">›</td></tr>`).join('')}
+    </tbody></table></div>`
     : emptyState({ title: FILTER_KEYS.some((k) => k !== 'sort' && params[k]) ? '찾는 지원자가 없어요' : '아직 등록된 지원자가 없어요',
-      desc: '위의 입력 줄에 적고 "추가"를 누르거나, 아래 "CSV·엑셀로 한꺼번에 등록"을 써 보세요.' });
-
-  const editForms = `<div hidden>${rows.map((r) =>
-    `<form id="ef-${r.id}" method="post" action="/applicants/${r.id}/edit">${hid}</form>`).join('')}</div>`;
+      desc: '오른쪽 위 "지원자 추가"로 한 명씩, 또는 "엑셀로 올리기"로 한꺼번에 등록해 보세요. 알바몬 지원자는 "새 지원"에서 등록해요.' });
 
   const filterActive = ['applied', 'job', 'reason', 'from', 'to'].some((k) => params[k]) || params.sort !== 'updated';
   const opt = (list, cur) => list.map((o) => `<option value="${esc(o.v)}"${cur === o.v ? ' selected' : ''}>${esc(o.v)} (${o.n})</option>`).join('');
@@ -777,10 +755,27 @@ export async function renderApplicantSheet(db, opts = {}) {
       ${pageNo < pages ? `<a class="btn secondary small" href="${esc(listUrl(params, { page: pageNo + 1 }))}">다음 →</a>` : ''}
     </div>` : `<p class="muted" style="margin-top:8px">${total ? `총 ${total}명` : ''}</p>`;
 
-  return `${SHEET_CSS}${pageHeader({ title: '지원자 관리', desc: '한 화면에서 등록하고, 수정하고, 블랙리스트를 관리해요. 문자 발송과는 별개로 동작해요.',
-    actions: `<a class="btn secondary" href="/applicants/export.csv">${icon('download', 18)}엑셀로 저장</a>` })}
-    ${peopleTabs('list', inboxPending)}
-    ${notices.join('')}
+  const addDialog = `<dialog id="dlg-add" class="sheet" aria-labelledby="dlg-add-t"><form method="post" action="/applicants/new" class="stack">${hid}
+      <h2 id="dlg-add-t">지원자 추가</h2>
+      <label>이름<input name="name" required autocomplete="off"></label>
+      <label>전화번호<input name="phone" type="tel" inputmode="tel" required autocomplete="off" placeholder="010-1234-5678"></label>
+      <label><span>원가중심점 <small>(선택)</small></span><input name="applied_to" list="dl-applied" autocomplete="off" placeholder="예: 아마노코리아(현장HR)"></label>
+      <label><span>직무 <small>(선택)</small></span><input name="job" list="dl-job" autocomplete="off" placeholder="예: 주차관리"></label>
+      <div class="dlg-actions"><button type="button" class="secondary" data-close>취소</button><button class="btn">${icon('plus', 18)}추가</button></div></form></dialog>`;
+  const importDialog = `<dialog id="dlg-import" class="sheet" aria-labelledby="dlg-imp-t"><form method="post" action="/applicants/bulk" class="stack">${hid}
+      <h2 id="dlg-imp-t">엑셀·CSV로 올리기</h2>
+      <div class="dropzone"><input type="file" id="csvfile" accept=".csv,.txt,.tsv" aria-label="CSV 파일 선택"><p id="csvname" class="muted" style="margin-top:8px">파일을 고르거나, 엑셀에서 복사해 아래에 붙여넣어요.</p></div>
+      <textarea name="text" id="bulktext" rows="6" required aria-label="명단 붙여넣기" placeholder="이름&#9;전화번호&#9;원가중심점&#9;직무&#9;블랙리스트&#9;사유&#10;홍길동&#9;010-1234-5678&#9;아마노코리아(현장HR)&#9;주차관리"></textarea>
+      <p class="muted" style="font-size:14px">열 순서는 <b>이름 · 전화번호 · 원가중심점 · 직무 · 블랙리스트 · 사유 · 사유 설명</b>을 권해요. 블랙리스트 칸에는 <b>Y</b>(또는 예)를 적고, 사유는 목록 이름이나 비슷한 말(노쇼, 무단 불참 등)을 적어요. 같은 번호는 중복으로 올리지 않아요.</p>
+      ${batches.length ? `<details><summary>최근 올린 것 되돌리기 (${batches.length})</summary><ul style="margin:8px 0 0;padding-left:18px">${batches.map((b) => `<li style="margin:6px 0">${esc(fmtTime(b.created_at))} · ${esc(b.who || '-')} — 새로 ${b.created}명${b.added ? `, 추가 ${b.added}명` : ''}${b.blacklisted ? `, 블랙리스트 ${b.blacklisted}명` : ''}
+          <button class="small secondary" formaction="/applicants/batch/${esc(b.id)}/undo" formnovalidate data-confirm="이 업로드를 되돌릴까요?">되돌리기</button></li>`).join('')}</ul></details>` : ''}
+      <div class="dlg-actions"><button type="button" class="secondary" data-close>취소</button><button class="btn">등록하기</button></div></form></dialog>`;
+
+  return `${SHEET_CSS}${pageHeader({ title: '지원자', desc: '등록된 지원자를 찾고, 블랙리스트를 관리해요. 문자 발송과는 별개로 동작해요.',
+    actions: `<button type="button" class="btn" data-dialog="dlg-add">${icon('plus', 18)}지원자 추가</button><button type="button" class="btn secondary" data-dialog="dlg-import">엑셀로 올리기</button><a class="btn tertiary" href="/applicants/export.csv">${icon('download', 18)}엑셀로 저장</a>` })}
+    ${peopleTabs('list', inboxPending, needClass)}
+    ${notices.filter((x) => !/공고별로 한꺼번에/.test(x)).join('')}
+    ${needClass ? `<div class="notice info">${icon('info')}<div>원가중심점이 정해지지 않은 공고가 <b>${needClass}개</b> 있어요. <a href="/applicants/postings"><b>공고 정리에서 한 번에 정하기 →</b></a></div></div>` : ''}
     ${suggestions.length ? `<details class="card" open style="margin-bottom:16px"><summary><b>블랙리스트 후보 제안 ${suggestions.length}명</b>
       <span class="muted">면접 결과를 "노쇼"로 기록한 횟수가 ${link.threshold}회 이상이에요. 사람이 확인하고 등록해요.</span></summary>
       <div style="margin-top:8px">${tableWrap(`<table class="cards"><thead><tr><th>이름</th><th>전화번호</th><th>노쇼</th><th></th></tr></thead><tbody>
@@ -791,39 +786,11 @@ export async function renderApplicantSheet(db, opts = {}) {
             <form method="post" action="/applicants/suggest/dismiss" class="inline">${hid}
               <input type="hidden" name="phone" value="${esc(x.phone)}"><input type="hidden" name="n" value="${x.n}"><button class="small secondary">무시</button></form></td></tr>`).join('')}
         </tbody></table>`)}</div></details>` : ''}
-    <form method="get" action="/applicants" class="lookup">
-      <input name="lookup" type="tel" inputmode="tel" value="${esc(lookup)}" placeholder="번호로 바로 확인 (010-1234-5678)" aria-label="번호로 바로 확인">
-      <button class="secondary" style="flex:none">확인</button></form>
-    ${lookupHtml}
-    <details class="card addbox" id="addbox" style="margin-bottom:12px"><summary><b>+ 지원자 추가</b> <span class="muted">이름 · 전화번호 · 원가중심점 · 직무</span></summary>
-    <form id="addform" method="post" action="/applicants/new" class="addbar">${hid}
-      <input name="name" placeholder="이름" required autocomplete="off" aria-label="이름">
-      <input name="phone" type="tel" inputmode="tel" placeholder="전화번호" required autocomplete="off" aria-label="전화번호">
-      <input name="applied_to" list="dl-applied" placeholder="원가중심점" autocomplete="off" aria-label="원가중심점">
-      <input name="job" list="dl-job" placeholder="직무" autocomplete="off" aria-label="직무">
-      <button class="btn">${icon('plus', 18)}추가</button>
-    </form>
-    </details>
-    <details class="card" style="margin-bottom:16px" id="import"${bulk ? ' open' : ''}>
-      <summary><b>CSV·엑셀로 한꺼번에 등록</b> <span class="muted">파일을 올리거나 엑셀에서 복사해 붙여넣어요</span></summary>
-      <form method="post" action="/applicants/bulk" class="stack" style="margin-top:12px">${hid}
-        <div class="dropzone"><input type="file" id="csvfile" accept=".csv,.txt,.tsv" aria-label="CSV 파일 선택"><p id="csvname" class="muted" style="margin-top:8px">아직 고른 파일이 없어요.</p></div>
-        <textarea name="text" id="bulktext" rows="5" required aria-label="명단 붙여넣기" placeholder="이름&#9;전화번호&#9;지원한 곳&#9;직무&#9;블랙리스트&#9;사유&#10;홍길동&#9;010-1234-5678&#9;아마노코리아(현장HR)&#9;현장 관리&#10;김영희&#9;010-2345-6789&#9;아마노코리아(현장HR)&#9;물류&#9;Y&#9;면접 무단 불참"></textarea>
-        <p class="muted" style="font-size:14px">열 순서는 <b>이름 · 전화번호 · 지원한 곳 · 직무 · 블랙리스트 · 사유 · 사유 설명</b>을 권해요. 블랙리스트 칸에는 <b>Y</b>(또는 예)를 적고, 사유는 목록 이름(면접 무단 불참, 근무 중 무단 이탈, 서류·정보 허위, 업무상 부적절한 행위, 기타) 중 하나를 적어요. 앞의 네 칸만 있어도 돼요. 한 번에 ${MAX_PASTE}명까지. <b>이미 있는 내용(같은 번호·같은 지원 건)은 올리지 않고 새 내용만 반영해요.</b> <a href="/applicants/template.csv">양식 받기</a></p>
-        <div class="form-actions"><button class="btn secondary">등록하기</button></div>
-      </form>
-      ${batches.length ? `<div style="margin-top:16px"><b>최근 업로드</b>
-        <ul style="margin:8px 0 0;padding-left:18px">${batches.map((b) => `<li style="margin:6px 0">
-          ${esc(fmtTime(b.created_at))} · ${esc(b.who || '-')} — 새로 ${b.created}명${b.added ? `, 추가 ${b.added}명` : ''}${b.blacklisted ? `, 블랙리스트 ${b.blacklisted}명` : ''}${b.duplicates ? `, 중복 ${b.duplicates}건 제외` : ''}
-          <form method="post" action="/applicants/batch/${esc(b.id)}/undo" class="inline" data-confirm="이 업로드를 되돌릴까요?">${hid}<button class="small secondary">되돌리기</button></form></li>`).join('')}</ul></div>` : ''}
-    </details>
-    <form method="get" action="/applicants">
-      <div style="display:flex;gap:8px;max-width:520px">
-        ${params.status ? `<input type="hidden" name="status" value="${esc(params.status)}">` : ''}
-        <input name="q" value="${esc(params.q)}" placeholder="이름, 전화번호, 원가중심점, 직무로 찾기" aria-label="검색">
-        <button class="secondary" style="flex:none">찾기</button>
-      </div>
-      <details style="margin-top:8px"${filterActive ? ' open' : ''}><summary class="muted">상세 필터·정렬</summary>
+    <form method="get" action="/applicants" class="searchbar">
+      ${params.status ? `<input type="hidden" name="status" value="${esc(params.status)}">` : ''}
+      <input name="q" value="${esc(params.q)}" placeholder="이름 · 전화번호 · 원가중심점 · 직무로 찾기" aria-label="검색" type="search">
+      <button class="btn">찾기</button>
+      <details class="filterbox"${filterActive ? ' open' : ''}><summary class="btn secondary">필터${filterActive ? ' ●' : ''}</summary>
         <div class="filters">
           <select name="applied" aria-label="원가중심점"><option value="">원가중심점 전체</option>${opt(appliedOpts, params.applied)}</select>
           <select name="job" aria-label="직무"><option value="">직무 전체</option>${opt(jobOpts, params.job)}</select>
@@ -835,27 +802,27 @@ export async function renderApplicantSheet(db, opts = {}) {
         <p style="margin-top:8px"><a href="/applicants">필터 초기화</a></p>
       </details>
     </form>
+    ${lookupHtml}
     <div class="tabs" style="margin-top:12px">${tab('', '전체', c.total)}${tab('bl', '블랙리스트', c.bl)}${tab('ok', '일반', c.total - c.bl)}</div>
-    <div class="card" style="padding:0">
-      <form id="bulkform" method="post" action="/applicants/bulk-action" class="bulkbar">${hid}
-        <b id="selcount">0명 선택</b>
-        <select name="op" id="bulkop" aria-label="처리 방법">
-          <option value="blacklist">블랙리스트로 등록</option>
-          <option value="release">블랙리스트 해제</option>
-          ${isSuper ? '<option value="delete">삭제 (관리자)</option>' : ''}
-        </select>
-        <span class="only only-blacklist" style="display:inline-flex;gap:6px;flex-wrap:wrap">${reasonSelect()}<input type="text" name="reason_text" maxlength="300" placeholder="사유 설명 (선택)" aria-label="사유 설명"></span>
-        <span class="only only-release"><input type="text" name="note" maxlength="200" placeholder="해제 메모 (선택)" aria-label="해제 메모"></span>
-        <button class="btn secondary">선택한 사람에게 적용</button>
-      </form>
-      ${table}</div>
+    <form id="bulkform" method="post" action="/applicants/bulk-action" class="bulkdock" aria-live="polite">${hid}
+      <b id="selcount">0명 선택</b>
+      <select name="op" id="bulkop" aria-label="처리 방법">
+        <option value="blacklist">블랙리스트로 등록</option>
+        <option value="release">블랙리스트 해제</option>
+        ${isSuper ? '<option value="delete">삭제 (관리자)</option>' : ''}
+      </select>
+      <span class="only only-blacklist" style="gap:6px;flex-wrap:wrap">${reasonSelect()}<input type="text" name="reason_text" maxlength="300" placeholder="사유 설명 (선택)" aria-label="사유 설명"></span>
+      <span class="only only-release"><input type="text" name="note" maxlength="200" placeholder="해제 메모 (선택)" aria-label="해제 메모"></span>
+      <button>선택한 사람에게 적용</button>
+    </form>
+    ${table}
     ${pager}
     ${link ? `<details class="card" style="margin-top:24px"><summary><b>문자 시스템 연결</b>
       <span class="muted">${link.enabled ? '켜짐' : '꺼짐 (기본)'} — 면접 안내와 지원자 관리를 이어 줘요. 발송은 막지 않아요.</span></summary>
       <form method="post" action="/applicants/settings" id="linkform" class="stack" style="margin-top:12px">${hid}
         <label class="check"><input type="checkbox" name="enabled" value="1"${link.enabled ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span><b>연결 사용</b> <small>켜야 아래 항목을 고를 수 있어요. 끄면 아래 항목은 모두 동작하지 않아요</small></span></label>
         <fieldset class="linkopts" id="linkopts"${link.enabled ? '' : ' disabled'}>
-        <label class="check"><input type="checkbox" name="register" value="1"${link.raw.register ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>면접 안내를 만들 때 명단을 지원자로 <b>자동 등록</b> <small>(중복은 올리지 않아요, 지원한 곳에는 사업장을 넣어요)</small></span></label>
+        <label class="check"><input type="checkbox" name="register" value="1"${link.raw.register ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>면접 안내를 만들 때 명단을 지원자로 <b>자동 등록</b> <small>(중복은 올리지 않아요, 원가중심점에는 사업장을 넣어요)</small></span></label>
         <label class="check"><input type="checkbox" name="history" value="1"${link.raw.history ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>지원자 상세·기록에 <b>면접 안내 이력</b> 보이기</span></label>
         <label class="check"><input type="checkbox" name="suggest" value="1"${link.raw.suggest ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>노쇼 기록이 많은 사람을 <b>블랙리스트 후보로 제안</b> <small>(등록은 사람이 승인해요)</small></span></label>
         <label style="max-width:220px">제안 기준 (노쇼 횟수)<input type="number" name="threshold" min="1" max="20" value="${link.threshold}"${isSuper ? '' : ' disabled'}></label>
@@ -863,9 +830,10 @@ export async function renderApplicantSheet(db, opts = {}) {
         </fieldset>
         ${isSuper ? '<div><button class="btn secondary">설정 저장</button></div>' : '<p class="muted">설정은 관리자만 바꿀 수 있어요.</p>'}
       </form></details>` : ''}
+    ${addDialog}${importDialog}
     <datalist id="dl-applied">${appliedOpts.map((o) => `<option value="${esc(o.v)}">`).join('')}</datalist>
     <datalist id="dl-job">${jobOpts.map((o) => `<option value="${esc(o.v)}">`).join('')}</datalist>
-    ${editForms}${SHEET_JS}`;
+    ${SHEET_JS}`;
 }
 
 // 표에서 "기록"을 누르면 불러오는 작은 조각 (지원 이력, 이전 블랙리스트, 변경 기록)
@@ -920,7 +888,8 @@ export async function handleApplicants(c) {
   if (path === '/applicants' && method === 'GET') {
     const sp = url.searchParams;
     const params = paramsFrom(sp);
-    const lookup = String(sp.get('lookup') || '').trim().slice(0, 30);
+    const qRaw = String(sp.get('q') || '').trim().slice(0, 30);
+    const lookup = String(sp.get('lookup') || (isValidMobile(normalizePhone(qRaw)) ? qRaw : '')).trim().slice(0, 30);
     if (lookup) await audit(db, user, 'applicant.lookup', '');
     const link = await getLinkSettings(db);
     return page('지원자 관리', await renderApplicantSheet(db, {
