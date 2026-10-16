@@ -6,6 +6,9 @@ const ALARM = 'albamon-poll';
 const MAX_PER_RUN = 5;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let running = false;
+let runningSince = 0;
+const ITEM_TIMEOUT = 70000;
+const withTimeout = (p, ms, label) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(label)), ms))]);
 
 async function setStatus(text) {
   await chrome.storage.local.set({ lastStatus: new Date().toLocaleTimeString('ko-KR') + ' · ' + text });
@@ -100,9 +103,16 @@ const NOTES = {
 async function processItem(cfg, item) {
   const tab = await chrome.tabs.create({ url: item.resume_url, active: false });
   try {
-    await waitLoaded(tab.id);
-    await sleep(1000);
-    const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pageRead, args: [{ name: item.name, apply_no: item.apply_no }, !!cfg.dry] });
+    let res;
+    try {
+      await waitLoaded(tab.id);
+      await sleep(1000);
+      [res] = await withTimeout(chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pageRead, args: [{ name: item.name, apply_no: item.apply_no }, !!cfg.dry] }), ITEM_TIMEOUT, 'timeout');
+    } catch (e) {
+      if (cfg.dry) return { dry: false, failed: true };
+      await api(cfg, `/api/agent/inbox/${item.id}/result`, { method: 'POST', body: JSON.stringify({ ok: false, phone: '', note: '이력서 화면을 읽지 못했어요(' + (e.message === 'timeout' ? '시간 초과' : '화면 접근 오류') + ').' }) });
+      return { failed: true };
+    }
     const r = (res && res.result) || { state: 'nobutton' };
     if (r.state === 'login') return { stop: 'login' };
     if (r.state === 'dry') return { dry: true };
@@ -118,8 +128,9 @@ async function processItem(cfg, item) {
 }
 
 async function run() {
-  if (running) return;
+  if (running && Date.now() - runningSince < 5 * 60 * 1000) return;
   running = true;
+  runningSince = Date.now();
   try {
     const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry']);
     if (!cfg.agentToken) { await setStatus('연결 키가 없어요. 아이콘을 눌러 키를 넣어 주세요.'); return; }
@@ -128,7 +139,9 @@ async function run() {
     const items = (q.items || []).slice(0, MAX_PER_RUN);
     if (!items.length) { await setStatus('처리할 요청이 없어요.'); return; }
     let ok = 0, fail = 0, dry = 0;
+    let idx = 0;
     for (const item of items) {
+      await setStatus(`처리 중… (${++idx}/${items.length})`);
       const r = await processItem(cfg, item);
       if (r.stop === 'login') { await setStatus('알바몬 로그인이 필요해요. 이 크롬에서 알바몬에 로그인해 주세요.'); return; }
       if (r.ok) ok++; else if (r.dry) dry++; else fail++;

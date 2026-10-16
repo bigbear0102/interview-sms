@@ -9,7 +9,8 @@ async function show() {
 $('save').addEventListener('click', async () => {
   await chrome.storage.local.set({ serverUrl: $('server').value.trim().replace(/\/+$/, ''), agentToken: $('key').value.trim(), dry: $('dry').checked });
   $('status').textContent = '확인하는 중…';
-  chrome.runtime.sendMessage({ type: 'run' });
+  await chrome.storage.local.set({ lastStatus: '확인하는 중…' });
+  try { await chrome.runtime.sendMessage({ type: 'run' }); } catch { $('status').textContent = '확장 프로그램을 다시 불러온 뒤 다시 눌러 주세요.'; }
 });
 chrome.storage.onChanged.addListener((c) => { if (c.lastStatus) $('status').textContent = c.lastStatus.newValue; });
 show();
