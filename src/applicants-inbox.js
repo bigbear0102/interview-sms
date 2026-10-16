@@ -69,15 +69,15 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   const autoOn = isSuper ? await getAutoRegister(db) : false;
   const agentCard = isSuper ? `<details class="card" style="margin-bottom:16px"${agentToken ? ' open' : ''}><summary><b>연락처 자동 가져오기 에이전트</b> <span class="muted">${tokenSet ? '연결 키 있음' : '연결 키 없음'} · 담당자 PC에서 알바몬에 로그인해 연락처를 읽어 와요</span></summary>
     <div style="margin-top:12px" class="stack">
-      <p class="muted" style="font-size:14px">알바몬 이력서의 연락처는 <b>"클릭해야 보여요"</b>. 그래서 담당자 PC의 크롬이 알바몬에 로그인해 연락처 보기를 눌러 읽어 와요.
-        <b>알바몬 아이디·비밀번호는 그 PC에서만 입력</b>하고 이 시스템에는 저장하지 않아요. 여기서 <b>"연락처 가져오기"를 누른 건만</b> 처리해요.</p>
+      <p class="muted" style="font-size:14px">알바몬 이력서의 연락처는 <b>"클릭해야 보여요"</b>. 그래서 담당자 PC의 크롬(이미 알바몬에 로그인된 상태)이 연락처 보기를 눌러 읽어 와요.
+        <b>알바몬 아이디·비밀번호는 이 시스템이 받지도 저장하지도 않아요.</b> 여기서 <b>"연락처 가져오기"를 누른 건만</b> 처리해요.</p>
       <div class="notice warn" role="note">${icon('alert')}<div>알바몬은 연락처를 열람할 때 <b>이용권이 차감될 수 있어요</b>. 에이전트는 차감·결제 확인 창이 보이면 누르지 않고 멈춰요. 처음에는 한두 건으로 확인해 보세요.</div></div>
       ${agentToken ? `<div class="copybox"><div class="copylabel">에이전트 연결 키 (지금만 보여요. 에이전트 설정에 붙여넣으세요)</div><div class="copyvalue">${esc(agentToken)}</div>
         <button type="button" class="btn secondary small" data-copy="${esc(agentToken)}">복사</button></div>` : ''}
       <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
-        <li>이 PC에서 \`tools\\albamon-agent\\start.bat\`을 실행하고(처음에는 설치가 진행돼요), 안내에 따라 <b>시스템 주소와 연결 키</b>를 넣어요.</li>
-        <li>열린 크롬 창에서 <b>알바몬 기업회원으로 로그인</b>해요. 아이디·비밀번호를 터미널에 입력해도 되고, 크롬 창에 직접 로그인해도 돼요.</li>
-        <li>수신함에서 <b>연락처 가져오기</b>를 누른 건을 에이전트가 하나씩 열어 연락처를 채워 줘요. 채워진 뒤 <b>등록</b>만 누르면 돼요.</li>
+        <li><b>크롬 확장 "연락처 가져오기"</b>를 담당자 PC의 크롬에 한 번만 설치해요. (<code>tools/albamon-extension</code> 폴더, 설치 방법은 그 안의 README)</li>
+        <li>그 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 두고, 확장 아이콘에 위의 <b>연결 키</b>를 한 번 넣어요.</li>
+        <li>수신함에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 알아서 연락처를 채워 줘요. 채워진 뒤 <b>등록</b>만 누르면 돼요.</li>
       </ol>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <form method="post" action="/applicants/inbox/agent-token" class="inline" data-confirm="${tokenSet ? '연결 키를 새로 만들까요? 이전 키로 실행 중인 에이전트는 멈춰요.' : '에이전트 연결 키를 만들까요?'}"><button class="btn secondary small">${tokenSet ? '연결 키 다시 만들기' : '연결 키 만들기'}</button></form>

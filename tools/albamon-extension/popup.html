@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  body { font: 14px/1.5 "Malgun Gothic", sans-serif; width: 320px; margin: 12px; color: #1d1d1f; }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  label { display: block; margin: 8px 0 2px; font-weight: 600; }
+  input[type=text], input[type=password] { width: 100%; box-sizing: border-box; padding: 6px; }
+  button { margin-top: 10px; padding: 8px 12px; cursor: pointer; }
+  #status { margin-top: 10px; padding: 8px; background: #f2f2f7; border-radius: 6px; min-height: 20px; }
+  small { color: #6e6e73; }
+</style>
+<h1>연락처 가져오기</h1>
+<small>알바몬에 이 크롬으로 로그인해 두면, 수신함에서 "연락처 가져오기"를 누른 건을 알아서 채워요.</small>
+<label for="server">시스템 주소</label>
+<input id="server" type="text" placeholder="https://interview.bigbears.me">
+<label for="key">연결 키 (ag_로 시작)</label>
+<input id="key" type="password" autocomplete="off">
+<label><input id="dry" type="checkbox"> 시험 실행 (연락처 보기를 누르지 않아요)</label>
+<button id="save">저장하고 지금 확인</button>
+<div id="status" role="status">-</div>
+<script src="popup.js"></script>
