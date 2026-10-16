@@ -1,5 +1,7 @@
 // 메일 수신함: 알바몬 지원 알림 메일이 모이는 곳. 담당자가 이력서를 열어 연락처를 확인해 지원자로 등록한다.
 import { first, run } from './d1.js';
+import { makeZip } from './zip.js';
+import { EXTENSION_FILES, EXTENSION_VERSION } from './extension-bundle.js';
 import { esc, icon, fmtTime } from './views.js';
 import { fmtPhone, pageHeader, tableWrap, emptyState } from './ui.js';
 import { normalizePhone, isValidMobile } from './parser.js';
@@ -75,11 +77,13 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
       ${agentToken ? `<div class="copybox"><div class="copylabel">에이전트 연결 키 (지금만 보여요. 에이전트 설정에 붙여넣으세요)</div><div class="copyvalue">${esc(agentToken)}</div>
         <button type="button" class="btn secondary small" data-copy="${esc(agentToken)}">복사</button></div>` : ''}
       <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
-        <li><b>크롬 확장 "연락처 가져오기"</b>를 담당자 PC의 크롬에 한 번만 설치해요. (<code>tools/albamon-extension</code> 폴더, 설치 방법은 그 안의 README)</li>
+        <li>아래 <b>확장 프로그램 내려받기</b>를 눌러 파일을 받고, 압축을 풀어요.</li>
+        <li>크롬 주소창에 <code>chrome://extensions</code> 를 입력 → 오른쪽 위 <b>개발자 모드</b> 켜기 → <b>압축해제된 확장 프로그램을 로드합니다</b> → 풀어 둔 <code>albamon-extension</code> 폴더 선택. (한 번만 하면 돼요)</li>
         <li>그 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 두고, 확장 아이콘에 위의 <b>연결 키</b>를 한 번 넣어요.</li>
         <li>수신함에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 알아서 연락처를 채워 줘요. 채워진 뒤 <b>등록</b>만 누르면 돼요.</li>
       </ol>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <a class="btn small" href="/applicants/inbox/extension.zip" download>확장 프로그램 내려받기 (v${esc(EXTENSION_VERSION)})</a>
         <form method="post" action="/applicants/inbox/agent-token" class="inline" data-confirm="${tokenSet ? '연결 키를 새로 만들까요? 이전 키로 실행 중인 에이전트는 멈춰요.' : '에이전트 연결 키를 만들까요?'}"><button class="btn secondary small">${tokenSet ? '연결 키 다시 만들기' : '연결 키 만들기'}</button></form>
         <form method="post" action="/applicants/inbox/auto" class="inline"><input type="hidden" name="on" value="${autoOn ? 0 : 1}">
           <button class="btn secondary small">연락처를 가져오면 바로 지원자로 등록: <b>${autoOn ? '켜짐 (끄기)' : '꺼짐 (켜기)'}</b></button></form>
@@ -227,6 +231,14 @@ export async function handleInbox(c, deps) {
       status: sp.get('status') === 'done' ? 'done' : 'pending', isSuper: user.role === 'super',
       flash: sp.get('ok') || '', err: sp.get('err') || '', origin: new URL(request.url).origin, fetched: sp.get('n') || 0
     }));
+  }
+  if (path === '/applicants/inbox/extension.zip' && method === 'GET') {
+    const zip = makeZip(Object.fromEntries(Object.entries(EXTENSION_FILES).map(([n, b]) => ['albamon-extension/' + n, b])));
+    return new Response(zip, { headers: {
+      'content-type': 'application/zip',
+      'content-disposition': `attachment; filename="albamon-extension-${EXTENSION_VERSION}.zip"`,
+      'cache-control': 'no-store'
+    } });
   }
   if (path === '/applicants/inbox/capture' && method === 'GET') {
     return page('이력서에서 가져온 연락처', await renderCapture(db));

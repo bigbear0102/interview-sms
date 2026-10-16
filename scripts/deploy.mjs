@@ -25,6 +25,7 @@ function step(title, cmd, cmdArgs, { retries = 0 } = {}) {
 const dirty = spawnSync('git', ['status', '--porcelain'], { encoding: 'utf8', shell: true }).stdout.trim();
 if (dirty) console.log('⚠ 커밋되지 않은 변경이 있어요. 배포는 현재 작업 폴더 기준으로 진행돼요.');
 
+step('0/4 확장 프로그램 묶음 갱신', 'node', ['scripts/build-extension.mjs']);
 if (!args.has('--skip-tests')) step('1/4 테스트', 'npm', ['test']);
 step('2/4 원격 DB 마이그레이션 적용 (코드 배포보다 먼저)', 'npx', ['wrangler', 'd1', 'migrations', 'apply', 'interview-sms', '--remote'], { retries: 2 });
 step('3/4 Worker 배포', 'npx', ['wrangler', 'deploy'], { retries: 1 });
