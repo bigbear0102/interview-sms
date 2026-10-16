@@ -171,6 +171,8 @@ const gw = http.createServer((req, res) => {
     return res.end('<meta charset=utf-8><title>로그인</title><form method="post" action="/login"><input id="cmmLogin_userId" name="userId"><input id="cmmLogin_pwd" name="pwd" type="password"><button type="submit" id="cmmLogin_login">로그인</button></form>');
   }
   if (u.pathname === '/main') { res.writeHead(200, H); return res.end('<meta charset=utf-8><h1>그룹웨어 메인</h1>'); }
+  if (u.pathname === '/mail/data/emlMail/selectMailList.do' && req.method === 'POST' && !logged) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end('<html>로그인</html>'); }
+  if (u.pathname === '/robots.txt') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('User-agent: *'); }
   if (u.pathname === '/mail/data/emlMail/selectMailList.do' && req.method === 'POST') {
     let b = ''; req.on('data', (c) => (b += c));
     req.on('end', () => {
@@ -261,7 +263,7 @@ const byId = Object.fromEntries(results.map((r) => [r.id, r]));
 check(byId[1] && byId[1].ok && byId[1].phone === '01012345678', '1번: 연락처 보기를 눌러 번호를 가져옴');
 check(byId[2] && byId[2].ok && byId[2].phone === '01055556666', '2번: 이미 보이는 번호(대표번호 제외)');
 check(byId[3] && !byId[3].ok && /이용권|차감|결제/.test(byId[3].note), '3번: 이용권 차감 창이면 누르지 않고 실패 처리');
-check(!byId[4], '4번: 차감 창에서 멈췄으므로 처리하지 않음');
+check(byId[4] && byId[4].ok, '4번: 여러 건을 동시에 읽으므로 3번이 멈춰도 같이 읽던 건은 정상 처리됨');
 check(/이용권/.test(s), '상태 문구에 이용권 확인 안내');
 
 

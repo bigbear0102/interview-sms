@@ -94,8 +94,8 @@ async function pageRead(item, dry) {
     el = findReveal();
     if (el) break;
     if (Date.now() - start > 3000 && GONE.test(t)) return { state: 'gone' };
-    if (Date.now() - start > 15000) return { state: 'nobutton', labels: labels() };
-    await sleepP(500);
+    if (Date.now() - start > 10000) return { state: 'nobutton', labels: labels() };
+    await sleepP(150);
   }
   const before = text();
   const urlOk = location.href.includes(item.apply_no);
@@ -108,7 +108,7 @@ async function pageRead(item, dry) {
     const t0 = Date.now();
     let confirmed = false, retried = false;
     for (;;) {
-      await sleepP(500);
+      await sleepP(150);
       const t = text();
       phone = pickPhone(t);
       if (phone) break;
@@ -121,7 +121,7 @@ async function pageRead(item, dry) {
         if (ok) { ok.click(); confirmed = true; continue; }
       }
       // 4초 동안 아무 변화가 없으면 한 번 더 누른다
-      if (!retried && Date.now() - t0 > 4000 && t === before) { el.click(); retried = true; }
+      if (!retried && Date.now() - t0 > 3000 && t === before) { el.click(); retried = true; }
       if (Date.now() - t0 > 12000) return { state: 'nophone', labels: labels() };
     }
   }
@@ -130,11 +130,11 @@ async function pageRead(item, dry) {
 }
 
 const NOTES = {
-  nobutton: '연락처 보기 버튼을 찾지 못했어요(15초 기다렸어요).',
+  nobutton: '연락처 보기 버튼을 찾지 못했어요(10초 기다렸어요).',
   nophone: '버튼을 눌렀지만 전화번호가 보이지 않았어요(12초 기다렸어요).',
   gone: '이력서를 찾을 수 없어요(삭제되었거나 열람 기간이 지났을 수 있어요).',
   mismatch: '이력서가 맞는지 확인하지 못했어요(이름·지원 번호가 화면에 없어요).',
-  deduct: '이용권 차감·결제 확인 창이 떠서 멈췄어요. 알바몬 화면에서 직접 확인해 주세요.'
+  deduct: '결제·이용권 확인 창이 떠서 멈췄어요. 알바몬 화면에서 직접 확인해 주세요.'
 };
 
 async function processItem(cfg, item) {
@@ -142,9 +142,19 @@ async function processItem(cfg, item) {
   try {
     let res;
     try {
-      await waitLoaded(tab.id);
-      await sleep(1000);
-      [res] = await withTimeout(chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pageRead, args: [{ name: item.name, apply_no: item.apply_no }, !!cfg.dry] }), ITEM_TIMEOUT, 'timeout');
+      // 화면 안의 번호·버튼은 pageRead 가 "보일 때까지" 기다리므로, 모든 자원(이미지 등)이 끝나길 기다리지 않고 최대 3초만 기다린 뒤 바로 읽기 시작한다.
+      // 이동(리다이렉트)이 아직 진행 중이라 화면이 바뀌면서 읽기가 끊기면 조금 뒤 다시 시도한다.
+      await waitLoaded(tab.id, 3000);
+      const started = Date.now();
+      for (;;) {
+        try {
+          [res] = await withTimeout(chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pageRead, args: [{ name: item.name, apply_no: item.apply_no }, !!cfg.dry] }), Math.max(ITEM_TIMEOUT - (Date.now() - started), 1000), 'timeout');
+          break;
+        } catch (e) {
+          if (e.message === 'timeout' || Date.now() - started > ITEM_TIMEOUT - 5000) throw e;
+          await sleep(250);
+        }
+      }
     } catch (e) {
       if (cfg.dry) return { dry: false, failed: true };
       await api(cfg, `/api/agent/inbox/${item.id}/result`, { method: 'POST', body: JSON.stringify({ ok: false, phone: '', note: '이력서 화면을 읽지 못했어요(' + (e.message === 'timeout' ? '시간 초과' : '화면 접근 오류') + ').' }) });
@@ -345,6 +355,17 @@ async function pageListAlbamon(limit) {
       if (list.length < PAGE) break;
     }
   } catch { return { total, mails: mails.slice(0, want), error: true }; }
+  if (!mails.length) {
+    // 알바몬 메일이 0통일 때: 정말 없는 건지, 로그인이 풀려 빈 응답이 온 건지 구분한다(받은 메일함 전체 수를 본다)
+    try {
+      const r = await fetch('/mail/data/emlMail/selectMailList.do?_=' + Date.now() + 't', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isLazy: 'N', boxCode: 'recv', pageNo: '1', pageSize: '1', mailType: 'all', searchField: '', keyword: '', startDt: null, endDt: null })
+      });
+      const j = await r.json();
+      if (!(Number(j.totalCount) > 0)) return { total, mails: [], error: true };
+    } catch { return { total, mails: [], error: true }; }
+  }
   return { total, mails: mails.slice(0, want) };
 }
 
@@ -377,29 +398,39 @@ async function scanAccount(cfg, acct) {
   const key = acctKey(acct.id);
   const base = cfg.gwMailUrl || GW_MAIL_DEFAULT;
   const record = (r) => updateAccount(key, (a) => { a.last = { text: r.text, level: r.level, at: Date.now() }; });
-  const tab = await openTab(base);
+  // 메일 화면 전체는 무거워서(수 초) 열지 않는다. 같은 주소(origin)의 가벼운 페이지에서 API 만 호출한다.
+  const light = new URL(base).origin + '/robots.txt';
+  const limit = Number(cfg.gwLimit) || 0;
+  const tab = await openTab(light);
   try {
-    // 로그인 화면이면 입력한다. 로그인은 계정당 한 번만 시도한다(계정 잠김 방지).
-    for (let i = 0; i < 2; i++) {
-      await sleep(800);
-      if (i === 1) {
-        if (!(await exec(tab.id, pageHasLogin).catch(() => false))) break;
+    let list = (await exec(tab.id, pageListAlbamon, [limit]).catch(() => null)) || { total: 0, mails: [], error: true };
+    if (list.error) {
+      // 로그인이 풀렸거나, 이 크롬에 로그인(또는 메일 쪽 연결)이 아직 없다 → 메일 화면을 열어 필요하면 로그인한다.
+      // 로그인은 계정당 한 번만 시도한다(계정 잠김 방지).
+      await chrome.tabs.update(tab.id, { url: base });
+      await waitLoaded(tab.id, 8000);
+      const loginUrl = (await chrome.tabs.get(tab.id).catch(() => ({}))).url || base;
+      const st = await exec(tab.id, pageLogin, [key, acct.pw]).catch(() => 'error');
+      if (st === 'submitted') {
+        // 로그인 뒤 화면에 도착할 때까지 기다린다(틀린 비밀번호면 주소가 바뀌지 않는다)
+        for (let i = 0; i < 60; i++) {
+          await sleep(150);
+          const t = await chrome.tabs.get(tab.id).catch(() => null);
+          if (t && t.url && t.url !== loginUrl && !/login/i.test(t.url) && t.status === 'complete') break;
+        }
+        await chrome.tabs.update(tab.id, { url: base });   // 메일 화면을 한 번 열어 메일 쪽 로그인 연결을 끝낸다(처음 한 번만)
+        await waitLoaded(tab.id, 8000);
+      }
+      list = (await exec(tab.id, pageListAlbamon, [limit]).catch(() => null)) || { total: 0, mails: [], error: true };
+      if (list.error && st === 'submitted') {
         const r = { level: 'error', text: `그룹웨어(${key}) 로그인이 안 돼요. 아이디 또는 비밀번호가 맞는지 확인하고, 수신함 화면에서 다시 저장해 주세요. 계정 잠김을 막으려고 자동으로 다시 시도하지 않아요.` };
         await updateAccount(key, (a) => { a.blocked = true; });
         await record(r);
         return r;
       }
-      const st = await exec(tab.id, pageLogin, [key, acct.pw]).catch(() => 'error');
-      if (st === 'nologin') break;
-      await new Promise((r) => setTimeout(r, 400));
-      await waitLoaded(tab.id);
-      await sleep(1500);
-      await chrome.tabs.update(tab.id, { url: base });
-      await waitLoaded(tab.id);
+      // 로그인 화면이 아닌데도 목록을 못 읽었으면 아래에서 "목록을 읽지 못했어요"로 알린다
     }
-    // 알바몬 지원 메일 목록을 API 로 받아 온다(설정한 양만큼, 최신 순)
-    const limit = Number(cfg.gwLimit) || 0;
-    const list = (await exec(tab.id, pageListAlbamon, [limit]).catch(() => null)) || { total: 0, mails: [], error: true };
+    // 알바몬 지원 메일 목록(설정한 양만큼, 최신 순)은 위에서 받아 왔다
     const scope = limit > 0 ? `최근 ${limit}통` : '전부';
     let res;
     if (list.error && !list.mails.length) {
@@ -429,7 +460,7 @@ async function scanAccount(cfg, acct) {
         }
         const rest = todoAll.length - todo.length;
         if (failed && failed === todo.length) res = { level: 'error', text: `그룹웨어(${key}) 메일 ${failed}건의 내용을 받지 못했어요. 그룹웨어 로그인이 풀렸거나 화면 구조가 바뀌었을 수 있어요. 다음 확인 때 다시 시도해요.` };
-        else res = { level: failed ? 'warn' : 'ok', text: `그룹웨어(${key}) 알바몬 지원 메일 ${list.mails.length}통(${scope}) 중 ${added}건 새로 가져왔어요${dup ? `(이미 있는 ${dup}건)` : ''}${skipped ? `, 지원 메일이 아니어서 건너뜀 ${skipped}건` : ''}${failed ? `, 받지 못한 ${failed}건은 다음에 다시 시도` : ''}${rest ? `, 남은 ${rest}건은 다음 확인 때 이어서 가져와요` : ''}.` };
+        else res = { added, level: failed ? 'warn' : 'ok', text: `그룹웨어(${key}) 알바몬 지원 메일 ${list.mails.length}통(${scope}) 중 ${added}건 새로 가져왔어요${dup ? `(이미 있는 ${dup}건)` : ''}${skipped ? `, 지원 메일이 아니어서 건너뜀 ${skipped}건` : ''}${failed ? `, 받지 못한 ${failed}건은 다음에 다시 시도` : ''}${rest ? `, 남은 ${rest}건은 다음 확인 때 이어서 가져와요` : ''}.` };
       }
     }
     await record(res);
@@ -472,30 +503,37 @@ async function scanGroupware(cfg, force) {
     if (multi) { await restoreGwCookies(domain, snap); await chrome.storage.session.remove('gwSwap'); }
   }
   const level = results.reduce((w, r) => worst(w, r.level), 'ok');
-  return { level, text: results.map((r) => r.text).join(' ') };
+  return { level, text: results.map((r) => r.text).join(' '), added: results.reduce((n, r) => n + (r.added || 0), 0) };
 }
 
+const CONTACT_CONCURRENCY = 4;   // 이력서 탭을 동시에 몇 개까지 열어 읽을지
 async function runContacts(cfg) {
-  let ok = 0, fail = 0, dry = 0, total = 0;
-  // 요청이 많으면 5건씩 이어서 처리한다(한 번에 최대 6번 = 30건). 남은 건은 다음 확인 때 이어서 한다.
-  for (let round = 0; round < 6; round++) {
-    const q = await (await api(cfg, '/api/agent/inbox')).json();
-    const items = (q.items || []).slice(0, MAX_PER_RUN);
+  const t0 = Date.now();
+  let ok = 0, fail = 0, dry = 0, done = 0, stop = null;
+  // 요청이 있으면 20건씩 받아 4건씩 동시에 처리하고, 큐가 빌 때까지 이어서 한다(한 번에 최대 10번 = 200건)
+  for (let round = 0; round < 10 && !stop; round++) {
+    const q = await (await api(cfg, '/api/agent/inbox?limit=20')).json();
+    const items = q.items || [];
     if (!items.length) break;
-    let idx = 0;
-    for (const item of items) {
-      await setStatus(`연락처 가져오는 중… (${++total}번째)`);
-      const r = await processItem(cfg, item);
-      if (r.stop === 'login') return { level: 'error', text: '알바몬 로그인이 필요해요. 이 크롬에서 알바몬(기업회원)에 로그인한 뒤 다시 "연락처 가져오기"를 눌러 주세요.' };
-      if (r.ok) ok++; else if (r.dry) dry++; else fail++;
-      if (r.stop === 'deduct') return { level: 'error', text: '이용권 차감·결제 확인 창이 떠서 멈췄어요. 알바몬 화면에서 직접 확인해 주세요.' };
-      await sleep(2500 + Math.random() * 3500);
-    }
+    let next = 0;
+    const worker = async () => {
+      while (!stop && next < items.length) {
+        const item = items[next++];
+        await setStatus(`연락처 가져오는 중… (${++done}번째)`);
+        const r = await processItem(cfg, item);
+        if (r.stop === 'login') { stop = { level: 'error', text: '알바몬 로그인이 필요해요. 이 크롬에서 알바몬(기업회원)에 로그인한 뒤 다시 "연락처 가져오기"를 눌러 주세요.' }; return; }
+        if (r.ok) ok++; else if (r.dry) dry++; else fail++;
+        if (r.stop === 'deduct') { stop = { level: 'error', text: '결제·이용권 확인 창이 떠서 멈췄어요. 알바몬 화면에서 직접 확인해 주세요.' }; return; }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONTACT_CONCURRENCY, items.length) }, worker));
     if (dry) break;   // 시험 실행은 한 번만
   }
-  if (!total) return null;
+  if (stop) return stop;
+  if (!done) return null;
+  const secs = ((Date.now() - t0) / 1000).toFixed(1);
   if (dry) return { level: 'ok', text: `시험 실행: ${dry}건에서 연락처 보기 버튼을 찾았어요.` };
-  return { level: fail ? (ok ? 'warn' : 'error') : 'ok', text: `연락처 ${ok}건 채웠어요${fail ? `, ${fail}건은 못 채웠어요(이유는 새 지원 화면의 해당 카드에 적혀 있어요)` : ''}.` };
+  return { level: fail ? (ok ? 'warn' : 'error') : 'ok', text: `연락처 ${ok}건 채웠어요(${secs}초)${fail ? `, ${fail}건은 못 채웠어요(이유는 새 지원 화면의 해당 카드에 적혀 있어요)` : ''}.` };
 }
 
 async function run(force = false) {
@@ -509,9 +547,13 @@ async function run(force = false) {
     const parts = [];
     let level = 'ok';
     const add = (r) => { if (r) { parts.push(r.text); level = worst(level, r.level); } };
-    try { add(await scanGroupware(cfg, force)); } catch (e) { add({ level: 'error', text: '그룹웨어 메일을 가져오지 못했어요: ' + e.message }); }
-    try { add(await runContacts(cfg)); } catch (e) { add({ level: 'error', text: '연락처 가져오기가 멈췄어요: ' + e.message }); }
-    await setStatus(parts.length ? parts.join(' ') : '새로 처리할 것이 없어요.', parts.length ? level : 'ok');
+    const t0 = Date.now();
+    const contacts = async () => { try { add(await runContacts(cfg)); } catch (e) { add({ level: 'error', text: '연락처 가져오기가 멈췄어요: ' + e.message }); } };
+    await contacts();   // 사용자가 요청한 연락처 가져오기를 먼저(그룹웨어 확인을 기다리지 않는다)
+    let gwAdded = 0;
+    try { const g = await scanGroupware(cfg, force); if (g) { add(g); gwAdded = g.added || 0; } } catch (e) { add({ level: 'error', text: '그룹웨어 메일을 가져오지 못했어요: ' + e.message }); }
+    if (gwAdded) await contacts();   // 새로 들어온 메일이 규칙으로 자동 요청됐을 수 있으니 바로 이어서
+    await setStatus(parts.length ? `${parts.join(' ')} [총 ${((Date.now() - t0) / 1000).toFixed(1)}초]` : '새로 처리할 것이 없어요.', parts.length ? level : 'ok');
   } catch (e) {
     await setStatus('멈췄어요: ' + e.message, 'error');
   } finally {
@@ -540,6 +582,11 @@ async function senderAllowed(sender) {
     return o === mine || o === 'https://interview.bigbears.me';
   } catch { return false; }
 }
+// 문자 관리 시스템 화면에서 "연락처 가져오기"를 요청했을 때 알람(30초)을 기다리지 않고 바로 확인한다
+chrome.runtime.onMessage.addListener((m, sender) => {
+  if (m && m.type === 'kick') senderAllowed(sender).then((ok) => { if (ok) run(false); });
+  return false;
+});
 chrome.runtime.onMessage.addListener((m, sender, send) => {
   if (!m || (m.type !== 'bridge-state' && m.type !== 'bridge-save')) return false;
   (async () => {
@@ -550,8 +597,8 @@ chrome.runtime.onMessage.addListener((m, sender, send) => {
   return true;
 });
 
-chrome.runtime.onInstalled.addListener(() => chrome.alarms.create(ALARM, { periodInMinutes: 1 }));
-chrome.runtime.onStartup.addListener(() => chrome.alarms.create(ALARM, { periodInMinutes: 1 }));
+chrome.runtime.onInstalled.addListener(() => chrome.alarms.create(ALARM, { periodInMinutes: 0.5 }));
+chrome.runtime.onStartup.addListener(() => chrome.alarms.create(ALARM, { periodInMinutes: 0.5 }));
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === ALARM) run(false); });
 chrome.runtime.onMessage.addListener((m, sender, send) => {
   if (m && m.type === 'run') run(true);

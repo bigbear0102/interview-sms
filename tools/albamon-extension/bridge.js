@@ -9,6 +9,7 @@ window.addEventListener('message', async (e) => {
   if (e.source !== window || !d || d.source !== 'interview-page') return;
   try {
     if (d.type === 'hello') reply('ready', await getState());
+    if (d.type === 'kick') chrome.runtime.sendMessage({ type: 'kick' });
     if (d.type === 'save') {
       const patch = {};
       if (typeof d.agentToken === 'string' && /^ag_[0-9a-f]{48}$/.test(d.agentToken)) patch.agentToken = d.agentToken;

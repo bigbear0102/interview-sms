@@ -24,7 +24,7 @@ export async function handleAgentApi(request, env, url, deps) {
   const method = request.method;
 
   if (path === '/api/agent/inbox' && method === 'GET') {
-    return json({ items: await agentQueue(db, 5, uid) });
+    return json({ items: await agentQueue(db, Number(url.searchParams.get('limit')) || 5, uid) });
   }
 
   if (path === '/api/agent/me' && method === 'GET') {

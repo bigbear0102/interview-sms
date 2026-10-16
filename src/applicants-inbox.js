@@ -141,7 +141,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
 
   const dock = status === 'pending' ? `<form id="bulkform" method="post" action="/applicants/inbox/bulk" class="bulkdock" aria-live="polite">
       <b id="selcount">0건 선택</b>
-      <button name="op" value="fetch" data-confirm="선택한 건의 연락처를 가져오도록 요청할까요? 알바몬 이용권이 차감될 수 있어요.">연락처 가져오기</button>
+      <button name="op" value="fetch">연락처 가져오기</button>
       <button name="op" value="register">연락처 있는 건 등록</button>
       <button name="op" value="ignore" class="ghost" data-confirm="선택한 건을 무시로 처리할까요?">무시</button></form>` : '';
 
@@ -276,7 +276,7 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
           <div class="notice warn" role="note">${icon('alert')}<div><b>계정이 2개 이상이면</b> 5분마다 이 PC 크롬의 그룹웨어 로그인이 계정을 바꿔 가며 잠깐 바뀌었다가 <b>원래대로 돌아와요.</b> 이 크롬에서 그룹웨어를 직접 쓰는 중이면 잠깐 로그아웃된 것처럼 보일 수 있어요. 그룹웨어를 쓰지 않는 크롬(또는 별도 프로필)에서 쓰는 걸 권해요. 또 <b>다른 사람의 아이디·비밀번호를 이 PC에 저장</b>하게 되니, 회사 규정과 본인의 동의를 확인해 주세요.</div></div>
         </div></section>
       <section class="cstep"><h2>알바몬 로그인 유지</h2>
-        <p class="muted" style="font-size:15px">같은 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 두세요. 새 지원 화면에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 이력서를 열어 연락처를 채워 줘요. 알바몬은 연락처 열람에 <b>이용권이 차감될 수 있어서</b>, 차감·결제 확인 창이 뜨면 누르지 않고 멈춰요.</p></section>
+        <p class="muted" style="font-size:15px">같은 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 두세요. 새 지원 화면에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 이력서를 열어 연락처를 채워 줘요.</p></section>
     </div>
     <details class="advanced"><summary>고급 설정 · 다른 방법</summary>
       ${keyCard}${myAddrCard}${sharedCard}${tool}

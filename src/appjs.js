@@ -185,6 +185,17 @@ document.addEventListener('click', function (e) {
   if (inp) { inp.value = b.getAttribute('data-fill'); inp.focus(); }
 });
 
+// 연락처 가져오기를 요청한 직후(주소에 fr=건수 가 붙어 돌아온 화면)에는 확장 프로그램을 바로 깨운다(30초 알람을 기다리지 않도록)
+(function () {
+  try {
+    var u = new URL(location.href);
+    var fr = parseInt(u.searchParams.get('fr') || '0', 10);
+    var ok = u.searchParams.get('ok');
+    if (fr > 0 || ok === 'fetch' || ok === 'fetchall') window.postMessage({ source: 'interview-page', type: 'kick' }, location.origin);
+    if (u.searchParams.has('fr')) { u.searchParams.delete('fr'); history.replaceState(null, '', u.pathname + (u.search ? u.search : '') + u.hash); }
+  } catch (e) { /* ignore */ }
+})();
+
 // 대화 창(data-dialog="아이디" 버튼으로 열고, data-close 버튼이나 바깥 눌러서 닫는다)
 document.addEventListener('click', function (e) {
   var o = e.target.closest && e.target.closest('[data-dialog]');
