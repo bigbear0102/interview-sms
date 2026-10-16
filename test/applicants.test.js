@@ -32,7 +32,7 @@ async function setup() {
 
 test('붙여넣기 해석: 제목 줄 있음/없음', () => {
   const a = applicantsFromText('이름\t전화번호\t지원한 곳\t직무\n홍길동\t010-1234-5678\t아마노코리아(현장HR)\t현장 관리');
-  assert.deepEqual(a.rows[0], { name: '홍길동', phone: '010-1234-5678', applied_to: '아마노코리아(현장HR)', job: '현장 관리' });
+  assert.deepEqual(a.rows[0], { line: 2, name: '홍길동', phone: '010-1234-5678', applied_to: '아마노코리아(현장HR)', job: '현장 관리', blacklist: '', reason: '', reason_text: '' });
   const b = applicantsFromText('김영희\t010-2345-6789\t아마노코리아(현장HR)\t물류\n박민수\t01034567890\t아마노코리아(현장HR)\t물류');
   assert.equal(b.errors.length, 0);
   assert.equal(b.rows.length, 2);
@@ -189,4 +189,63 @@ test('한 화면 표: 입력 줄 추가, 표에서 바로 수정, 블랙리스�
   const res = await admin.post('/applicants/bulk', { back, text: csv });
   assert.equal(res.status, 200);
   assert.ok(visible(await res.text()).includes('1명을 새로 등록했어요'));
+});
+
+import { interpretBlacklist } from '../src/applicants.js';
+
+test('업로드 해석: 블랙리스트 여부와 사유', () => {
+  assert.deepEqual(interpretBlacklist({ blacklist: 'Y', reason: '면접 무단 불참', reason_text: '10/20' }), { bl: true, code: 'noshow', text: '10/20' });
+  assert.deepEqual(interpretBlacklist({ blacklist: '예', reason: '노쇼', reason_text: '' }), { bl: true, code: 'noshow', text: '' });
+  assert.equal(interpretBlacklist({ blacklist: 'Y', reason: '근무 중 무단 이탈' }).code, 'absent');
+  assert.equal(interpretBlacklist({ blacklist: '블랙리스트', reason: '서류 허위' }).code, 'false_info');
+  assert.equal(interpretBlacklist({ blacklist: 'O', reason: 'misconduct' }).code, 'misconduct');
+  // 알 수 없는 사유 → 기타 + 그 말을 설명으로
+  assert.deepEqual(interpretBlacklist({ blacklist: 'Y', reason: '무단 퇴실 반복', reason_text: '' }), { bl: true, code: 'other', text: '무단 퇴실 반복' });
+  // 여부 칸이 비어 있어도 사유가 있으면 등록
+  assert.equal(interpretBlacklist({ blacklist: '', reason: '면접 무단 불참' }).bl, true);
+  // 아니오 / 일반 / 비어 있음
+  assert.equal(interpretBlacklist({ blacklist: 'N', reason: '면접 무단 불참' }).bl, false);
+  assert.equal(interpretBlacklist({ blacklist: '', reason: '' }).bl, false);
+  // 사유 없음, 기타인데 설명 없음 → 경고
+  assert.match(interpretBlacklist({ blacklist: 'Y', reason: '' }).warn, /사유가 없어서/);
+  assert.match(interpretBlacklist({ blacklist: 'Y', reason: '기타', reason_text: '' }).warn, /사유 설명/);
+  assert.match(interpretBlacklist({ blacklist: '글쎄', reason: '' }).warn, /알 수 없어서/);
+});
+
+test('업로드로 블랙리스트까지 한 번에 등록: 제목 줄 있는 CSV와 제목 줄 없는 붙여넣기', async () => {
+  const { admin, db } = await setup();
+  const csv = [
+    '이름,전화번호,지원한 곳,직무,블랙리스트,사유,사유 설명',
+    '홍길동,010-1111-0001,A사,현장,,,',
+    '김영희,010-1111-0002,A사,물류,Y,면접 무단 불참,10/20 불참',
+    '이철수,010-1111-0003,A사,경비,Y,,',
+    '박민수,010-1111-0004,A사,경비,N,면접 무단 불참,',
+    '최수아,010-1111-0005,A사,경비,Y,기타,'
+  ].join('\n');
+  const res = await admin.post('/applicants/bulk', { back: '/applicants', text: csv });
+  assert.equal(res.status, 200);
+  const html = visible(await res.text());
+  assert.ok(html.includes('5명을 새로 등록했어요'));
+  assert.ok(html.includes('블랙리스트 1명을 등록했어요'));
+  assert.ok(html.includes('확인해 주세요 (2건)'));
+  assert.ok(html.includes('4번째 줄'));  // 이철수: 사유 없음
+  assert.ok(html.includes('6번째 줄'));  // 최수아: 기타인데 설명 없음
+  const bl = await db.prepare(`SELECT a.name, b.reason_code, b.reason_text FROM blacklist b JOIN applicants a ON a.id=b.applicant_id WHERE b.status='active'`).all();
+  assert.equal(bl.results.length, 1);
+  assert.equal(bl.results[0].name, '김영희');
+  assert.equal(bl.results[0].reason_code, 'noshow');
+  assert.equal(bl.results[0].reason_text, '10/20 불참');
+  // 변경 기록에 남는다
+  const ev = await db.prepare(`SELECT detail FROM applicant_events WHERE action='blacklist'`).all();
+  assert.equal(ev.results.length, 1);
+  assert.match(ev.results[0].detail, /면접 무단 불참/);
+  // 이미 블랙리스트인 사람을 다시 올리면 중복 등록하지 않는다
+  const again = await admin.post('/applicants/bulk', { back: '/applicants', text: '김영희\t010-1111-0002\tB사\t경비\tY\t근무 중 무단 이탈\t' });
+  const html2 = visible(await again.text());
+  assert.ok(html2.includes('이미 등록 중인 1명'));
+  const cnt = await db.prepare(`SELECT COUNT(*) n FROM blacklist`).first();
+  assert.equal(cnt.n, 1);
+  // 양식 파일에도 새 열이 있다
+  const tpl = await (await admin.call('/applicants/template.csv')).text();
+  assert.ok(tpl.includes('블랙리스트,사유,사유 설명'));
 });

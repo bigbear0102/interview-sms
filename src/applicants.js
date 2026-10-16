@@ -27,7 +27,10 @@ const ALIAS = {
   name: ['이름', '성명', '지원자', '지원자명', 'name'],
   phone: ['전화번호', '휴대폰', '휴대폰번호', '연락처', '핸드폰', '핸드폰번호', 'phone', 'mobile'],
   applied_to: ['지원한곳', '지원처', '지원회사', '지원사', '회사', '회사명', '사업장', '사업장명', '지원사업장', 'applied', '근무지'],
-  job: ['직무', '직종', '지원직무', '포지션', 'job', 'position']
+  job: ['직무', '직종', '지원직무', '포지션', 'job', 'position'],
+  blacklist: ['블랙리스트', '블랙리스트여부', '블랙', '블랙여부', 'blacklist'],
+  reason: ['사유', '블랙리스트사유', '등록사유', '사유구분', 'reason'],
+  reason_text: ['사유설명', '사유상세', '상세사유', '설명', '비고', 'reason_text']
 };
 const isPhoneCell = (v) => isValidMobile(normalizePhone(v));
 
@@ -55,13 +58,20 @@ export function applicantsFromText(text) {
     idx.name = rest[0] ?? -1;
     idx.applied_to = rest[1] ?? -1;
     idx.job = rest[2] ?? -1;
+    idx.blacklist = rest[3] ?? -1;
+    idx.reason = rest[4] ?? -1;
+    idx.reason_text = rest[5] ?? -1;
     data = isPhoneCell(rows[0][phone] ?? '') ? rows : rows.slice(1);
   } else if (rows.length < 2) {
     return { rows: [], errors: ['데이터 행이 없어요.'] };
   }
   const get = (r, k) => (idx[k] >= 0 ? (r[idx[k]] ?? '').trim() : '');
   return {
-    rows: data.map((r) => ({ name: get(r, 'name'), phone: get(r, 'phone'), applied_to: get(r, 'applied_to'), job: get(r, 'job') })),
+    rows: data.map((r, k) => ({
+      line: rows.length - data.length + k + 1,
+      name: get(r, 'name'), phone: get(r, 'phone'), applied_to: get(r, 'applied_to'), job: get(r, 'job'),
+      blacklist: get(r, 'blacklist'), reason: get(r, 'reason'), reason_text: get(r, 'reason_text')
+    })),
     errors: []
   };
 }
@@ -102,17 +112,53 @@ export async function saveApplicant(db, { name, phone, applied_to = '', job = ''
   return { ok: true, id: row.id, created };
 }
 
+// 업로드 행의 블랙리스트 여부·사유 해석
+//  - 여부: Y/예/O/1/블랙/블랙리스트 → 등록, N/아니오/일반/비어 있음 → 등록 안 함. 여부 열이 비었는데 사유가 있으면 등록으로 본다.
+//  - 사유: 목록 이름이나 비슷한 말(노쇼, 무단 불참, 이탈, 허위 ...)을 코드로 바꾼다. 알 수 없는 말은 "기타" + 그 말을 설명으로 남긴다.
+const YES = new Set(['y', 'yes', 'o', '1', 'true', '예', '네', '블랙', '블랙리스트', '등록', '대상']);
+const NO = new Set(['n', 'no', 'x', '0', 'false', '아니오', '아니요', '일반', '해제', '']);
+export function interpretBlacklist(r) {
+  const flag = String(r.blacklist ?? '').trim().toLowerCase();
+  const reasonRaw = String(r.reason ?? '').trim();
+  const text = clip(r.reason_text, 300);
+  let on;
+  if (YES.has(flag)) on = true;
+  else if (NO.has(flag)) on = flag === '' ? !!(reasonRaw || text) : false;
+  else return { bl: false, warn: `블랙리스트 여부 값을 알 수 없어서 일반으로 등록했어요(${clip(r.blacklist, 20)})` };
+  if (!on) return { bl: false };
+  let code = '';
+  const t = reasonRaw.replace(/\s/g, '').toLowerCase();
+  if (REASON_LABEL[t]) code = t;
+  else if (t) {
+    const hit = REASONS.find(([, label]) => label.replace(/\s/g, '') === reasonRaw.replace(/\s/g, ''));
+    if (hit) code = hit[0];
+    else if (/불참|노쇼|noshow/.test(t)) code = 'noshow';
+    else if (/이탈|결근/.test(t)) code = 'absent';
+    else if (/허위/.test(t)) code = 'false_info';
+    else if (/부적절|폭언|폭행|행위/.test(t)) code = 'misconduct';
+    else if (/^(기타|other)$/.test(t)) code = 'other';
+    else return { bl: true, code: 'other', text: clip(text ? `${reasonRaw} - ${text}` : reasonRaw, 300) };
+  }
+  if (!code) return { bl: false, warn: '블랙리스트 사유가 없어서 일반으로 등록했어요' };
+  if (code === 'other' && !text) return { bl: false, warn: '"기타"는 사유 설명이 필요해서 일반으로 등록했어요' };
+  return { bl: true, code, text };
+}
+
 // 여러 명 붙여넣기 등록. Workers 의 호출 수 한도 때문에 묶어서(batch) 처리한다.
 export async function bulkSave(db, rows, userId) {
   const now = Date.now();
   const rejected = [];
+  const warnings = [];
   const byPhone = new Map();
   rows.slice(0, MAX_PASTE).forEach((r, i) => {
     const phone = normalizePhone(r.phone);
     const name = clip(r.name, 50);
-    if (!isValidMobile(phone)) return rejected.push({ row: i + 1, reason: `휴대폰 번호 오류(${clip(r.phone, 20)})` });
-    if (!name) return rejected.push({ row: i + 1, reason: '이름 없음' });
-    if (!byPhone.has(phone)) byPhone.set(phone, { name, apps: [] });
+    if (!isValidMobile(phone)) return rejected.push({ row: r.line ?? i + 1, reason: `휴대폰 번호 오류(${clip(r.phone, 20)})` });
+    if (!name) return rejected.push({ row: r.line ?? i + 1, reason: '이름 없음' });
+    if (!byPhone.has(phone)) byPhone.set(phone, { name, apps: [], bl: null });
+    const ib = interpretBlacklist(r);
+    if (ib.warn) warnings.push({ row: r.line ?? i + 1, reason: ib.warn });
+    else if (ib.bl && !byPhone.get(phone).bl) byPhone.get(phone).bl = { code: ib.code, text: ib.text };
     const a = clip(r.applied_to, 100), j = clip(r.job, 100);
     if (a || j) byPhone.get(phone).apps.push({ a, j });
   });
@@ -123,8 +169,16 @@ export async function bulkSave(db, rows, userId) {
     const found = await all(db, `SELECT phone FROM applicants WHERE phone IN (${chunk.map(() => '?').join(',')})`, ...chunk);
     found.forEach((f) => existing.add(f.phone));
   }
+  const blActive = new Set();
+  for (let i = 0; i < phones.length; i += 80) {
+    const chunk = phones.slice(i, i + 80);
+    const found = await all(db,
+      `SELECT a.phone FROM applicants a JOIN blacklist b ON b.applicant_id=a.id AND b.status='active'
+        WHERE a.phone IN (${chunk.map(() => '?').join(',')})`, ...chunk);
+    found.forEach((f) => blActive.add(f.phone));
+  }
   const stmts = [];
-  let created = 0, updated = 0;
+  let created = 0, updated = 0, blacklisted = 0, blSkipped = 0;
   for (const [phone, v] of byPhone) {
     if (!existing.has(phone)) {
       created++;
@@ -146,9 +200,21 @@ export async function bulkSave(db, rows, userId) {
            AND NOT EXISTS (SELECT 1 FROM applicant_applications x WHERE x.applicant_id=applicants.id AND x.applied_to=? AND x.job=?)`,
         a, j, userId ?? null, now, phone, a, j));
     }
+    if (v.bl) {
+      if (blActive.has(phone)) blSkipped++;
+      else {
+        blacklisted++;
+        stmts.push(stmt(db,
+          `INSERT INTO blacklist (applicant_id, reason_code, reason_text, created_by, created_at)
+           SELECT id, ?, ?, ?, ? FROM applicants WHERE phone=?`, v.bl.code, v.bl.text, userId ?? null, now, phone));
+        stmts.push(stmt(db,
+          `INSERT INTO applicant_events (applicant_id, action, detail, user_id, at)
+           SELECT id, 'blacklist', ?, ?, ? FROM applicants WHERE phone=?`, REASON_LABEL[v.bl.code] + ' (업로드)', userId ?? null, now, phone));
+      }
+    }
   }
   for (let i = 0; i < stmts.length; i += 40) await db.batch(stmts.slice(i, i + 40));
-  return { created, updated, rejected, truncated: rows.length > MAX_PASTE };
+  return { created, updated, rejected, warnings, blacklisted, blSkipped, truncated: rows.length > MAX_PASTE };
 }
 
 // ---------------- 화면 ----------------
@@ -427,6 +493,8 @@ export async function renderApplicantSheet(db, { q = '', status = '', flash = ''
   if (FLASH_ERR[err]) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div>${esc(FLASH_ERR[err])}</div></div>`);
   if (bulk) {
     notices.push(`<div class="notice ok">${icon('check')}<div><b>${bulk.created}명을 새로 등록했어요.</b>${bulk.updated ? ` 이미 있던 ${bulk.updated}명은 지원 건만 반영했어요.` : ''}${bulk.truncated ? ` (한 번에 ${MAX_PASTE}명까지만 처리해요)` : ''}</div></div>`);
+    if (bulk.blacklisted || bulk.blSkipped) notices.push(`<div class="notice info">${icon('info')}<div><b>블랙리스트 ${bulk.blacklisted}명을 등록했어요.</b>${bulk.blSkipped ? ` 이미 등록 중인 ${bulk.blSkipped}명은 그대로 두었어요.` : ''}</div></div>`);
+    if (bulk.warnings && bulk.warnings.length) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div><b>확인해 주세요 (${bulk.warnings.length}건)</b><ul style="margin:8px 0 0;padding-left:20px">${bulk.warnings.slice(0, 30).map((x) => `<li>${x.row}번째 줄: ${esc(x.reason)}</li>`).join('')}</ul></div></div>`);
     if (bulk.rejected.length) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div><b>${bulk.rejected.length}건은 등록하지 못했어요.</b><ul style="margin:8px 0 0;padding-left:20px">${bulk.rejected.slice(0, 30).map((x) => `<li>${x.row}번째 줄: ${esc(x.reason)}</li>`).join('')}</ul></div></div>`);
   }
   if (bulk && bulk.error) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div>${esc(bulk.error)}</div></div>`);
@@ -473,8 +541,8 @@ export async function renderApplicantSheet(db, { q = '', status = '', flash = ''
       <summary><b>CSV·엑셀로 한꺼번에 등록</b> <span class="muted">파일을 올리거나 엑셀에서 복사해 붙여넣어요</span></summary>
       <form method="post" action="/applicants/bulk" class="stack" style="margin-top:12px">${hid}
         <div class="dropzone"><input type="file" id="csvfile" accept=".csv,.txt,.tsv" aria-label="CSV 파일 선택"><p id="csvname" class="muted" style="margin-top:8px">아직 고른 파일이 없어요.</p></div>
-        <textarea name="text" id="bulktext" rows="5" required aria-label="명단 붙여넣기" placeholder="이름&#9;전화번호&#9;지원한 곳&#9;직무&#10;홍길동&#9;010-1234-5678&#9;아마노코리아(현장HR)&#9;현장 관리"></textarea>
-        <p class="muted" style="font-size:14px">열 순서는 <b>이름 · 전화번호 · 지원한 곳 · 직무</b>를 권해요. 제목 줄이 있으면 순서가 달라도 알아봐요. 한 번에 ${MAX_PASTE}명까지. <a href="/applicants/template.csv">양식 받기</a></p>
+        <textarea name="text" id="bulktext" rows="5" required aria-label="명단 붙여넣기" placeholder="이름&#9;전화번호&#9;지원한 곳&#9;직무&#9;블랙리스트&#9;사유&#10;홍길동&#9;010-1234-5678&#9;아마노코리아(현장HR)&#9;현장 관리&#10;김영희&#9;010-2345-6789&#9;아마노코리아(현장HR)&#9;물류&#9;Y&#9;면접 무단 불참"></textarea>
+        <p class="muted" style="font-size:14px">열 순서는 <b>이름 · 전화번호 · 지원한 곳 · 직무 · 블랙리스트 · 사유 · 사유 설명</b>을 권해요. 블랙리스트 칸에는 <b>Y</b>(또는 예)를 적고, 사유는 목록 이름(면접 무단 불참, 근무 중 무단 이탈, 서류·정보 허위, 업무상 부적절한 행위, 기타) 중 하나를 적어요. 앞의 네 칸만 있어도 돼요. 한 번에 ${MAX_PASTE}명까지. <a href="/applicants/template.csv">양식 받기</a></p>
         <div class="form-actions"><button class="btn secondary">등록하기</button></div>
       </form>
     </details>
@@ -508,7 +576,11 @@ export async function renderApplicantPanel(db, id) {
 }
 
 export function applicantTemplateCsv() {
-  return toCsv([['이름', '전화번호', '지원한 곳', '직무'], ['홍길동', '010-1234-5678', '아마노코리아(현장HR)', '현장 관리']]);
+  return toCsv([
+    ['이름', '전화번호', '지원한 곳', '직무', '블랙리스트', '사유', '사유 설명'],
+    ['홍길동', '010-1234-5678', '아마노코리아(현장HR)', '현장 관리', '', '', ''],
+    ['김영희', '010-2345-6789', '아마노코리아(현장HR)', '물류', 'Y', '면접 무단 불참', '10/20 연락 없이 불참']
+  ]);
 }
 
 // ---------------- 라우팅 ----------------
