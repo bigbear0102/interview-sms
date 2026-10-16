@@ -65,7 +65,7 @@ const mailIn = [];      // /api/agent/mail 로 받아 해석한 결과
 const PAGE = `<!doctype html><meta charset=utf-8><title>수신함</title>
 <div id="extstate" class="notice">확인 중…</div>
 <form id="gwform" data-nolock><input id="gwid"><input id="gwpw" type="password"><button type="submit">내 확장에 저장</button></form>
-<div id="gwok" hidden>저장됨</div><script>${APP_JS}</script><script>${EXT_BRIDGE_JS}</script>`;
+<div id="extlast" class="notice" hidden></div><div id="gwok" hidden>저장됨</div><script>${APP_JS}</script><script>${EXT_BRIDGE_JS}</script>`;
 const sys = http.createServer((req, res) => {
   if (req.url === '/applicants/inbox/agent-token.json' && req.method === 'POST') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ token: TOKEN })); }
   if (req.url.startsWith('/applicants/inbox')) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(PAGE); }
@@ -106,6 +106,8 @@ const sys = http.createServer((req, res) => {
 const GW_ID = 'tester', GW_PW = 'Pw!9&zq*test';
 const MBX = 'MBX-TEST-' + Math.random().toString(16).slice(2, 8);   // 사람마다 다른 메일함 번호
 const gwViews = [];   // 열어 본 메일 [{id, mb}]
+let gwLoginPosts = 0;  // 로그인 화면에서 제출된 횟수
+let gwFlagCalls = 0, gwWrong = 0;   // 로그인 확인 API 호출 수, 틀린 횟수
 const gwBody = (name, apply) => `<table><tr><th><div>공고번호</div></th><td>111222333</td></tr>
 <tr><th><div>근무회사명</div></th><td>㈜테스트-회사</td></tr><tr><th><div>공고제목</div></th><td>[테스트] 현장 직원 모집</td></tr>
 <tr><th><div>이름</div></th><td>${name}(여, 33세)</td></tr><tr><th><div>주소</div></th><td>서울 강서구</td></tr>
@@ -119,7 +121,20 @@ const gw = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   const logged = (req.headers.cookie || '').includes('gw=ok');
   const H = { 'Content-Type': 'text/html; charset=utf-8' };
+  if (u.pathname === '/gw/data/common/login/selectDepartmentList.do') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify([{ deptId: 'D1', reprsntDeptYn: 'Y' }])); }
+  if (u.pathname === '/gw/data/common/login/selectLoginFlag.do') {
+    let b = ''; req.on('data', (c) => (b += c));
+    req.on('end', () => {
+      gwFlagCalls++;
+      const j = JSON.parse(b);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (j.userId === GW_ID && j.pwd === GW_PW && !(req.headers.cookie || '')) return res.end(JSON.stringify({ resultCode: '0' }));
+      res.end(JSON.stringify({ resultCode: '-40', limitErrorCnt: 5, nowErrorCnt: ++gwWrong }));
+    });
+    return;
+  }
   if (u.pathname === '/login' && req.method === 'POST') {
+    gwLoginPosts++;
     let b = '';
     req.on('data', (c) => (b += c));
     req.on('end', () => {
@@ -182,7 +197,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 await browser.installExtension(dir);
 const wt = await browser.waitForTarget((t) => t.type() === 'service_worker' && t.url().includes('background.js'), { timeout: 20000 });
 const sw = await wt.worker();
-const setCfg = (extra = {}) => sw.evaluate((c) => chrome.storage.local.set(c), { serverUrl: `http://127.0.0.1:${sysPort}`, agentToken: TOKEN, dry: false, gwOn: false, gwId: '', gwPw: '', gwLastScan: 0, gwSeen: [], gwMailUrl: `http://127.0.0.1:${gwPort}/mail/main.do`, ...extra });
+const setCfg = (extra = {}) => sw.evaluate((c) => chrome.storage.local.set(c), { serverUrl: `http://127.0.0.1:${sysPort}`, agentToken: TOKEN, dry: false, gwOn: false, gwId: '', gwPw: '', gwLastScan: 0, gwSeen: [], gwBlocked: false, gwLoginBase: `http://127.0.0.1:${gwPort}`, gwMailUrl: `http://127.0.0.1:${gwPort}/mail/main.do`, ...extra });
 const status = () => sw.evaluate(() => chrome.storage.local.get('lastStatus')).then((r) => r.lastStatus || '');
 const runAndWait = async (ms = 90000) => {
   await sw.evaluate(() => chrome.storage.local.remove('lastStatus'));
@@ -219,6 +234,9 @@ console.log('  상태(틀린 비밀번호):', s);
 check(/로그인이 안 돼요/.test(s) && /아이디 또는 비밀번호/.test(s), '그룹웨어 비밀번호가 틀리면 "로그인이 안 돼요"와 해야 할 일을 알림');
 check((await sw.evaluate(() => chrome.storage.local.get('lastLevel'))).lastLevel === 'error', '틀린 비밀번호는 "막힘(error)" 단계로 기록');
 check(mailIn.length === 0 && gwViews.length === 0, '로그인이 안 되면 메일을 열지 않음');
+check(gwLoginPosts === 1, '로그인은 한 번만 시도함(계정 잠김 방지, 시도 ' + gwLoginPosts + '번)');
+const sBlocked = await runAndWait();
+check(gwLoginPosts === 1 && /다시 시도하지 않아요/.test(sBlocked), '실패 뒤에는 다시 저장하기 전까지 로그인을 다시 시도하지 않음');
 
 await setCfg({ gwOn: true, gwId: GW_ID, gwPw: GW_PW });
 s = await runAndWait();
@@ -245,7 +263,7 @@ check(leaked.length === 0, '그룹웨어 비밀번호가 시스템으로 가는 
 
 // ---- 수신함 화면 ↔ 확장 연결 (그룹웨어 계정을 웹 화면에서 입력) ----
 await sw.evaluate(() => chrome.storage.local.clear());
-await sw.evaluate((c) => chrome.storage.local.set(c), { serverUrl: `http://127.0.0.1:${sysPort}`, gwMailUrl: `http://127.0.0.1:${gwPort}/mail/main.do` });
+await sw.evaluate((c) => chrome.storage.local.set(c), { serverUrl: `http://127.0.0.1:${sysPort}`, gwLoginBase: `http://127.0.0.1:${gwPort}`, gwMailUrl: `http://127.0.0.1:${gwPort}/mail/main.do` });
 const web = await browser.newPage();
 const sentBefore = sysLog.length;
 await web.goto(`http://127.0.0.1:${sysPort}/applicants/inbox`, { waitUntil: 'load' });
@@ -256,10 +274,23 @@ check(/확장 프로그램: 연결됨/.test(t1), '화면이 확장 프로그램�
 await sleep(1500);
 const afterKey = await sw.evaluate(() => chrome.storage.local.get(['agentToken', 'serverUrl']));
 check(afterKey.agentToken === TOKEN, '연결 키가 없으면 화면이 자동으로 만들어 확장에 넣음(입력 불필요)');
+// (1) 일부러 틀린 비밀번호를 저장해 본다: 이 크롬은 이미 그룹웨어에 로그인된 상태여도 틀린 비밀번호를 알아채야 한다
+const viewsPre = gwViews.length, flagPre = gwFlagCalls;
 await web.type('#gwid', GW_ID);
+await web.type('#gwpw', 'wrong-password');
+await web.click('#gwform button');
+await web.waitForFunction(() => /맞지 않아요/.test(document.getElementById('extlast').textContent), { timeout: 15000 }).catch(() => {});
+const tWrong = await web.$eval('#extlast', (e) => ({ text: e.textContent, cls: e.className }));
+console.log('  화면 결과(틀린 비밀번호):', tWrong.text);
+check(/맞지 않아요/.test(tWrong.text) && /틀린 횟수 \d+\/5/.test(tWrong.text), '틀린 비밀번호를 저장하면 바로 "맞지 않아요"와 틀린 횟수를 알림');
+check(/warn/.test(tWrong.cls), '화면에 경고 색으로 표시');
+check(gwFlagCalls === flagPre + 1 && gwViews.length === viewsPre, '저장 때 확인 요청은 한 번만, 메일은 읽지 않음');
+check((await sw.evaluate(() => chrome.storage.local.get('gwBlocked'))).gwBlocked === true, '틀리면 자동 재시도를 막음(계정 잠김 방지)');
+// (2) 올바른 비밀번호로 다시 저장
+await web.$eval('#gwpw', (e) => { e.value = ''; });
 await web.type('#gwpw', GW_PW);
 await web.click('#gwform button');
-await web.waitForFunction(() => /그룹웨어 계정 저장됨/.test(document.getElementById('extstate').textContent), { timeout: 15000 }).catch(() => {});
+await web.waitForFunction(() => /그룹웨어 계정 저장됨/.test(document.getElementById('extstate').textContent) && !/⚠/.test(document.getElementById('extstate').textContent), { timeout: 15000 }).catch(() => {});
 const t2 = await web.$eval('#extstate', (e) => e.textContent);
 console.log('  화면 상태(저장 뒤):', t2);
 const stored = await sw.evaluate(() => chrome.storage.local.get(['gwId', 'gwPw', 'gwOn']));

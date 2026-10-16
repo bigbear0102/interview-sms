@@ -16,6 +16,7 @@ export const EXT_BRIDGE_JS = String.raw`
     t.push('확장 프로그램: 연결됨');
     t.push(s.hasKey ? '연결 키 있음' : '연결 키 자동 연결 중…');
     t.push(s.gwId ? ('그룹웨어 계정 저장됨 (' + s.gwId + (s.hasPw ? ', 비밀번호 저장됨' : ', 비밀번호 없음') + ')') : '그룹웨어 계정 아직 없음');
+    if (s.blocked) t.push('⚠ 비밀번호 확인 필요');
     if (last) {
       last.hidden = !s.lastStatus;
       last.textContent = s.lastStatus ? ('최근 결과: ' + s.lastStatus) : '';

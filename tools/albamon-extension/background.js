@@ -135,6 +135,60 @@ async function processItem(cfg, item) {
   }
 }
 
+// ---------------- 그룹웨어 비밀번호 확인 ----------------
+// 이 크롬이 이미 그룹웨어에 로그인되어 있으면 저장한 비밀번호와 상관없이 메일함이 열려서, 틀린 비밀번호도 모르고 지나간다.
+// 그래서 저장할 때 그룹웨어의 로그인 확인 요청을 쿠키 없이(세션을 만들지 않고) 한 번 보내 맞는지 확인한다.
+// 주의: 그룹웨어는 비밀번호를 여러 번(예: 5번) 틀리면 계정을 잠글 수 있다. 그래서 틀리면 자동으로 다시 시도하지 않고, 새로 저장할 때만 확인한다.
+const GW_LOGIN_BASE_DEFAULT = 'https://gw.willvi.co.kr';
+async function verifyGwLogin(cfg) {
+  const base = (cfg.gwLoginBase || GW_LOGIN_BASE_DEFAULT).replace(/\/+$/, '');
+  const host = new URL(base).host;
+  const id = String(cfg.gwId || '').split('@')[0].trim();
+  const H = { 'Content-Type': 'application/json;charset=UTF-8', Accept: 'application/json' };
+  try {
+    const dr = await fetch(`${base}/gw/data/common/login/selectDepartmentList.do?_=${Date.now()}t`, {
+      method: 'POST', credentials: 'omit', headers: H, body: JSON.stringify({ deptId: '', langCode: 'ko', gwUrl: host, userId: id, pwd: '', sec: '' })
+    });
+    const depts = await dr.json();
+    const d = Array.isArray(depts) ? (depts.find((x) => x.reprsntDeptYn === 'Y') || depts[0]) : null;
+    const r = await fetch(`${base}/gw/data/common/login/selectLoginFlag.do?lang=ko&_=${Date.now()}t`, {
+      method: 'POST', credentials: 'omit', headers: H, body: JSON.stringify({ deptId: d ? d.deptId : '', langCode: 'ko', gwUrl: host, userId: id, pwd: cfg.gwPw, sec: '', token: null })
+    });
+    const j = await r.json();
+    if (String(j.resultCode) === '0') return { ok: true };
+    return { ok: false, code: String(j.resultCode), now: j.nowErrorCnt, limit: j.limitErrorCnt };
+  } catch { return { ok: false, network: true }; }
+}
+function gwFailText(v) {
+  if (v.network) return '그룹웨어에 연결하지 못했어요. 인터넷·사내망 연결을 확인한 뒤 다시 저장해 주세요.';
+  const cnt = v.limit ? ` (틀린 횟수 ${v.now}/${v.limit} — ${v.limit}번 틀리면 그룹웨어 계정이 잠길 수 있어요)` : '';
+  return `그룹웨어 아이디 또는 비밀번호가 맞지 않아요${cnt}. 그룹웨어를 직접 열어 같은 아이디·비밀번호로 로그인되는지 확인하고, 수신함 화면에서 다시 저장해 주세요.`;
+}
+
+// 설정 저장(수신함 화면·팝업 공통). 그룹웨어 계정이 바뀌면 바로 확인하고, 결과를 상태에 남긴다.
+async function saveConfig(p, origin) {
+  const set = {};
+  if (p.agentToken) set.agentToken = p.agentToken;
+  if (typeof p.gwId === 'string') set.gwId = p.gwId;
+  if (p.gwPw) set.gwPw = p.gwPw;
+  if (typeof p.gwOn === 'boolean') set.gwOn = p.gwOn;
+  if (typeof p.dry === 'boolean') set.dry = p.dry;
+  if (typeof p.serverUrl === 'string' && p.serverUrl) set.serverUrl = p.serverUrl;
+  else if (origin && (set.agentToken || set.gwId || set.gwPw)) set.serverUrl = origin;
+  if (!Object.keys(set).length) return;
+  await chrome.storage.local.set(set);
+  if (set.gwId !== undefined || set.gwPw) {
+    const cfg = await chrome.storage.local.get(['gwId', 'gwPw', 'gwLoginBase']);
+    if (cfg.gwId && cfg.gwPw) {
+      await setStatus('그룹웨어 아이디·비밀번호를 확인하는 중…', 'info');
+      const v = await verifyGwLogin(cfg);
+      if (!v.ok) { await chrome.storage.local.set({ gwBlocked: true }); await setStatus(gwFailText(v), 'error'); return; }
+      await chrome.storage.local.set({ gwBlocked: false });
+    }
+  }
+  setTimeout(() => run(true), 300);
+}
+
 // ---------------- 그룹웨어 메일에서 알바몬 지원 메일 가져오기 ----------------
 // 그룹웨어 아이디·비밀번호는 이 PC 크롬(chrome.storage.local)에만 저장하고, 그룹웨어 로그인 화면에만 입력한다.
 // 문자 관리 시스템으로는 보내지 않는다. 시스템에는 알바몬 지원 메일 본문(표)만 보낸다.
@@ -162,6 +216,8 @@ function pageLogin(id, pw) {
 }
 
 // 메일 목록에서 알바몬 발신 메일을 찾는다
+function pageHasLogin() { return !!document.querySelector('#cmmLogin_userId'); }
+
 function pageListMails() {
   const out = [];
   let total = 0;
@@ -203,6 +259,7 @@ async function exec(tabId, func, args = []) {
 // 반환: null(이번에는 확인하지 않음) | { text, level }
 async function scanGroupware(cfg, force) {
   if (!cfg.gwId || !cfg.gwPw || cfg.gwOn === false) return null;
+  if (cfg.gwBlocked) return { level: 'error', text: '그룹웨어 로그인 정보 확인이 필요해요(이전 로그인 실패). 계정이 잠기지 않도록 자동으로 다시 시도하지 않아요. 수신함 화면에서 아이디·비밀번호를 다시 저장해 주세요.' };
   const last = (await chrome.storage.local.get('gwLastScan')).gwLastScan || 0;
   if (!force && Date.now() - last < GW_EVERY_MS) return null;
   const base = cfg.gwMailUrl || GW_MAIL_DEFAULT;
@@ -213,9 +270,14 @@ async function scanGroupware(cfg, force) {
     // 로그인 화면이면 입력한다(최대 2번 시도)
     for (let i = 0; i < 2; i++) {
       await sleep(800);
+      // 첫 번째에만 로그인을 시도한다. 두 번째에도 로그인 화면이면 실패로 보고 멈춘다(계정 잠김 방지).
+      if (i === 1) {
+        if (!(await exec(tab.id, pageHasLogin).catch(() => false))) break;
+        await chrome.storage.local.set({ gwBlocked: true });
+        return { level: 'error', text: '그룹웨어 로그인이 안 돼요. 아이디 또는 비밀번호가 맞는지 확인하고, 수신함 화면에서 다시 저장해 주세요. (그룹웨어를 직접 열어 같은 아이디·비밀번호로 로그인되는지도 확인해 보세요.) 계정 잠김을 막으려고 자동으로 다시 시도하지 않아요.' };
+      }
       const st = await exec(tab.id, pageLogin, [String(cfg.gwId).split('@')[0].trim(), cfg.gwPw]).catch(() => 'error');
       if (st === 'nologin') break;
-      if (i === 1) return { level: 'error', text: '그룹웨어 로그인이 안 돼요. 아이디 또는 비밀번호가 맞는지 확인하고, 수신함 화면에서 다시 저장해 주세요. (그룹웨어를 직접 열어 같은 아이디·비밀번호로 로그인되는지도 확인해 보세요.)' };
       // 로그인 뒤 화면이 바뀔 때까지 기다린다
       await new Promise((r) => setTimeout(r, 400));
       await waitLoaded(tab.id);
@@ -277,7 +339,7 @@ async function run(force = false) {
   running = true;
   runningSince = Date.now();
   try {
-    const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry', 'gwId', 'gwPw', 'gwOn', 'gwMailUrl']);
+    const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry', 'gwId', 'gwPw', 'gwOn', 'gwMailUrl', 'gwBlocked']);
     if (!cfg.agentToken) { await setStatus('연결 키가 없어요. 문자 관리 시스템의 수신함을 한 번 열면 자동으로 연결돼요.', 'error'); return; }
     cfg.serverUrl = (cfg.serverUrl || 'https://interview.bigbears.me').replace(/\/+$/, '');
     const parts = [];
@@ -296,8 +358,8 @@ async function run(force = false) {
 // ---- 수신함 화면과의 연결(bridge.js) ----
 // 화면에서 보낸 그룹웨어 계정·연결 키를 이 PC의 확장 저장소에만 넣는다. 비밀번호는 화면으로 돌려주지 않는다.
 async function bridgeState() {
-  const s = await chrome.storage.local.get(['agentToken', 'gwId', 'gwPw', 'gwOn', 'lastStatus', 'lastLevel']);
-  return { hasKey: !!s.agentToken, gwId: s.gwId || '', hasPw: !!s.gwPw, gwOn: s.gwOn !== false && !!s.gwId, lastStatus: s.lastStatus || '', lastLevel: s.lastLevel || 'info', version: chrome.runtime.getManifest().version };
+  const s = await chrome.storage.local.get(['agentToken', 'gwId', 'gwPw', 'gwOn', 'lastStatus', 'lastLevel', 'gwBlocked']);
+  return { hasKey: !!s.agentToken, gwId: s.gwId || '', hasPw: !!s.gwPw, blocked: !!s.gwBlocked, gwOn: s.gwOn !== false && !!s.gwId, lastStatus: s.lastStatus || '', lastLevel: s.lastLevel || 'info', version: chrome.runtime.getManifest().version };
 }
 async function senderAllowed(sender) {
   try {
@@ -311,16 +373,7 @@ chrome.runtime.onMessage.addListener((m, sender, send) => {
   if (!m || (m.type !== 'bridge-state' && m.type !== 'bridge-save')) return false;
   (async () => {
     if (!(await senderAllowed(sender))) return send({});
-    if (m.type === 'bridge-save') {
-      const p = m.patch || {};
-      const set = {};
-      if (p.agentToken) set.agentToken = p.agentToken;
-      if (typeof p.gwId === 'string') set.gwId = p.gwId;
-      if (p.gwPw) set.gwPw = p.gwPw;
-      if (typeof p.gwOn === 'boolean') set.gwOn = p.gwOn;
-      if (set.agentToken || set.gwId || set.gwPw) set.serverUrl = new URL(sender.url).origin;
-      if (Object.keys(set).length) { await chrome.storage.local.set(set); setTimeout(() => run(true), 500); }
-    }
+    if (m.type === 'bridge-save') await saveConfig(m.patch || {}, new URL(sender.url).origin);
     send(await bridgeState());
   })();
   return true;
@@ -329,4 +382,8 @@ chrome.runtime.onMessage.addListener((m, sender, send) => {
 chrome.runtime.onInstalled.addListener(() => chrome.alarms.create(ALARM, { periodInMinutes: 1 }));
 chrome.runtime.onStartup.addListener(() => chrome.alarms.create(ALARM, { periodInMinutes: 1 }));
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === ALARM) run(false); });
-chrome.runtime.onMessage.addListener((m) => { if (m && m.type === 'run') run(true); });
+chrome.runtime.onMessage.addListener((m, sender, send) => {
+  if (m && m.type === 'run') run(true);
+  if (m && m.type === 'popup-save' && sender.id === chrome.runtime.id) { saveConfig(m.patch || {}, '').then(() => send(true)); return true; }
+  return false;
+});
