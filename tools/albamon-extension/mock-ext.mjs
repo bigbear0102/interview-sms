@@ -128,6 +128,7 @@ const gw = http.createServer((req, res) => {
       gwFlagCalls++;
       const j = JSON.parse(b);
       res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (j.userId !== GW_ID) return res.end(JSON.stringify({ resultCode: '-20', limitErrorCnt: 0, nowErrorCnt: 0 }));
       if (j.userId === GW_ID && j.pwd === GW_PW && !(req.headers.cookie || '')) return res.end(JSON.stringify({ resultCode: '0' }));
       res.end(JSON.stringify({ resultCode: '-40', limitErrorCnt: 5, nowErrorCnt: ++gwWrong }));
     });
@@ -274,6 +275,14 @@ check(/확장 프로그램: 연결됨/.test(t1), '화면이 확장 프로그램�
 await sleep(1500);
 const afterKey = await sw.evaluate(() => chrome.storage.local.get(['agentToken', 'serverUrl']));
 check(afterKey.agentToken === TOKEN, '연결 키가 없으면 화면이 자동으로 만들어 확장에 넣음(입력 불필요)');
+// (0) 없는 아이디를 저장해 본다
+await web.type('#gwid', 'nobody-here');
+await web.type('#gwpw', 'whatever');
+await web.click('#gwform button');
+await web.waitForFunction(() => /없는 아이디/.test(document.getElementById('gwerr').textContent), { timeout: 15000 }).catch(() => {});
+check(/없는 아이디/.test(await web.$eval('#gwerr', (e) => e.textContent)), '그룹웨어에 없는 아이디를 저장하면 "없는 아이디예요"로 알림');
+await web.$eval('#gwid', (e) => { e.value = ''; });
+await web.$eval('#gwpw', (e) => { e.value = ''; });
 // (1) 일부러 틀린 비밀번호를 저장해 본다: 이 크롬은 이미 그룹웨어에 로그인된 상태여도 틀린 비밀번호를 알아채야 한다
 const viewsPre = gwViews.length, flagPre = gwFlagCalls;
 await web.type('#gwid', GW_ID);

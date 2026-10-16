@@ -10,7 +10,8 @@ export const EXT_BRIDGE_JS = String.raw`
   var present = false, queued = [], autoTried = false;
   var last = document.getElementById('extlast');
   var err = document.getElementById('gwerr'), btn = form.querySelector('button[type=submit]'), showPw = document.getElementById('gwshow');
-  var waiting = false, waitTimer = null;
+  var waiting = false, waitTimer = null, old = false;
+  function cmp(a, b) { var x = a.split('.'), y = b.split('.'); for (var i = 0; i < 3; i++) { var d = (parseInt(x[i], 10) || 0) - (parseInt(y[i], 10) || 0); if (d) return d; } return 0; }
   function busy(on) {
     waiting = on;
     if (btn) { btn.disabled = on; btn.textContent = on ? '확인하는 중…' : '내 확장에 저장'; }
@@ -27,7 +28,12 @@ export const EXT_BRIDGE_JS = String.raw`
   function post(m) { m.source = 'interview-page'; window.postMessage(m, window.location.origin); }
   function show(s) {
     var t = [];
-    t.push('확장 프로그램: 연결됨');
+    t.push('확장 프로그램: 연결됨' + (s.version ? ' (v' + s.version + ')' : ''));
+    var latest = st.getAttribute('data-latest') || '';
+    if (latest && s.version && cmp(s.version, latest) < 0) {
+      t.push('⚠ 새 버전 v' + latest + '이 있어요 — 위 "확장 프로그램 내려받기"로 받아 덮어쓴 뒤 chrome://extensions 에서 새로고침해 주세요. (예전 버전은 비밀번호 확인이 안 돼요)');
+      old = true;
+    } else { old = false; }
     t.push(s.hasKey ? '연결 키 있음' : '연결 키 자동 연결 중…');
     t.push(s.gwId ? ('그룹웨어 계정 저장됨 (' + s.gwId + (s.hasPw ? ', 비밀번호 저장됨' : ', 비밀번호 없음') + ')') : '그룹웨어 계정 아직 없음');
     if (s.blocked) t.push('⚠ 비밀번호 확인 필요');
@@ -37,7 +43,7 @@ export const EXT_BRIDGE_JS = String.raw`
       last.className = 'notice ' + (s.lastLevel === 'error' || s.lastLevel === 'warn' ? 'warn' : s.lastLevel === 'ok' ? 'ok' : '');
     }
     st.textContent = t.join(' · ');
-    st.className = 'notice ok';
+    st.className = 'notice ' + (old ? 'warn' : 'ok');
     if (s.gwId && !idEl.value) idEl.value = s.gwId;
   }
   window.addEventListener('message', function (e) {

@@ -110,7 +110,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
         <li>확장이 <b>내 그룹웨어 메일함</b>에서 알바몬 지원 메일을 찾아 <b>내 수신함</b>에 모아 줘요. (메일을 열기 때문에 그룹웨어에서 <b>읽음</b>으로 바뀌어요)</li>
         <li>수신함에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 알아서 연락처를 채워 줘요. 채워진 뒤 <b>등록</b>만 누르면 돼요.</li>
       </ol>
-      <div id="extstate" class="notice" role="status">확장 프로그램 확인 중…</div>
+      <div id="extstate" class="notice" role="status" data-latest="${esc(EXTENSION_VERSION)}">확장 프로그램 확인 중…</div>
       <div id="extlast" class="notice" role="status" hidden></div>
       <form id="gwform" data-nolock autocomplete="off" style="display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));align-items:end">
         <label style="display:grid;gap:4px"><span style="font-size:13px">내 그룹웨어 메일 주소 (또는 아이디)</span><input id="gwid" autocomplete="off" maxlength="80" placeholder="예: bigbear@willvi.co.kr" aria-label="그룹웨어 메일 주소 또는 아이디"></label>

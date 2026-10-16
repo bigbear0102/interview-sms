@@ -161,6 +161,7 @@ async function verifyGwLogin(cfg) {
 }
 function gwFailText(v) {
   if (v.network) return '그룹웨어에 연결하지 못했어요. 인터넷·사내망 연결을 확인한 뒤 다시 저장해 주세요.';
+  if (v.code === '-20') return '그룹웨어에 없는 아이디예요. 아이디(메일 주소의 @ 앞부분)를 확인해 주세요.';
   const cnt = v.limit ? ` (틀린 횟수 ${v.now}/${v.limit} — ${v.limit}번 틀리면 그룹웨어 계정이 잠길 수 있어요)` : '';
   return `그룹웨어 아이디 또는 비밀번호가 맞지 않아요${cnt}. 그룹웨어를 직접 열어 같은 아이디·비밀번호로 로그인되는지 확인하고, 수신함 화면에서 다시 저장해 주세요.`;
 }
