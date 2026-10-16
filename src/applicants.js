@@ -25,7 +25,7 @@ export const reasonLabel = (code, text = '') =>
 
 const ACTION_LABEL = {
   create: '등록', edit: '정보 수정', apply: '지원 건 추가',
-  blacklist: '블랙리스트 등록', release: '블랙리스트 해제', blacklist_edit: '블랙리스트 사유 수정'
+  blacklist: '블랙리스트 등록', release: '블랙리스트 해제', blacklist_edit: '블랙리스트 사유 수정', merge: '지원자 병합'
 };
 const MAX_PASTE = 200;
 const PAGE_SIZE = 50;
@@ -272,6 +272,37 @@ export async function registerFromCampaign(db, campaignId, userId, { limit = 400
     userId, { limit, source: 'linked', label: '면접 안내 연동' });
 }
 
+// 지원자 병합: source 를 target 에 합친다(지원 이력·블랙리스트·기록을 옮기고 source 는 삭제).
+// 둘 다 블랙리스트 등록 중이면 target 의 것을 남기고 source 의 것은 "병합"으로 해제 처리한다.
+export async function mergeApplicants(db, targetId, sourceId, userId) {
+  if (targetId === sourceId) return { ok: false, error: 'self' };
+  const t = await first(db, `SELECT * FROM applicants WHERE id=?`, targetId);
+  const src = await first(db, `SELECT * FROM applicants WHERE id=?`, sourceId);
+  if (!t || !src) return { ok: false, error: 'missing' };
+  const now = Date.now();
+  const tAct = await first(db, `SELECT id FROM blacklist WHERE applicant_id=? AND status='active'`, targetId);
+  const sAct = await first(db, `SELECT id FROM blacklist WHERE applicant_id=? AND status='active'`, sourceId);
+  const memo = [t.memo, src.memo].filter((x) => x && x.trim()).join('\n').slice(0, 500);
+  const stmts = [];
+  if (tAct && sAct) {
+    stmts.push(stmt(db,
+      `UPDATE blacklist SET status='released', released_by=?, released_at=?, release_note='병합(중복 정리)' WHERE id=?`, userId ?? null, now, sAct.id));
+  }
+  stmts.push(stmt(db, `UPDATE blacklist SET applicant_id=? WHERE applicant_id=?`, targetId, sourceId));
+  stmts.push(stmt(db, `UPDATE applicant_applications SET applicant_id=? WHERE applicant_id=?`, targetId, sourceId));
+  stmts.push(stmt(db, `UPDATE applicant_events SET applicant_id=? WHERE applicant_id=?`, targetId, sourceId));
+  stmts.push(stmt(db,
+    `DELETE FROM applicant_applications WHERE applicant_id=? AND id NOT IN
+       (SELECT MIN(id) FROM applicant_applications WHERE applicant_id=? GROUP BY applied_to, job)`, targetId, targetId));
+  stmts.push(stmt(db, `DELETE FROM applicants WHERE id=?`, sourceId));
+  stmts.push(stmt(db, `UPDATE applicants SET memo=?, updated_at=? WHERE id=?`, memo, now, targetId));
+  stmts.push(stmt(db,
+    `INSERT INTO applicant_events (applicant_id, action, detail, user_id, at) VALUES (?,?,?,?,?)`,
+    targetId, 'merge', clip(`${src.name} (끝번호 ${String(src.phone).slice(-4)}) 기록을 합침`, 200), userId ?? null, now));
+  await db.batch(stmts);
+  return { ok: true };
+}
+
 // 업로드 되돌리기: 그 업로드로 생긴 지원 건·블랙리스트·기록을 지우고, 이후 다른 변경이 없는 사람은 삭제한다.
 export async function undoBatch(db, batchId) {
   const b = await first(db, `SELECT * FROM applicant_batches WHERE id=?`, batchId);
@@ -336,6 +367,9 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
       WHERE e.applicant_id=? ORDER BY e.id DESC LIMIT 50`, id);
   const active = bls.find((b) => b.status === 'active');
   const hist = link && link.history ? await campaignHistory(db, a.phone, user) : null;
+  const sameName = await all(db, `SELECT id, phone FROM applicants WHERE name=? AND id!=? ORDER BY id LIMIT 10`, a.name, a.id);
+  const dlA = await all(db, `SELECT DISTINCT applied_to v FROM applicant_applications WHERE applied_to != '' ORDER BY v LIMIT 100`);
+  const dlJ = await all(db, `SELECT DISTINCT job v FROM applicant_applications WHERE job != '' ORDER BY v LIMIT 100`);
 
   const blBox = active
     ? `<div class="notice warn" role="status">${icon('alert')}<div>
@@ -375,8 +409,8 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
           : emptyState({ title: '등록된 지원 이력이 없어요' })}</div>
         <details style="margin-top:12px"><summary>지원 건 추가</summary>
           <form method="post" action="/applicants/${a.id}/apply" class="stack card" style="margin-top:8px;max-width:520px">
-            <label>지원한 곳<input name="applied_to" autocomplete="off"></label>
-            <label>직무<input name="job" autocomplete="off"></label>
+            <label>지원한 곳<input name="applied_to" list="dl-applied" autocomplete="off"></label>
+            <label>직무<input name="job" list="dl-job" autocomplete="off"></label>
             <div><button class="btn secondary">추가</button></div>
           </form></details>
       </section>
@@ -390,6 +424,8 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
           </form></details>
         ${a.memo ? `<p class="muted" style="margin-top:8px">메모: ${esc(a.memo)}</p>` : ''}
       </section>
+      <datalist id="dl-applied">${dlA.map((o) => `<option value="${esc(o.v)}">`).join('')}</datalist>
+      <datalist id="dl-job">${dlJ.map((o) => `<option value="${esc(o.v)}">`).join('')}</datalist>
       ${hist ? `<section class="section"><div class="shead"><h2>면접 안내 이력</h2><span class="muted">문자 시스템 연결</span></div><div class="card">${historyHtml(hist)}</div></section>` : ''}
       ${pastBl.length ? `<section class="section"><div class="shead"><h2>이전 블랙리스트 기록</h2></div>
         <div class="card" style="padding:0">${tableWrap(`<table><thead><tr><th>사유</th><th>등록</th><th>해제</th></tr></thead><tbody>
@@ -401,6 +437,16 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
           <span class="who">${esc(ACTION_LABEL[e.action] || e.action)}</span>
           <span class="what">${esc(e.detail)}${e.who ? ` · ${esc(e.who)}` : ''}</span>
           <span class="when">${esc(fmtTime(e.at))}</span></li>`).join('')}</ul>` : emptyState({ title: '기록이 없어요' })}</div>
+      </section>
+      <section class="section"><div class="shead"><h2>같은 사람 합치기</h2></div>
+        <p class="muted" style="margin-bottom:8px">번호를 바꾼 지원자가 두 건으로 나뉘어 있다면 하나로 합쳐요. 합칠 쪽의 지원 이력·블랙리스트·기록이 <b>이 지원자</b>로 옮겨지고, 합친 쪽은 삭제돼요.</p>
+        ${sameName.length ? `<div class="card" style="margin-bottom:12px"><b>이름이 같은 지원자</b><ul style="margin:8px 0 0;padding-left:18px">${sameName.map((x) => `<li style="margin:6px 0">${esc(fmtPhone(x.phone))}
+          <form method="post" action="/applicants/${a.id}/merge" class="inline" data-confirm="이 사람의 기록을 ${esc(a.name)}에게 합칠까요? 되돌릴 수 없어요."><input type="hidden" name="other_id" value="${x.id}"><button class="small secondary">이 사람을 여기에 합치기</button></form></li>`).join('')}</ul></div>` : ''}
+        <details><summary>번호로 찾아서 합치기</summary>
+          <form method="post" action="/applicants/${a.id}/merge" class="stack card" style="margin-top:8px;max-width:520px" data-confirm="입력한 번호의 지원자를 이 사람에게 합칠까요? 되돌릴 수 없어요.">
+            <label>합칠 지원자의 전화번호<input name="other_phone" type="tel" placeholder="010-1234-5678" required></label>
+            <div><button class="btn secondary">합치기</button></div>
+          </form></details>
       </section>
       ${user && user.role === 'super' ? `<form method="post" action="/applicants/${a.id}/delete" data-confirm="이 지원자와 모든 기록을 삭제할까요? 되돌릴 수 없어요.">
         <button class="btn danger">지원자 삭제 (관리자)</button></form>` : ''}
@@ -426,13 +472,17 @@ const FLASH = {
   blacklisted: '블랙리스트에 등록했어요.',
   released: '블랙리스트를 해제했어요.',
   reasoned: '블랙리스트 사유를 수정했어요.',
-  deleted: '삭제했어요.'
+  deleted: '삭제했어요.',
+  merged: '지원자를 합쳤어요.'
 };
 const FLASH_ERR = {
   invalid: '이름과 휴대폰 번호를 확인해 주세요. (예: 010-1234-5678)',
   reason: '"기타"를 고르면 사유 설명을 꼭 적어 주세요.',
   clash: '같은 번호의 다른 지원자가 이미 있어요.',
-  noactive: '블랙리스트에 등록되어 있지 않아요.'
+  noactive: '블랙리스트에 등록되어 있지 않아요.',
+  nopick: '먼저 처리할 사람을 선택해 주세요.',
+  nomerge: '합칠 지원자를 찾지 못했어요. 번호를 확인해 주세요.',
+  mergeself: '같은 지원자끼리는 합칠 수 없어요.'
 };
 
 // 안전한 되돌아가기 주소(지원자 관리 화면만 허용)
@@ -480,8 +530,14 @@ const SHEET_CSS = `<style>
 .pager{display:flex;gap:8px;align-items:center;justify-content:center;margin:16px 0;flex-wrap:wrap}
 .sheet tr[hidden]{display:none!important}
 .sheet td{word-break:keep-all}
-.sheet td:first-child,.sheet td:nth-child(2),.sheet td:nth-child(6){white-space:nowrap}
-@media (max-width:640px){.sheet td:first-child,.sheet td:nth-child(2),.sheet td:nth-child(6){white-space:normal}}
+.sheet td:nth-child(2),.sheet td:nth-child(3),.sheet td:nth-child(7){white-space:nowrap}
+@media (max-width:640px){.sheet td:nth-child(2),.sheet td:nth-child(3),.sheet td:nth-child(7){white-space:normal}}
+.sheet td.sel,.sheet th.sel{width:34px;padding-right:0}
+.sheet td.sel input,.sheet th.sel input{width:18px;height:18px;min-height:0}
+.bulkbar{display:none;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--blue-bg,#e8f1fb)}
+.bulkbar.on{display:flex}
+.bulkbar select,.bulkbar input[type=text]{width:auto;min-width:150px;min-height:40px;padding:6px 10px}
+.bulkbar .only{display:none}
 .sheet .e{display:none}
 .sheet tr.editing .v{display:none}.sheet tr.editing .e{display:block;min-height:40px;padding:8px 10px}
 .sheet .js-save{display:none}.sheet tr.editing .js-save{display:inline-flex}.sheet tr.editing .js-edit{display:none}
@@ -522,6 +578,32 @@ const SHEET_JS = `<script>
     t.required = s.value === 'other';
     t.placeholder = s.value === 'other' ? '사유를 적어 주세요 (필수)' : '사유 설명 (선택)';
   });
+  // 일괄 선택
+  var bar = document.getElementById('bulkform');
+  if (bar) {
+    var cnt = document.getElementById('selcount'), op = document.getElementById('bulkop'), all = document.getElementById('chkall');
+    function boxes() { return Array.prototype.slice.call(document.querySelectorAll('.rowchk')); }
+    function refresh() {
+      var n = boxes().filter(function (b) { return b.checked; }).length;
+      cnt.textContent = n + '명 선택';
+      bar.classList.toggle('on', n > 0);
+      if (all) all.checked = n > 0 && n === boxes().length;
+      var v = op.value;
+      bar.querySelectorAll('.only').forEach(function (el) { el.style.display = el.classList.contains('only-' + v) ? 'inline-flex' : 'none'; });
+      var t = bar.querySelector('[name=reason_text]'), s = bar.querySelector('select.bl-reason');
+      if (t && s) t.required = v === 'blacklist' && s.value === 'other';
+    }
+    document.addEventListener('change', function (e) {
+      if (e.target.classList && (e.target.classList.contains('rowchk') || e.target.id === 'bulkop')) refresh();
+      if (e.target.id === 'chkall') { boxes().forEach(function (b) { b.checked = e.target.checked; }); refresh(); }
+    });
+    bar.addEventListener('submit', function (e) {
+      var n = boxes().filter(function (b) { return b.checked; }).length;
+      var label = { blacklist: '블랙리스트로 등록', release: '블랙리스트 해제', 'delete': '삭제' }[op.value];
+      if (!n || !confirm(n + '명을 "' + label + '" 처리할까요?' + (op.value === 'delete' ? ' 되돌릴 수 없어요.' : ''))) e.preventDefault();
+    });
+    refresh();
+  }
   var f = document.getElementById('csvfile');
   if (f) f.addEventListener('change', async function (e) {
     var file = e.target.files[0]; if (!file) return;
@@ -584,6 +666,9 @@ export async function renderApplicantSheet(db, opts = {}) {
   if (flash === 'undone') {
     notices.push(`<div class="notice ok">${icon('check')}<div><b>업로드를 되돌렸어요.</b> ${Number(extra.removed) || 0}명을 삭제했어요.${Number(extra.kept) ? ` ${Number(extra.kept)}명은 업로드 뒤에 정보가 바뀌어서 남겨 두었어요.` : ''}</div></div>`);
   }
+  if (flash === 'bulkop') {
+    notices.push(`<div class="notice ok">${icon('check')}<div><b>${Number(extra.removed) || 0}명을 처리했어요.</b>${Number(extra.kept) ? ` ${Number(extra.kept)}명은 해당하지 않아 건너뛰었어요(이미 등록 중이거나 등록되어 있지 않은 사람).` : ''}</div></div>`);
+  }
   if (FLASH_ERR[err]) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div>${esc(FLASH_ERR[err])}</div></div>`);
   if (bulk) {
     if (bulk.error) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div>${esc(bulk.error)}</div></div>`);
@@ -622,12 +707,13 @@ export async function renderApplicantSheet(db, opts = {}) {
   }
 
   const hid = `<input type="hidden" name="back" value="${esc(back)}">`;
-  const table = rows.length ? tableWrap(`<table class="cards sheet"><thead><tr><th>이름</th><th>전화번호</th><th>지원한 곳</th><th>직무</th><th>상태</th><th>등록일</th><th></th></tr></thead><tbody>
+  const table = rows.length ? tableWrap(`<table class="cards sheet"><thead><tr><th class="sel"><input type="checkbox" id="chkall" aria-label="전체 선택"></th><th>이름</th><th>전화번호</th><th>지원한 곳</th><th>직무</th><th>상태</th><th>등록일</th><th></th></tr></thead><tbody>
     ${rows.map((r) => `<tr>
+      <td class="sel" data-label="선택"><input type="checkbox" class="rowchk" name="ids" value="${r.id}" form="bulkform" aria-label="${esc(r.name)} 선택"></td>
       <td><span class="v"><b>${esc(r.name)}</b></span><input class="e" form="ef-${r.id}" name="name" value="${esc(r.name)}" required aria-label="이름"></td>
       <td class="nowrap" data-label="전화번호"><span class="v">${esc(fmtPhone(r.phone))}</span><input class="e" form="ef-${r.id}" name="phone" value="${esc(fmtPhone(r.phone))}" required aria-label="전화번호"></td>
-      <td data-label="지원한 곳"><span class="v">${esc(r.applied_to || '-')}${r.apps > 1 ? ` <small>외 ${r.apps - 1}건</small>` : ''}</span><input class="e" form="ef-${r.id}" name="applied_to" value="${esc(r.applied_to || '')}" aria-label="지원한 곳"></td>
-      <td data-label="직무"><span class="v">${esc(r.job || '-')}</span><input class="e" form="ef-${r.id}" name="job" value="${esc(r.job || '')}" aria-label="직무"></td>
+      <td data-label="지원한 곳"><span class="v">${esc(r.applied_to || '-')}${r.apps > 1 ? ` <small>외 ${r.apps - 1}건</small>` : ''}</span><input class="e" form="ef-${r.id}" name="applied_to" list="dl-applied" value="${esc(r.applied_to || '')}" aria-label="지원한 곳"></td>
+      <td data-label="직무"><span class="v">${esc(r.job || '-')}</span><input class="e" form="ef-${r.id}" name="job" list="dl-job" value="${esc(r.job || '')}" aria-label="직무"></td>
       <td data-label="상태">${statusBadge(r.bl_id)}${r.bl_id ? `<br><small>${esc(reasonLabel(r.reason_code, r.reason_text))}</small>` : ''}</td>
       <td data-label="등록일">${esc(fmtTime(r.created_at).slice(0, 10))}</td>
       <td class="acts">
@@ -646,7 +732,7 @@ export async function renderApplicantSheet(db, opts = {}) {
         <button type="button" class="small secondary js-hist" data-id="${r.id}">기록</button>
         <a class="small" href="/applicants/${r.id}" style="margin-left:4px">상세</a>
       </td></tr>
-      <tr class="hist" id="hist-${r.id}" hidden><td colspan="7"><div class="hbox">불러오는 중…</div></td></tr>`).join('')}
+      <tr class="hist" id="hist-${r.id}" hidden><td colspan="8"><div class="hbox">불러오는 중…</div></td></tr>`).join('')}
     </tbody></table>`)
     : emptyState({ title: FILTER_KEYS.some((k) => k !== 'sort' && params[k]) ? '찾는 지원자가 없어요' : '아직 등록된 지원자가 없어요',
       desc: '위의 입력 줄에 적고 "추가"를 누르거나, 아래 "CSV·엑셀로 한꺼번에 등록"을 써 보세요.' });
@@ -682,8 +768,8 @@ export async function renderApplicantSheet(db, opts = {}) {
     <form id="addform" method="post" action="/applicants/new" class="addbar">${hid}
       <input name="name" placeholder="이름" required autocomplete="off" aria-label="이름">
       <input name="phone" type="tel" inputmode="tel" placeholder="전화번호" required autocomplete="off" aria-label="전화번호">
-      <input name="applied_to" placeholder="지원한 곳" autocomplete="off" aria-label="지원한 곳">
-      <input name="job" placeholder="직무" autocomplete="off" aria-label="직무">
+      <input name="applied_to" list="dl-applied" placeholder="지원한 곳" autocomplete="off" aria-label="지원한 곳">
+      <input name="job" list="dl-job" placeholder="직무" autocomplete="off" aria-label="직무">
       <button class="btn">${icon('plus', 18)}추가</button>
     </form>
     <details class="card" style="margin-bottom:16px" id="import"${bulk ? ' open' : ''}>
@@ -729,8 +815,22 @@ export async function renderApplicantSheet(db, opts = {}) {
         ${isSuper ? '<div><button class="btn secondary">설정 저장</button></div>' : '<p class="muted">설정은 관리자만 바꿀 수 있어요.</p>'}
       </form></details>` : ''}
     <div class="tabs" style="margin-top:12px">${tab('', '전체', c.total)}${tab('bl', '블랙리스트', c.bl)}${tab('ok', '일반', c.total - c.bl)}</div>
-    <div class="card" style="padding:0">${table}</div>
+    <div class="card" style="padding:0">
+      <form id="bulkform" method="post" action="/applicants/bulk-action" class="bulkbar">${hid}
+        <b id="selcount">0명 선택</b>
+        <select name="op" id="bulkop" aria-label="처리 방법">
+          <option value="blacklist">블랙리스트로 등록</option>
+          <option value="release">블랙리스트 해제</option>
+          ${isSuper ? '<option value="delete">삭제 (관리자)</option>' : ''}
+        </select>
+        <span class="only only-blacklist" style="display:inline-flex;gap:6px;flex-wrap:wrap">${reasonSelect()}<input type="text" name="reason_text" maxlength="300" placeholder="사유 설명 (선택)" aria-label="사유 설명"></span>
+        <span class="only only-release"><input type="text" name="note" maxlength="200" placeholder="해제 메모 (선택)" aria-label="해제 메모"></span>
+        <button class="btn secondary">선택한 사람에게 적용</button>
+      </form>
+      ${table}</div>
     ${pager}
+    <datalist id="dl-applied">${appliedOpts.map((o) => `<option value="${esc(o.v)}">`).join('')}</datalist>
+    <datalist id="dl-job">${jobOpts.map((o) => `<option value="${esc(o.v)}">`).join('')}</datalist>
     ${editForms}${SHEET_JS}`;
 }
 
@@ -820,6 +920,56 @@ export async function handleApplicants(c) {
       `created=${result.created} added=${result.added} duplicates=${result.duplicates} blacklisted=${result.blacklisted} rejected=${result.rejected.length}`);
     return page('지원자 관리', await renderApplicantSheet(db, { params, back, bulk: result }));
   }
+  // 여러 명 한꺼번에 처리 (선택한 사람 번호 목록 ids 를 여러 개 받는다)
+  if (path === '/applicants/bulk-action' && method === 'POST') {
+    const sp = new URLSearchParams(await request.text());
+    const back = safeBack(sp.get('back')) || '/applicants';
+    const ids = [...new Set(sp.getAll('ids').map((x) => parseInt(x, 10)).filter((x) => Number.isInteger(x) && x > 0))].slice(0, 200);
+    if (!ids.length) return redirect(withParam(back, 'err', 'nopick'));
+    const op = sp.get('op');
+    const now = Date.now();
+    const ph = ids.map(() => '?').join(',');
+    const existing = (await all(db, `SELECT id FROM applicants WHERE id IN (${ph})`, ...ids)).map((r) => r.id);
+    let done = 0, skipped = ids.length - existing.length;
+    const stmts = [];
+    if (op === 'blacklist') {
+      const code = String(sp.get('reason_code') || '');
+      const text = clip(sp.get('reason_text'), 300);
+      if (!REASON_LABEL[code] || (code === 'other' && !text)) return redirect(withParam(back, 'err', 'reason'));
+      const active = new Set((await all(db, `SELECT applicant_id FROM blacklist WHERE status='active' AND applicant_id IN (${ph})`, ...ids)).map((r) => r.applicant_id));
+      for (const id of existing) {
+        if (active.has(id)) { skipped++; continue; }
+        done++;
+        stmts.push(stmt(db, `INSERT INTO blacklist (applicant_id, reason_code, reason_text, created_by, created_at) VALUES (?,?,?,?,?)`, id, code, text, user.id, now));
+        stmts.push(stmt(db, `UPDATE applicants SET updated_at=? WHERE id=?`, now, id));
+        stmts.push(stmt(db, `INSERT INTO applicant_events (applicant_id, action, detail, user_id, at) VALUES (?,?,?,?,?)`, id, 'blacklist', `${REASON_LABEL[code]} (일괄)`, user.id, now));
+      }
+    } else if (op === 'release') {
+      const note = clip(sp.get('note'), 200);
+      const active = new Set((await all(db, `SELECT applicant_id FROM blacklist WHERE status='active' AND applicant_id IN (${ph})`, ...ids)).map((r) => r.applicant_id));
+      for (const id of existing) {
+        if (!active.has(id)) { skipped++; continue; }
+        done++;
+        stmts.push(stmt(db, `UPDATE blacklist SET status='released', released_by=?, released_at=?, release_note=? WHERE applicant_id=? AND status='active'`, user.id, now, note, id));
+        stmts.push(stmt(db, `UPDATE applicants SET updated_at=? WHERE id=?`, now, id));
+        stmts.push(stmt(db, `INSERT INTO applicant_events (applicant_id, action, detail, user_id, at) VALUES (?,?,?,?,?)`, id, 'release', clip(`${note || '해제'} (일괄)`, 100), user.id, now));
+      }
+    } else if (op === 'delete') {
+      if (user.role !== 'super') return html(pg('접근 불가', '<p>삭제는 관리자만 할 수 있어요.</p>', 'applicants'), 403);
+      done = existing.length;
+      for (const id of existing) {
+        stmts.push(stmt(db, `DELETE FROM applicant_events WHERE applicant_id=?`, id));
+        stmts.push(stmt(db, `DELETE FROM blacklist WHERE applicant_id=?`, id));
+        stmts.push(stmt(db, `DELETE FROM applicant_applications WHERE applicant_id=?`, id));
+        stmts.push(stmt(db, `DELETE FROM applicants WHERE id=?`, id));
+      }
+    } else {
+      return redirect(back);
+    }
+    for (let i = 0; i < stmts.length; i += 40) await db.batch(stmts.slice(i, i + 40));
+    await audit(db, user, 'applicant.bulk_action', `op=${op} done=${done} skipped=${skipped}`);
+    return redirect(withParam(withParam(withParam(back, 'ok', 'bulkop'), 'n', done), 'k', skipped));
+  }
   // 문자 시스템 연결 설정(관리자) / 노쇼 후보 제안 처리
   if (path === '/applicants/settings' && method === 'POST') {
     if (user.role !== 'super') return html(pg('접근 불가', '<p>연결 설정은 관리자만 바꿀 수 있어요.</p>', 'applicants'), 403);
@@ -866,7 +1016,7 @@ export async function handleApplicants(c) {
     return redirect(`${withParam(withParam(withParam(back, 'ok', 'undone'), 'n', r.removed), 'k', r.kept)}`);
   }
 
-  const m = path.match(/^\/applicants\/(\d+)(?:\/(blacklist|release|reason|edit|apply|delete|panel))?$/);
+  const m = path.match(/^\/applicants\/(\d+)(?:\/(blacklist|release|reason|edit|apply|delete|merge|panel))?$/);
   if (!m) return null;
   const id = Number(m[1]);
   const action = m[2];
@@ -975,6 +1125,21 @@ export async function handleApplicants(c) {
       await run(db, `UPDATE applicants SET updated_at=? WHERE id=?`, now, id);
       await addEvent(db, id, 'apply', '지원 건 추가', user.id, now);
     }
+  } else if (action === 'merge') {
+    let other = null;
+    if (f.other_id) other = await first(db, `SELECT id FROM applicants WHERE id=?`, parseInt(f.other_id, 10) || 0);
+    else if (f.other_phone) other = await first(db, `SELECT id FROM applicants WHERE phone=?`, normalizePhone(f.other_phone));
+    if (!other) {
+      if (back) return fail('nomerge');
+      return detailError('합칠 지원자를 찾지 못했어요. 번호를 확인해 주세요.');
+    }
+    if (other.id === id) {
+      if (back) return fail('mergeself');
+      return detailError('같은 지원자끼리는 합칠 수 없어요.');
+    }
+    await mergeApplicants(db, id, other.id, user.id);
+    await audit(db, user, 'applicant.merge', `into=${id} from=${other.id}`);
+    return redirect(withParam(`/applicants/${id}`, 'ok', 'merged'));
   } else if (action === 'delete') {
     if (user.role !== 'super') return html(pg('접근 불가', '<p>삭제는 관리자만 할 수 있어요.</p>', 'applicants'), 403);
     await run(db, `DELETE FROM applicant_events WHERE applicant_id=?`, id);

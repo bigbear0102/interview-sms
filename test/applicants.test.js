@@ -440,3 +440,90 @@ test('연결 켜짐: 면접 안내 명단 자동 등록(중복 제외), 블랙�
   assert.match(bl.reason_text, /노쇼 3회/);
   assert.equal((await noshowSuggestions(db, 2)).length, 0);
 });
+
+test('일괄 선택 처리: 블랙리스트 등록/해제, 건너뜀, 삭제는 관리자만', async () => {
+  const { admin, staff, db } = await setup();
+  for (const [n, p] of [['가', '010-9000-0001'], ['나', '010-9000-0002'], ['다', '010-9000-0003']]) {
+    await admin.post('/applicants/new', { name: n, phone: p, applied_to: 'A사', job: '현장' });
+  }
+  const ids = (await db.prepare(`SELECT id FROM applicants ORDER BY id`).all()).results.map((r) => r.id);
+  const form = (obj, list) => {
+    const sp = new URLSearchParams(obj);
+    list.forEach((i) => sp.append('ids', String(i)));
+    return sp.toString();
+  };
+  const send = (who, obj, list) => who.call('/applicants/bulk-action', {
+    method: 'POST', body: form(obj, list), headers: { 'content-type': 'application/x-www-form-urlencoded' }
+  });
+  // 선택 없음
+  let r = await send(admin, { op: 'blacklist', reason_code: 'noshow', back: '/applicants' }, []);
+  assert.equal(r.headers.get('location'), '/applicants?err=nopick');
+  // 기타인데 설명 없음
+  r = await send(admin, { op: 'blacklist', reason_code: 'other', reason_text: '', back: '/applicants' }, ids);
+  assert.equal(r.headers.get('location'), '/applicants?err=reason');
+  // 3명 중 1명을 먼저 등록해 두고, 일괄 등록 → 2명 처리, 1명 건너뜀
+  await admin.post(`/applicants/${ids[0]}/blacklist`, { reason_code: 'absent', reason_text: '' });
+  r = await send(admin, { op: 'blacklist', reason_code: 'noshow', reason_text: '10/20 불참', back: '/applicants' }, ids);
+  assert.match(r.headers.get('location'), /ok=bulkop&n=2&k=1/);
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM blacklist WHERE status='active'`).first()).n, 3);
+  const page = visible(await (await admin.call('/applicants?ok=bulkop&n=2&k=1')).text());
+  assert.ok(page.includes('2명을 처리했어요'));
+  // 일괄 해제
+  r = await send(admin, { op: 'release', note: '정리', back: '/applicants' }, [ids[1], ids[2]]);
+  assert.match(r.headers.get('location'), /n=2&k=0/);
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM blacklist WHERE status='active'`).first()).n, 1);
+  // 삭제는 관리자만
+  r = await send(staff, { op: 'delete', back: '/applicants' }, ids);
+  assert.equal(r.status, 403);
+  r = await send(admin, { op: 'delete', back: '/applicants' }, [ids[1], ids[2]]);
+  assert.match(r.headers.get('location'), /n=2/);
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicants`).first()).n, 1);
+  // 선택 칸과 일괄 처리 막대가 화면에 있다
+  const html = await (await admin.call('/applicants')).text();
+  assert.match(html, /id="bulkform"/);
+  assert.match(html, /class="rowchk"/);
+});
+
+test('지원자 병합: 지원 이력·블랙리스트·기록을 옮기고 중복은 정리', async () => {
+  const { admin, db } = await setup();
+  await admin.post('/applicants/new', { name: '홍길동', phone: '010-9100-0001', applied_to: 'A사', job: '현장' });
+  await admin.post('/applicants/new', { name: '홍길동', phone: '010-9100-0002', applied_to: 'A사', job: '현장' }); // 번호를 바꾼 같은 사람
+  await admin.post('/applicants/new', { name: '홍길동', phone: '010-9100-0002', applied_to: 'B사', job: '경비' });
+  const [t, s2] = (await db.prepare(`SELECT id FROM applicants ORDER BY id`).all()).results.map((r) => r.id);
+  await admin.post(`/applicants/${t}/blacklist`, { reason_code: 'noshow', reason_text: '' });
+  await admin.post(`/applicants/${s2}/blacklist`, { reason_code: 'absent', reason_text: '' });
+  // 상세에 같은 이름 제안이 보인다
+  const detail = visible(await (await admin.call(`/applicants/${t}`)).text());
+  assert.ok(detail.includes('이름이 같은 지원자'));
+  // 자기 자신 / 없는 번호
+  let r = await admin.post(`/applicants/${t}/merge`, { back: '/applicants', other_id: String(t) });
+  assert.equal(r.headers.get('location'), '/applicants?err=mergeself');
+  r = await admin.post(`/applicants/${t}/merge`, { back: '/applicants', other_phone: '010-0000-0000' });
+  assert.equal(r.headers.get('location'), '/applicants?err=nomerge');
+  // 번호로 합치기
+  r = await admin.post(`/applicants/${t}/merge`, { other_phone: '010-9100-0002' });
+  assert.equal(r.headers.get('location'), `/applicants/${t}?ok=merged`);
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicants`).first()).n, 1);
+  const apps = await db.prepare(`SELECT applied_to, job FROM applicant_applications WHERE applicant_id=? ORDER BY applied_to`).bind(t).all();
+  assert.deepEqual(apps.results.map((x) => `${x.applied_to}/${x.job}`), ['A사/현장', 'B사/경비']); // A사/현장 중복은 하나로
+  const act = await db.prepare(`SELECT reason_code FROM blacklist WHERE applicant_id=? AND status='active'`).bind(t).all();
+  assert.equal(act.results.length, 1);
+  assert.equal(act.results[0].reason_code, 'noshow');   // target 의 블랙리스트를 남김
+  const rel = await db.prepare(`SELECT release_note FROM blacklist WHERE applicant_id=? AND status='released'`).bind(t).all();
+  assert.equal(rel.results.length, 1);
+  assert.match(rel.results[0].release_note, /병합/);
+  const ev = await db.prepare(`SELECT detail FROM applicant_events WHERE action='merge'`).first();
+  assert.match(ev.detail, /끝번호 0002/);
+});
+
+test('지원한 곳·직무 자동 완성(datalist)', async () => {
+  const { admin } = await setup();
+  await admin.post('/applicants/new', { name: '가', phone: '010-9200-0001', applied_to: '아마노코리아(현장HR)', job: '현장 관리' });
+  const html = await (await admin.call('/applicants')).text();
+  assert.match(html, /<datalist id="dl-applied"><option value="아마노코리아\(현장HR\)">/);
+  assert.match(html, /<datalist id="dl-job"><option value="현장 관리">/);
+  assert.match(html, /list="dl-applied"/);
+  const id = html.match(/\/applicants\/(\d+)"/)[1];
+  const detail = await (await admin.call(`/applicants/${id}`)).text();
+  assert.match(detail, /<datalist id="dl-applied">/);
+});
