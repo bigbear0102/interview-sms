@@ -12,6 +12,25 @@ import {
 } from './mail-intake.js';
 
 // 지원자 관리 화면 위쪽 분류 탭
+// 수신함은 열어 둔 채로 두면 1분마다 새로 고친다(새 지원 메일이 저절로 보이게).
+// 입력 중이거나 입력칸에 커서가 있거나 안내 창이 떠 있거나 보이지 않는 탭이면 새로 고치지 않는다.
+const AUTO_REFRESH_JS = String.raw`
+(function () {
+  var dirtyAt = 0, loaded = Date.now();
+  document.addEventListener('input', function () { dirtyAt = Date.now(); }, true);
+  function typing() {
+    var a = document.activeElement;
+    return (Date.now() - dirtyAt < 180000) || document.querySelector('dialog[open]') || (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+  }
+  function tick() {
+    if (document.hidden || typing()) return;
+    if (Date.now() - loaded >= 60000) window.location.reload();
+  }
+  setInterval(tick, 15000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) tick(); });
+})();
+`;
+
 export function peopleTabs(active, pending = 0) {
   const t = (key, href, label, badge = '') =>
     `<a href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}${badge}</a>`;
@@ -182,6 +201,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
     ${peopleTabs('inbox', pending)}
     ${notices.join('')}
     <p style="margin:0 0 12px"><a href="/applicants/inbox/cost-centers">원가중심점 목록 ${ccTotal ? `(${ccTotal}개)` : '(아직 없음)'} 보기·추가</a></p>
+    <script>${AUTO_REFRESH_JS}</script>
     ${agentCard}${myAddrCard}${addressCard}${tool}
     <div class="tabs">${filterTab('pending', '대기', pending)}${filterTab('done', '처리됨', doneCount)}</div>
     ${status === 'pending' && pending ? `<form method="post" action="/applicants/inbox/fetch-all" class="inline" style="margin-bottom:12px" data-confirm="대기 중인 ${pending}건의 연락처를 한꺼번에 가져오도록 요청할까요? 알바몬 이용권이 차감될 수 있어요."><button class="btn secondary small">대기 ${pending}건 모두 연락처 가져오기 요청</button></form>` : ''}
