@@ -132,3 +132,61 @@ test('삭제는 관리자만, 내보내기, 메뉴 노출', async () => {
   const gone = await admin.call(loc);
   assert.equal(gone.status, 404);
 });
+
+test('한 화면 표: 입력 줄 추가, 표에서 바로 수정, 블랙리스트 등록·해제, 기록 조각, CSV 양식', async () => {
+  const { admin, db } = await setup();
+  const back = '/applicants';
+  // 입력 줄에서 추가 → 같은 화면으로 돌아오고 안내가 보인다
+  let r = await admin.post('/applicants/new', { back, name: '홍길동', phone: '010-1234-5678', applied_to: 'A사', job: '현장' });
+  assert.equal(r.status, 303);
+  assert.equal(r.headers.get('location'), '/applicants?ok=added');
+  let page = await (await admin.call('/applicants?ok=added')).text();
+  assert.ok(visible(page).includes('지원자를 등록했어요'));
+  assert.ok(visible(page).includes('홍길동'));
+  assert.match(page, /id="addform"/);       // 입력 줄
+  assert.match(page, /id="csvfile"/);       // CSV 파일 올리기
+  assert.match(page, /js-edit/);            // 표에서 수정 버튼
+  const row = await db.prepare(`SELECT id FROM applicants`).first();
+  const id = row.id;
+  // 번호가 잘못되면 같은 화면에 오류 안내
+  r = await admin.post('/applicants/new', { back, name: '가', phone: '1', applied_to: '', job: '' });
+  assert.equal(r.headers.get('location'), '/applicants?err=invalid');
+  assert.ok(visible(await (await admin.call('/applicants?err=invalid')).text()).includes('휴대폰 번호를 확인'));
+  // 표에서 바로 수정: 이름·번호·지원한 곳·직무 (가장 최근 지원 건에 반영)
+  r = await admin.post(`/applicants/${id}/edit`, { back, name: '홍길순', phone: '010-9999-0000', applied_to: 'B사', job: '경비' });
+  assert.equal(r.headers.get('location'), '/applicants?ok=edited');
+  const p = await db.prepare(`SELECT name, phone FROM applicants WHERE id=?`).bind(id).first();
+  assert.equal(p.name, '홍길순');
+  assert.equal(p.phone, '01099990000');
+  const app = await db.prepare(`SELECT applied_to, job FROM applicant_applications WHERE applicant_id=?`).bind(id).all();
+  assert.equal(app.results.length, 1);
+  assert.deepEqual({ ...app.results[0] }, { applied_to: 'B사', job: '경비' });
+  // 같은 화면에서 블랙리스트 등록(기타는 사유 필수)
+  r = await admin.post(`/applicants/${id}/blacklist`, { back, reason_code: 'other', reason_text: '' });
+  assert.equal(r.headers.get('location'), '/applicants?err=reason');
+  r = await admin.post(`/applicants/${id}/blacklist`, { back, reason_code: 'noshow', reason_text: '10/20 불참' });
+  assert.equal(r.headers.get('location'), '/applicants?ok=blacklisted');
+  page = visible(await (await admin.call('/applicants')).text());
+  assert.ok(page.includes('블랙리스트'));
+  assert.ok(page.includes('면접 무단 불참'));
+  // 기록 조각
+  const panel = await (await admin.call(`/applicants/${id}/panel`)).text();
+  assert.ok(panel.includes('B사'));
+  assert.ok(panel.includes('블랙리스트 등록'));
+  assert.ok(!panel.includes('<html'));      // 조각만 돌려준다
+  assert.equal((await admin.call('/applicants/9999/panel')).status, 404);
+  // 해제
+  r = await admin.post(`/applicants/${id}/release`, { back, note: '확인' });
+  assert.equal(r.headers.get('location'), '/applicants?ok=released');
+  // 바깥 주소로 되돌아가려는 시도는 무시한다
+  r = await admin.post(`/applicants/${id}/edit`, { back: 'https://evil.example/', name: '홍길순', phone: '010-9999-0000' });
+  assert.equal(r.headers.get('location'), `/applicants/${id}`);
+  // CSV 양식
+  const tpl = await (await admin.call('/applicants/template.csv')).text();
+  assert.ok(tpl.includes('이름,전화번호,지원한 곳,직무'));
+  // CSV 파일 내용(쉼표)도 등록된다
+  const csv = '이름,전화번호,지원한 곳,직무\n김영희,010-2345-6789,A사,물류\n';
+  const res = await admin.post('/applicants/bulk', { back, text: csv });
+  assert.equal(res.status, 200);
+  assert.ok(visible(await res.text()).includes('1명을 새로 등록했어요'));
+});
