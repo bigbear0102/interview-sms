@@ -242,7 +242,7 @@ test('업로드로 블랙리스트까지 한 번에 등록: 제목 줄 있는 CS
   // 이미 블랙리스트인 사람을 다시 올리면 중복 등록하지 않는다
   const again = await admin.post('/applicants/bulk', { back: '/applicants', text: '김영희\t010-1111-0002\tB사\t경비\tY\t근무 중 무단 이탈\t' });
   const html2 = visible(await again.text());
-  assert.ok(html2.includes('이미 등록 중인 1명'));
+  assert.ok(html2.includes('이미 블랙리스트로 등록 중인 1명'));
   const cnt = await db.prepare(`SELECT COUNT(*) n FROM blacklist`).first();
   assert.equal(cnt.n, 1);
   // 양식 파일에도 새 열이 있다
