@@ -41,7 +41,7 @@ export async function handleAgentApi(request, env, url, deps) {
     const p = parseAlbamonApply(html);
     if (!p) return json({ ok: false, reason: 'not_albamon' });
     if (!p.name) return json({ ok: false, reason: 'no_name' });
-    const r = await saveParsed(db, p, Date.now(), uid);
+    const r = await saveParsed(db, p, Date.now(), uid, String(body.account || '').toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 60));
     return json({ ok: true, duplicate: !!r.duplicate });
   }
 

@@ -124,21 +124,24 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
         <li>아래 <b>확장 프로그램 내려받기</b>를 눌러 파일을 받고, 압축을 풀어요.</li>
         <li>크롬 주소창에 <code>chrome://extensions</code> 를 입력 → 오른쪽 위 <b>개발자 모드</b> 켜기 → <b>압축해제된 확장 프로그램을 로드합니다</b> → 풀어 둔 <code>albamon-extension</code> 폴더 선택. (한 번만 하면 돼요)</li>
         <li><b>연결 키는 입력할 필요가 없어요.</b> 확장이 설치된 크롬에서 이 화면을 열면 <b>자동으로 연결</b>돼요. (위 상태 표시에 "연결 키 있음"이 보이면 끝)</li>
-        <li><b>내 그룹웨어 메일 주소(또는 아이디)와 비밀번호</b>를 아래 칸에 넣고 <b>내 확장에 저장</b>을 눌러요. 비밀번호는 <b>이 PC 크롬의 확장에만 저장</b>되고 이 시스템(서버)으로는 보내지 않아요.</li>
+        <li><b>그룹웨어 메일 주소(또는 아이디)와 비밀번호</b>를 아래 칸에 넣고 <b>계정 추가·확인</b>을 눌러요. 여러 계정을 받으려면 한 개씩 추가해요. 비밀번호는 <b>이 PC 크롬의 확장에만 저장</b>되고 이 시스템(서버)으로는 보내지 않아요.</li>
         <li>그 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 둬요.</li>
         <li>확장이 <b>내 그룹웨어 메일함</b>에서 알바몬 지원 메일을 찾아 <b>내 수신함</b>에 모아 줘요. (메일을 열기 때문에 그룹웨어에서 <b>읽음</b>으로 바뀌어요)</li>
         <li>수신함에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 알아서 연락처를 채워 줘요. 채워진 뒤 <b>등록</b>만 누르면 돼요.</li>
       </ol>
       <div id="extstate" class="notice" role="status" data-latest="${esc(EXTENSION_VERSION)}">확장 프로그램 확인 중…</div>
       <div id="extlast" class="notice" role="status" hidden></div>
+      <ul id="gwlist" style="list-style:none;margin:0;padding:0"></ul>
+      <p class="muted" style="font-size:14px;margin:0">그룹웨어 계정은 <b>최대 5개</b>까지 등록해 여러 메일함의 알바몬 지원 메일을 한 수신함으로 받을 수 있어요. 아래에서 계정을 하나씩 추가하세요.</p>
       <form id="gwform" data-nolock autocomplete="off" style="display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));align-items:end">
-        <label style="display:grid;gap:4px"><span style="font-size:13px">내 그룹웨어 메일 주소 (또는 아이디)</span><input id="gwid" autocomplete="off" maxlength="80" placeholder="예: bigbear@willvi.co.kr" aria-label="그룹웨어 메일 주소 또는 아이디"></label>
+        <label style="display:grid;gap:4px"><span style="font-size:13px">추가할 그룹웨어 메일 주소 (또는 아이디)</span><input id="gwid" autocomplete="off" maxlength="80" placeholder="예: bigbear@willvi.co.kr" aria-label="그룹웨어 메일 주소 또는 아이디"></label>
         <label style="display:grid;gap:4px"><span style="font-size:13px">그룹웨어 비밀번호 <label style="font-weight:400"><input type="checkbox" id="gwshow"> 보기</label></span><input id="gwpw" type="password" autocomplete="new-password" maxlength="100" aria-label="그룹웨어 비밀번호"></label>
-        <button class="btn small" type="submit">내 확장에 저장</button>
+        <button class="btn small" type="submit">계정 추가·확인</button>
       </form>
       <div id="gwprog" class="notice" role="status" hidden>확인하는 중… 그룹웨어에 로그인할 수 있는지 확인하고 있어요. (몇 초 걸려요)</div>
       <div id="gwerr" class="notice warn" role="alert" hidden></div>
-      <div id="gwok" class="notice ok" hidden>${icon('check')}<div><b>그룹웨어 로그인을 확인했고</b> 내 확장에 저장했어요. 이제 5분마다 내 그룹웨어 메일함에서 알바몬 지원 메일을 가져와요.</div></div>
+      <div id="gwok" class="notice ok" hidden>${icon('check')}<div><b>그룹웨어 로그인을 확인했고</b> 내 확장에 저장했어요. 이제 5분마다 등록한 그룹웨어 메일함에서 알바몬 지원 메일을 가져와요.</div></div>
+      <div class="notice warn" role="note">${icon('alert')}<div><b>계정이 2개 이상이면</b> 5분마다 이 PC 크롬의 그룹웨어 로그인이 계정을 바꿔 가며 잠깐 바뀌었다가 <b>원래대로 돌아와요.</b> 이 크롬에서 그룹웨어를 직접 쓰는 중이면 잠깐 로그아웃된 것처럼 보일 수 있어요. 그룹웨어를 쓰지 않는 크롬(또는 별도 프로필)에서 쓰는 걸 권해요. 또 <b>다른 사람의 아이디·비밀번호를 이 PC에 저장</b>하게 되니, 회사 규정과 본인의 동의를 확인해 주세요.</div></div>
       ${agentToken ? `<span id="newkey" hidden>${esc(agentToken)}</span>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <a class="btn small" href="/applicants/inbox/extension.zip" download>확장 프로그램 내려받기 (v${esc(EXTENSION_VERSION)})</a>
@@ -166,7 +169,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
 
   const table = rows.length ? tableWrap(`<table class="cards sheet"><thead><tr><th>지원자</th><th>공고</th><th>원가중심점·직무</th><th>정보</th><th>받은 시각</th><th>처리</th></tr></thead><tbody>
     ${rows.map((r) => `<tr>
-      <td><b>${esc(r.name)}</b>${isSuper && r.owner_name ? ` <small class="muted">(${esc(r.owner_name)} 담당)</small>` : ''}${r.gender || r.age ? ` <small class="muted">${esc([r.gender, r.age ? r.age + '세' : ''].filter(Boolean).join(', '))}</small>` : ''}</td>
+      <td><b>${esc(r.name)}</b>${r.mail_account ? ` <small class="muted">(메일함: ${esc(r.mail_account)})</small>` : ''}${isSuper && r.owner_name ? ` <small class="muted">(${esc(r.owner_name)} 담당)</small>` : ''}${r.gender || r.age ? ` <small class="muted">${esc([r.gender, r.age ? r.age + '세' : ''].filter(Boolean).join(', '))}</small>` : ''}</td>
       <td data-label="공고">${esc(r.company || '-')}<br><small class="muted">${esc(r.job_title)}</small></td>
       <td data-label="원가중심점·직무">${r.status === 'pending'
     ? `<form method="post" action="/applicants/inbox/${r.id}/cost" style="display:grid;gap:6px;min-width:200px">

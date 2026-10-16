@@ -64,7 +64,7 @@ const sysLog = [];      // 시스템 서버가 받은 모든 요청(주소·머�
 const mailIn = [];      // /api/agent/mail 로 받아 해석한 결과
 const PAGE = `<!doctype html><meta charset=utf-8><title>수신함</title>
 <div id="extstate" class="notice">확인 중…</div>
-<form id="gwform" data-nolock><input id="gwid"><input id="gwpw" type="password"><button type="submit">내 확장에 저장</button></form>
+<ul id="gwlist"></ul><form id="gwform" data-nolock><input id="gwid"><input id="gwpw" type="password"><button type="submit">내 확장에 저장</button></form>
 <div id="extlast" class="notice" hidden></div><div id="gwerr" hidden></div><div id="gwok" hidden>저장됨</div><script>${APP_JS}</script><script>${EXT_BRIDGE_JS}</script>`;
 const sys = http.createServer((req, res) => {
   if (req.url === '/applicants/inbox/agent-token.json' && req.method === 'POST') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ token: TOKEN })); }
@@ -82,7 +82,7 @@ const sys = http.createServer((req, res) => {
       const pr = parseAlbamonApply(JSON.parse(b).html);
       if (!pr || !pr.name) return res.end(JSON.stringify({ ok: false, reason: 'not_albamon' }));
       const dup = mailIn.some((x) => x.applyNo === pr.applyNo);
-      if (!dup) mailIn.push({ applyNo: pr.applyNo, name: pr.name });
+      if (!dup) mailIn.push({ applyNo: pr.applyNo, name: pr.name, account: JSON.parse(b).account || '' });
       res.end(JSON.stringify({ ok: true, duplicate: dup }));
     });
     return;
@@ -104,7 +104,11 @@ const sys = http.createServer((req, res) => {
 
 // ---- 가짜 그룹웨어 (로그인 화면 + 실제와 같은 모양의 메일 목록 + 메일 보기) ----
 const GW_ID = 'tester', GW_PW = 'Pw!9&zq*test';
+const GW2_ID = 'tester2', GW2_PW = 'Second!7&pw';
 const MBX = 'MBX-TEST-' + Math.random().toString(16).slice(2, 8);   // 사람마다 다른 메일함 번호
+const MBX2 = 'MBX-TWO-' + Math.random().toString(16).slice(2, 8);
+const USERS = { [GW_ID]: { pw: GW_PW, mb: MBX }, [GW2_ID]: { pw: GW2_PW, mb: MBX2 } };
+const gwLoginUsers = [];   // 로그인 화면에서 제출된 아이디 기록
 const gwViews = [];   // 열어 본 메일 [{id, mb}]
 let gwLoginPosts = 0;  // 로그인 화면에서 제출된 횟수
 let gwFlagCalls = 0, gwWrong = 0;   // 로그인 확인 API 호출 수, 틀린 횟수
@@ -115,11 +119,15 @@ const gwBody = (name, apply) => `<table><tr><th><div>공고번호</div></th><td>
 const mails = [
   { id: 'M1', from: '알바몬<mailmaster@albamon.com>', subject: '[알바몬] ㈜테스트 온라인지원자 가나다', body: gwBody('가나다', '700000001') },
   { id: 'M2', from: '다른회사<hello@other.example>', subject: '광고 메일', body: '<p>광고</p>' },
-  { id: 'M3', from: '알바몬<mailmaster@albamon.com>', subject: '[알바몬] ㈜테스트 온라인지원자 라마바', body: gwBody('라마바', '700000002') }
+  { id: 'M3', from: '알바몬<mailmaster@albamon.com>', subject: '[알바몬] ㈜테스트 온라인지원자 라마바', body: gwBody('라마바', '700000002') },
+  { id: 'N1', owner: GW2_ID, from: '알바몬<mailmaster@albamon.com>', subject: '[알바몬] ㈜테스트 온라인지원자 사아자', body: gwBody('사아자', '700000011') },
+  { id: 'N2', owner: GW2_ID, from: '알바몬<mailmaster@albamon.com>', subject: '[알바몬] ㈜테스트 온라인지원자 차카타', body: gwBody('차카타', '700000012') }
 ];
+const whoIs = (req) => { const m = (req.headers.cookie || '').match(/gw=ok-([a-z0-9]+)/); return m ? m[1] : ''; };
+const mine = (u) => mails.filter((m) => (m.owner || GW_ID) === u);
 const gw = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
-  const logged = (req.headers.cookie || '').includes('gw=ok');
+  const logged = !!whoIs(req);
   const H = { 'Content-Type': 'text/html; charset=utf-8' };
   if (u.pathname === '/gw/data/common/login/selectDepartmentList.do') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify([{ deptId: 'D1', reprsntDeptYn: 'Y' }])); }
   if (u.pathname === '/gw/data/common/login/selectLoginFlag.do') {
@@ -128,8 +136,8 @@ const gw = http.createServer((req, res) => {
       gwFlagCalls++;
       const j = JSON.parse(b);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      if (j.userId !== GW_ID) return res.end(JSON.stringify({ resultCode: '-20', limitErrorCnt: 0, nowErrorCnt: 0 }));
-      if (j.userId === GW_ID && j.pwd === GW_PW && !(req.headers.cookie || '')) return res.end(JSON.stringify({ resultCode: '0' }));
+      if (!USERS[j.userId]) return res.end(JSON.stringify({ resultCode: '-20', limitErrorCnt: 0, nowErrorCnt: 0 }));
+      if (USERS[j.userId].pw === j.pwd && !(req.headers.cookie || '')) return res.end(JSON.stringify({ resultCode: '0' }));
       res.end(JSON.stringify({ resultCode: '-40', limitErrorCnt: 5, nowErrorCnt: ++gwWrong }));
     });
     return;
@@ -140,7 +148,8 @@ const gw = http.createServer((req, res) => {
     req.on('data', (c) => (b += c));
     req.on('end', () => {
       const p = new URLSearchParams(b);
-      if (p.get('userId') === GW_ID && p.get('pwd') === GW_PW) { res.writeHead(302, { 'Set-Cookie': 'gw=ok; Path=/', Location: '/main' }); res.end(); }
+      gwLoginUsers.push(p.get('userId'));
+      if (USERS[p.get('userId')] && USERS[p.get('userId')].pw === p.get('pwd')) { res.writeHead(302, { 'Set-Cookie': 'gw=ok-' + p.get('userId') + '; Path=/', Location: '/main' }); res.end(); }
       else { res.writeHead(200, H); res.end('<meta charset=utf-8><p>로그인 실패</p><form method="post" action="/login"><input id="cmmLogin_userId" name="userId"><input id="cmmLogin_pwd" name="pwd" type="password"><button type="submit" id="cmmLogin_login">로그인</button></form>'); }
     });
     return;
@@ -153,9 +162,10 @@ const gw = http.createServer((req, res) => {
   if (u.pathname === '/mail/data/emlMail/selectMailView.do') {
     const id = u.searchParams.get('mailId'), mb = u.searchParams.get('mailboxId');
     gwViews.push({ id, mb });
-    const m = mails.find((x) => x.id === id);
+    const me = whoIs(req);
+    const m = mine(me).find((x) => x.id === id);
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    return res.end(JSON.stringify({ mailList: [{ emlMessageVo: { content: m && mb === MBX ? m.body : '<p>메일함이 달라요</p>' } }] }));
+    return res.end(JSON.stringify({ mailList: [{ emlMessageVo: { content: m && USERS[me] && mb === USERS[me].mb ? m.body : '<p>메일함이 달라요</p>' } }] }));
   }
   if (u.pathname === '/mail/main.do') {
     res.writeHead(200, H);
@@ -166,9 +176,10 @@ const gw = http.createServer((req, res) => {
       return res.end('<meta charset=utf-8><div id="view">' + (m && mb === MBX ? m.body : '<p>메일함이 달라요</p>') + '</div>');
     }
     // 목록은 화면이 열린 뒤 조금 있다가 채워진다(실제 그룹웨어처럼)
-    const rows = mails.map((m) => `<li><ul class="mail_list"><li class="checkbox"><input type="checkbox" name="key" value="${m.id}"></li></ul>
+    const me = whoIs(req);
+    const rows = mine(me).map((m) => `<li><ul class="mail_list"><li class="checkbox"><input type="checkbox" name="key" value="${m.id}"></li></ul>
       <div class="from"><span style="display:none">${m.from.replace(/</g, '&lt;')}</span></div>
-      <div class="title"><div class="subject"><a href="javascript:void(0)" id="emlList_key_${m.id}" data-mailbox-id="${MBX}" class="not_read">${m.subject}</a></div></div></li>`).join('');
+      <div class="title"><div class="subject"><a href="javascript:void(0)" id="emlList_key_${m.id}" data-mailbox-id="${USERS[me] ? USERS[me].mb : MBX}" class="not_read">${m.subject}</a></div></div></li>`).join('');
     return res.end(`<meta charset=utf-8><ul id="list"></ul><script>setTimeout(function(){document.getElementById('list').innerHTML=${JSON.stringify(rows)};},700);</script>`);
   }
   res.writeHead(404); res.end();
@@ -198,7 +209,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 await browser.installExtension(dir);
 const wt = await browser.waitForTarget((t) => t.type() === 'service_worker' && t.url().includes('background.js'), { timeout: 20000 });
 const sw = await wt.worker();
-const setCfg = (extra = {}) => sw.evaluate((c) => chrome.storage.local.set(c), { serverUrl: `http://127.0.0.1:${sysPort}`, agentToken: TOKEN, dry: false, gwOn: false, gwId: '', gwPw: '', gwLastScan: 0, gwSeen: [], gwBlocked: false, gwForceLogin: false, gwCookieDomain: '127.0.0.1', gwLoginBase: `http://127.0.0.1:${gwPort}`, gwMailUrl: `http://127.0.0.1:${gwPort}/mail/main.do`, ...extra });
+const setCfg = async (extra = {}) => { await sw.evaluate(() => chrome.storage.local.remove(['gwAccounts'])); return sw.evaluate((c) => chrome.storage.local.set(c), { serverUrl: `http://127.0.0.1:${sysPort}`, agentToken: TOKEN, dry: false, gwOn: false, gwId: '', gwPw: '', gwLastScan: 0, gwSeen: [], gwBlocked: false, gwForceLogin: false, gwCookieDomain: '127.0.0.1', gwLoginBase: `http://127.0.0.1:${gwPort}`, gwMailUrl: `http://127.0.0.1:${gwPort}/mail/main.do`, ...extra }); };
 const status = () => sw.evaluate(() => chrome.storage.local.get('lastStatus')).then((r) => r.lastStatus || '');
 const runAndWait = async (ms = 90000) => {
   await sw.evaluate(() => chrome.storage.local.remove('lastStatus'));
@@ -246,7 +257,7 @@ check(mailIn.length === 2 && mailIn.map((x) => x.name).sort().join() === '가나
 check(gwViews.length === 2 && gwViews.every((v) => v.mb === MBX), '메일함 번호를 목록의 속성에서 읽어 사용(고정값 아님)');
 check(!gwViews.some((v) => v.id === 'M2'), '알바몬이 아닌 메일은 열지 않음');
 const before = gwViews.length;
-await setCfg({ gwOn: true, gwId: GW_ID, gwPw: GW_PW, gwSeen: (await sw.evaluate(() => chrome.storage.local.get('gwSeen'))).gwSeen });
+await setCfg({ gwOn: true, gwId: GW_ID, gwPw: GW_PW, gwSeen: (((await sw.evaluate(() => chrome.storage.local.get('gwAccounts'))).gwAccounts || [{}])[0].seen || []) });
 await runAndWait();
 check(gwViews.length === before, '이미 가져온 메일은 다시 열지 않음');
 const sNone = (await sw.evaluate(() => chrome.storage.local.get(['lastStatus', 'lastLevel'])));
@@ -258,7 +269,30 @@ await sw.evaluate(() => chrome.storage.local.set({ gwSeen: [] }));
 const viewsBefore = gwViews.length;
 await runAndWait();
 check(gwViews.length > viewsBefore, '메일 주소로 입력해도 그룹웨어 로그인이 됨(@ 앞 아이디 사용)');
-const leaked = sysLog.filter((l) => l.includes(GW_PW) || l.includes(encodeURIComponent(GW_PW)) || l.includes(GW_ID + '"') );
+// ---- 여러 그룹웨어 계정 ----
+const cookieOf = (name) => sw.evaluate((n) => chrome.cookies.get({ url: 'http://127.0.0.1/', name: n }).then((c) => (c ? c.value : null)), name);
+// 이 크롬의 "내 그룹웨어 로그인"은 tester 라고 두고, 계정 3개(tester, tester2, 비밀번호 확인이 필요한 tester3)를 등록한다
+await sw.evaluate(() => chrome.cookies.set({ url: 'http://127.0.0.1/', name: 'gw', value: 'ok-tester', path: '/' }));
+await sw.evaluate(() => chrome.cookies.set({ url: 'http://127.0.0.1/', name: 'myown', value: 'keep-me', path: '/', httpOnly: true, expirationDate: Math.floor(Date.now() / 1000) + 86400 }));
+const acc = (id, pw, extra = {}) => ({ id, pw, on: true, blocked: false, force: false, seen: [], last: null, ...extra });
+await sw.evaluate((a) => chrome.storage.local.set({ gwAccounts: a, gwLastScan: 0 }), [acc(GW_ID, GW_PW), acc(GW2_ID, GW2_PW), acc('tester3', 'whatever', { blocked: true })]);
+const mailPre = mailIn.length, usersPre = gwLoginUsers.length;
+s = await runAndWait();
+console.log('  상태(여러 계정):', s);
+check(mailIn.some((x) => x.name === '사아자' && x.account === 'tester2') && mailIn.some((x) => x.name === '차카타' && x.account === 'tester2'), '두 번째 계정(tester2)의 메일함에서도 지원 메일을 가져오고 계정 이름을 함께 기록함');
+check(!mailIn.some((x) => x.name === '가나다' && x.account === 'tester2'), '계정별로 자기 메일함만 읽음(섞이지 않음)');
+check(!gwLoginUsers.slice(usersPre).includes('tester3'), '비밀번호 확인이 필요한 계정은 건너뛰고 로그인을 시도하지 않음');
+check(/tester3/.test(s) && /확인이 필요/.test(s), '건너뛴 계정은 이유와 함께 알림');
+check((await cookieOf('gw')) === 'ok-tester', '여러 계정을 읽은 뒤 내 그룹웨어 로그인(쿠키)이 원래대로 돌아옴');
+check((await cookieOf('myown')) === 'keep-me', '내 다른 쿠키도 그대로 돌아옴');
+check(!(await sw.evaluate(() => chrome.storage.session.get('gwSwap'))).gwSwap, '쿠키 보관본은 정리됨');
+// 읽는 도중 확장이 꺼졌던 경우를 흉내: 보관본만 남기고 쿠키를 바꿔 둔 뒤 복구 함수가 되돌리는지
+await sw.evaluate(() => chrome.storage.session.set({ gwSwap: { domain: '127.0.0.1', snap: [{ name: 'gw', value: 'ok-tester', domain: '127.0.0.1', path: '/', secure: false, httpOnly: false, hostOnly: true, session: true, sameSite: 'unspecified', storeId: '0' }] } }));
+await sw.evaluate(() => chrome.cookies.set({ url: 'http://127.0.0.1/', name: 'gw', value: 'ok-tester2', path: '/' }));
+await sw.evaluate(() => recoverGwSwap());
+check((await cookieOf('gw')) === 'ok-tester', '읽는 도중 꺼졌다가 켜져도 내 그룹웨어 로그인이 복구됨');
+
+const leaked = sysLog.filter((l) => l.includes(GW2_PW) || l.includes(GW_PW) || l.includes(encodeURIComponent(GW_PW)) );
 check(leaked.length === 0, '그룹웨어 비밀번호가 시스템으로 가는 요청에 전혀 없음(' + sysLog.length + '건 검사)');
 
 
@@ -281,6 +315,7 @@ await web.type('#gwpw', 'whatever');
 await web.click('#gwform button');
 await web.waitForFunction(() => /없는 아이디/.test(document.getElementById('gwerr').textContent), { timeout: 15000 }).catch(() => {});
 check(/없는 아이디/.test(await web.$eval('#gwerr', (e) => e.textContent)), '그룹웨어에 없는 아이디를 저장하면 "없는 아이디예요"로 알림');
+await sw.evaluate(() => chrome.storage.local.set({ gwAccounts: [] }));
 await web.$eval('#gwid', (e) => { e.value = ''; });
 await web.$eval('#gwpw', (e) => { e.value = ''; });
 // (1) 일부러 틀린 비밀번호를 저장해 본다: 이 크롬은 이미 그룹웨어에 로그인된 상태여도 틀린 비밀번호를 알아채야 한다
@@ -298,18 +333,18 @@ check(!errBox.hidden && /맞지 않아요/.test(errBox.text), '입력칸 바로 
 check((await web.$eval('#gwpw', (e) => e.value)) === 'wrong-password', '틀렸을 때는 입력한 값을 지우지 않아 고칠 수 있음');
 check((await web.$eval('#gwok', (e) => e.hidden)) === true, '틀렸을 때는 "저장했어요" 성공 안내를 보이지 않음');
 check(gwFlagCalls === flagPre + 1 && gwViews.length === viewsPre, '저장 때 확인 요청은 한 번만, 메일은 읽지 않음');
-check((await sw.evaluate(() => chrome.storage.local.get('gwBlocked'))).gwBlocked === true, '틀리면 자동 재시도를 막음(계정 잠김 방지)');
+check((((await sw.evaluate(() => chrome.storage.local.get('gwAccounts'))).gwAccounts || [])[0] || {}).blocked === true, '틀리면 자동 재시도를 막음(계정 잠김 방지)');
 // (2) 올바른 비밀번호로 다시 저장
 const postsPre = gwLoginPosts;
 await web.$eval('#gwpw', (e) => { e.value = ''; });
 await web.type('#gwpw', GW_PW);
 await web.click('#gwform button');
-await web.waitForFunction(() => /그룹웨어 계정 저장됨/.test(document.getElementById('extstate').textContent) && !/⚠/.test(document.getElementById('extstate').textContent), { timeout: 15000 }).catch(() => {});
+await web.waitForFunction(() => /그룹웨어 계정 \d개 등록됨/.test(document.getElementById('extstate').textContent) && !/⚠/.test(document.getElementById('extstate').textContent), { timeout: 15000 }).catch(() => {});
 const t2 = await web.$eval('#extstate', (e) => e.textContent);
 console.log('  화면 상태(저장 뒤):', t2);
-const stored = await sw.evaluate(() => chrome.storage.local.get(['gwId', 'gwPw', 'gwOn']));
-check(stored.gwId === GW_ID && stored.gwPw === GW_PW && stored.gwOn === true, '그룹웨어 아이디·비밀번호가 확장 저장소에 들어감');
-check(/비밀번호 저장됨/.test(t2) && !t2.includes(GW_PW), '화면에는 저장 여부만 보이고 비밀번호는 보이지 않음');
+const stored = ((await sw.evaluate(() => chrome.storage.local.get('gwAccounts'))).gwAccounts || [])[0] || {};
+check(stored.id === GW_ID && stored.pw === GW_PW && stored.on === true, '그룹웨어 아이디·비밀번호가 확장 저장소에 들어감');
+check(/계정 1개 등록됨/.test(t2) && !t2.includes(GW_PW), '화면에는 저장 여부만 보이고 비밀번호는 보이지 않음');
 check((await web.$eval('#gwpw', (e) => e.value)) === '', '확인에 성공하면 비밀번호 입력칸은 비워짐');
 check((await web.$eval('#gwok', (e) => e.hidden)) === false && (await web.$eval('#gwerr', (e) => e.hidden)) === true, '성공하면 성공 안내만 보이고 오류는 사라짐');
 await sleep(300);
@@ -321,6 +356,20 @@ await sleep(3500);   // 저장 뒤 자동 실행이 끝날 시간
 check(gwLoginPosts > postsPre, '새 계정을 저장하면 이미 로그인된 세션이 있어도 저장한 계정으로 다시 로그인함(엉뚱한 메일함 방지)');
 const leaked2 = sysLog.slice(sentBefore).filter((l) => l.includes(GW_PW) || l.includes(encodeURIComponent(GW_PW)));
 check(leaked2.length === 0, '화면에서 저장해도 비밀번호가 시스템 서버로 가는 요청에 없음(' + (sysLog.length - sentBefore) + '건 검사)');
+// 두 번째 계정을 화면에서 추가하고, 목록에 보이고, 삭제할 수 있는지
+await web.type('#gwid', GW2_ID);
+await web.type('#gwpw', GW2_PW);
+await web.click('#gwform button[type=submit]');
+await web.waitForFunction(() => document.querySelectorAll('#gwlist li').length === 2, { timeout: 15000 }).catch(() => {});
+const lis = await web.$$eval('#gwlist li', (els) => els.map((e) => e.textContent));
+console.log('  등록된 계정 목록:', JSON.stringify(lis.map((t) => t.slice(0, 40))));
+check(lis.length === 2 && lis.some((t) => t.includes(GW_ID)) && lis.some((t) => t.includes(GW2_ID)), '화면에 등록된 계정 두 개가 목록으로 보임');
+check(!(await web.content()).includes(GW2_PW), '두 번째 계정의 비밀번호도 화면에 남지 않음');
+web.on('dialog', (d) => d.accept());
+await web.evaluate(() => { [...document.querySelectorAll('#gwlist li')].find((li) => li.textContent.includes('tester2') && !li.textContent.startsWith('tester ')).querySelector('button').click(); });
+await web.waitForFunction(() => document.querySelectorAll('#gwlist li').length === 1, { timeout: 15000 }).catch(() => {});
+check((await web.$$eval('#gwlist li', (els) => els.length)) === 1, '삭제하면 목록에서 사라짐');
+check(!(((await sw.evaluate(() => chrome.storage.local.get('gwAccounts'))).gwAccounts || []).some((a) => a.id === GW2_ID)), '삭제하면 확장 저장소에서도(비밀번호 포함) 지워짐');
 await web.close();
 
 await browser.close().catch(() => {});

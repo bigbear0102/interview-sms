@@ -15,6 +15,9 @@ window.addEventListener('message', async (e) => {
       if (typeof d.gwId === 'string') patch.gwId = d.gwId.slice(0, 60);
       if (typeof d.gwPw === 'string' && d.gwPw) patch.gwPw = d.gwPw.slice(0, 100);
       if (typeof d.gwOn === 'boolean') patch.gwOn = d.gwOn;
+      if (d.account && typeof d.account.id === 'string') patch.account = { id: d.account.id.slice(0, 80), pw: typeof d.account.pw === 'string' ? d.account.pw.slice(0, 100) : '' };
+      if (typeof d.removeAccount === 'string') patch.removeAccount = d.removeAccount.slice(0, 80);
+      if (d.toggleAccount && typeof d.toggleAccount.id === 'string') patch.toggleAccount = { id: d.toggleAccount.id.slice(0, 80), on: !!d.toggleAccount.on };
       reply('saved', await chrome.runtime.sendMessage({ type: 'bridge-save', patch }));
     }
   } catch { /* 확장이 다시 로드되는 중이면 무시 */ }

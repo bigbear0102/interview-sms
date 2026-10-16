@@ -135,15 +135,40 @@ async function processItem(cfg, item) {
   }
 }
 
+// ---------------- 그룹웨어 계정(여러 개) ----------------
+// 계정은 이 PC 크롬(chrome.storage.local)에만 저장한다. 문자 관리 시스템에는 아이디만 알리고 비밀번호는 보내지 않는다.
+// 한 사람이 여러 그룹웨어 메일함(여러 계정)을 등록해 한 수신함에서 받을 수 있다.
+//   gwAccounts: [{ id, pw, on, blocked, force, seen[], last:{text,level,at} }]
+const MAX_ACCOUNTS = 5;
+const acctKey = (id) => String(id || '').split('@')[0].trim().toLowerCase();
+
+async function getAccounts() {
+  const s = await chrome.storage.local.get(['gwAccounts', 'gwId', 'gwPw', 'gwOn', 'gwSeen', 'gwBlocked', 'gwForceLogin']);
+  if (Array.isArray(s.gwAccounts)) return s.gwAccounts;
+  if (s.gwId) {   // 예전 버전(계정 1개) 저장값을 옮긴다
+    const a = [{ id: s.gwId, pw: s.gwPw || '', on: s.gwOn !== false, blocked: !!s.gwBlocked, force: !!s.gwForceLogin, seen: s.gwSeen || [], last: null }];
+    await chrome.storage.local.set({ gwAccounts: a });
+    await chrome.storage.local.remove(['gwId', 'gwPw', 'gwOn', 'gwSeen', 'gwBlocked', 'gwForceLogin']);
+    return a;
+  }
+  return [];
+}
+const putAccounts = (list) => chrome.storage.local.set({ gwAccounts: list });
+async function updateAccount(key, fn) {
+  const list = await getAccounts();
+  const a = list.find((x) => acctKey(x.id) === key);
+  if (a) { fn(a); await putAccounts(list); }
+}
+
 // ---------------- 그룹웨어 비밀번호 확인 ----------------
-// 이 크롬이 이미 그룹웨어에 로그인되어 있으면 저장한 비밀번호와 상관없이 메일함이 열려서, 틀린 비밀번호도 모르고 지나간다.
+// 이 크롬이 이미 그룹웨어에 로그인되어 있으면 저장한 비밀번호와 상관없이 메일함이 열려, 틀린 비밀번호도 모르고 지나간다.
 // 그래서 저장할 때 그룹웨어의 로그인 확인 요청을 쿠키 없이(세션을 만들지 않고) 한 번 보내 맞는지 확인한다.
 // 주의: 그룹웨어는 비밀번호를 여러 번(예: 5번) 틀리면 계정을 잠글 수 있다. 그래서 틀리면 자동으로 다시 시도하지 않고, 새로 저장할 때만 확인한다.
 const GW_LOGIN_BASE_DEFAULT = 'https://gw.willvi.co.kr';
-async function verifyGwLogin(cfg) {
-  const base = (cfg.gwLoginBase || GW_LOGIN_BASE_DEFAULT).replace(/\/+$/, '');
+async function verifyGwLogin(acct, loginBase) {
+  const base = (loginBase || GW_LOGIN_BASE_DEFAULT).replace(/\/+$/, '');
   const host = new URL(base).host;
-  const id = String(cfg.gwId || '').split('@')[0].trim();
+  const id = acctKey(acct.id);
   const H = { 'Content-Type': 'application/json;charset=UTF-8', Accept: 'application/json' };
   try {
     const dr = await fetch(`${base}/gw/data/common/login/selectDepartmentList.do?_=${Date.now()}t`, {
@@ -152,7 +177,7 @@ async function verifyGwLogin(cfg) {
     const depts = await dr.json();
     const d = Array.isArray(depts) ? (depts.find((x) => x.reprsntDeptYn === 'Y') || depts[0]) : null;
     const r = await fetch(`${base}/gw/data/common/login/selectLoginFlag.do?lang=ko&_=${Date.now()}t`, {
-      method: 'POST', credentials: 'omit', headers: H, body: JSON.stringify({ deptId: d ? d.deptId : '', langCode: 'ko', gwUrl: host, userId: id, pwd: cfg.gwPw, sec: '', token: null })
+      method: 'POST', credentials: 'omit', headers: H, body: JSON.stringify({ deptId: d ? d.deptId : '', langCode: 'ko', gwUrl: host, userId: id, pwd: acct.pw, sec: '', token: null })
     });
     const j = await r.json();
     if (String(j.resultCode) === '0') return { ok: true };
@@ -166,41 +191,78 @@ function gwFailText(v) {
   return `그룹웨어 아이디 또는 비밀번호가 맞지 않아요${cnt}. 그룹웨어를 직접 열어 같은 아이디·비밀번호로 로그인되는지 확인하고, 수신함 화면에서 다시 저장해 주세요.`;
 }
 
-// 설정 저장(수신함 화면·팝업 공통). 그룹웨어 계정이 바뀌면 바로 확인하고, 결과를 상태에 남긴다.
+// 설정 저장(수신함 화면·팝업 공통).
+//  patch.account {id, pw}  계정 추가·수정(저장 전에 비밀번호를 확인한다)   patch.removeAccount id   patch.toggleAccount {id, on}
+//  (예전 형식 patch.gwId / patch.gwPw 는 첫 번째 계정으로 본다)
 async function saveConfig(p, origin) {
   const set = {};
   if (p.agentToken) set.agentToken = p.agentToken;
-  if (typeof p.gwId === 'string') set.gwId = p.gwId;
-  if (p.gwPw) set.gwPw = p.gwPw;
-  if (typeof p.gwOn === 'boolean') set.gwOn = p.gwOn;
   if (typeof p.dry === 'boolean') set.dry = p.dry;
   if (typeof p.serverUrl === 'string' && p.serverUrl) set.serverUrl = p.serverUrl;
-  else if (origin && (set.agentToken || set.gwId || set.gwPw)) set.serverUrl = origin;
-  if (!Object.keys(set).length) return;
-  await chrome.storage.local.set(set);
-  if (set.gwId !== undefined || set.gwPw) {
-    const cfg = await chrome.storage.local.get(['gwId', 'gwPw', 'gwLoginBase']);
-    if (cfg.gwId && cfg.gwPw) {
-      await setStatus('그룹웨어 아이디·비밀번호를 확인하는 중…', 'info');
-      const v = await verifyGwLogin(cfg);
-      if (!v.ok) { await chrome.storage.local.set({ gwBlocked: true }); await setStatus(gwFailText(v), 'error'); return; }
-      await chrome.storage.local.set({ gwBlocked: false, gwForceLogin: true });
-    }
+  const acc = p.account && p.account.id ? p.account : (typeof p.gwId === 'string' && p.gwId ? { id: p.gwId, pw: p.gwPw || '', first: true } : null);
+  if (!set.serverUrl && origin && (set.agentToken || acc)) set.serverUrl = origin;
+  if (Object.keys(set).length) await chrome.storage.local.set(set);
+  const base = (await chrome.storage.local.get('gwLoginBase')).gwLoginBase;
+  let list = await getAccounts();
+  let touched = false;
+
+  if (typeof p.removeAccount === 'string') {
+    const k = acctKey(p.removeAccount);
+    list = list.filter((a) => acctKey(a.id) !== k); touched = true;
+    await putAccounts(list);
+    await setStatus(list.length ? `그룹웨어 계정 ${k}을(를) 지웠어요.` : '그룹웨어 계정을 모두 지웠어요. 메일을 가져오려면 계정을 추가해 주세요.', 'ok');
   }
-  setTimeout(() => run(true), 300);
+  if (p.toggleAccount && p.toggleAccount.id) {
+    await updateAccount(acctKey(p.toggleAccount.id), (a) => { a.on = !!p.toggleAccount.on; });
+    touched = true;
+  }
+  if (acc) {
+    const key = acctKey(acc.id);
+    const exist = list.find((a) => acctKey(a.id) === key);
+    const pw = acc.pw || (exist && exist.pw) || '';
+    if (!pw) { await setStatus('그룹웨어 비밀번호를 입력해 주세요.', 'error'); return; }
+    if (!exist && !acc.first && list.length >= MAX_ACCOUNTS) { await setStatus(`그룹웨어 계정은 최대 ${MAX_ACCOUNTS}개까지 등록할 수 있어요.`, 'error'); return; }
+    await setStatus(`그룹웨어 계정(${key})을 확인하는 중…`, 'info');
+    const v = await verifyGwLogin({ id: acc.id, pw }, base);
+    const entry = { id: acc.id.trim(), pw, on: true, blocked: !v.ok, force: v.ok, seen: exist ? exist.seen || [] : [],
+      last: { text: v.ok ? '로그인 확인됨' : gwFailText(v), level: v.ok ? 'ok' : 'error', at: Date.now() } };
+    list = await getAccounts();
+    if (acc.first && list.length && !exist) list[0] = entry;       // 예전 형식: 첫 번째 계정을 바꾼다
+    else { const i = list.findIndex((a) => acctKey(a.id) === key); if (i >= 0) list[i] = entry; else list.push(entry); }
+    await putAccounts(list);
+    if (!v.ok) { await setStatus(`[${key}] ${gwFailText(v)}`, 'error'); return; }
+    touched = true;
+  }
+  if (touched || set.agentToken) setTimeout(() => run(true), 300);
 }
 
-// 이 크롬이 다른 사람(또는 다른 계정)으로 그룹웨어에 로그인돼 있으면 엉뚱한 메일함을 읽게 된다.
-// 그래서 새 계정을 저장한 뒤 처음 확인할 때는 그룹웨어 로그인 정보를 지우고 **저장한 내 계정으로 다시 로그인**한다.
-// (이 크롬에서 열어 둔 그룹웨어 창은 로그아웃될 수 있다)
-async function clearGwCookies(cfg) {
-  const domain = cfg.gwCookieDomain || 'willvi.co.kr';
+// ---------------- 그룹웨어 로그인 쿠키 보관·복원 ----------------
+// 이 크롬에는 그룹웨어 로그인(쿠키)이 하나뿐이다. 계정을 바꿔 가며 읽으려면 쿠키를 잠깐 바꿔야 하므로,
+// 읽기 전에 내 쿠키를 보관해 두었다가 끝나면 그대로 되돌린다. (보관본은 확장 프로그램이 꺼졌다 켜져도 복원되도록 세션 저장소에도 둔다)
+async function clearGwCookies(domain) {
   const list = await chrome.cookies.getAll({ domain });
   for (const c of list) {
     const url = (c.secure ? 'https://' : 'http://') + c.domain.replace(/^\./, '') + c.path;
     await chrome.cookies.remove({ url, name: c.name, storeId: c.storeId }).catch(() => {});
   }
 }
+async function restoreGwCookies(domain, snap) {
+  await clearGwCookies(domain);
+  for (const c of snap || []) {
+    const d = { url: (c.secure ? 'https://' : 'http://') + c.domain.replace(/^\./, '') + c.path, name: c.name, value: c.value, path: c.path, secure: c.secure, httpOnly: c.httpOnly, storeId: c.storeId };
+    if (!c.hostOnly) d.domain = c.domain;
+    if (c.sameSite && c.sameSite !== 'unspecified') d.sameSite = c.sameSite;
+    if (!c.session && c.expirationDate) d.expirationDate = c.expirationDate;
+    await chrome.cookies.set(d).catch(() => {});
+  }
+}
+async function recoverGwSwap() {
+  try {
+    const s = await chrome.storage.session.get('gwSwap');
+    if (s.gwSwap) { await restoreGwCookies(s.gwSwap.domain, s.gwSwap.snap); await chrome.storage.session.remove('gwSwap'); }
+  } catch { /* ignore */ }
+}
+recoverGwSwap();   // 확장이 읽는 도중에 꺼졌다면 켜질 때 내 로그인 쿠키를 되돌린다
 
 // ---------------- 그룹웨어 메일에서 알바몬 지원 메일 가져오기 ----------------
 // 그룹웨어 아이디·비밀번호는 이 PC 크롬(chrome.storage.local)에만 저장하고, 그룹웨어 로그인 화면에만 입력한다.
@@ -269,31 +331,25 @@ async function exec(tabId, func, args = []) {
   return r && r.result;
 }
 
-// 반환: null(이번에는 확인하지 않음) | { text, level }
-async function scanGroupware(cfg, force) {
-  if (!cfg.gwId || !cfg.gwPw || cfg.gwOn === false) return null;
-  if (cfg.gwBlocked) return { level: 'error', text: '그룹웨어 로그인 정보 확인이 필요해요(이전 로그인 실패). 계정이 잠기지 않도록 자동으로 다시 시도하지 않아요. 수신함 화면에서 아이디·비밀번호를 다시 저장해 주세요.' };
-  const last = (await chrome.storage.local.get('gwLastScan')).gwLastScan || 0;
-  if (!force && Date.now() - last < GW_EVERY_MS) return null;
+// 계정 하나의 메일함을 읽는다. 반환: { text, level }
+async function scanAccount(cfg, acct) {
+  const key = acctKey(acct.id);
   const base = cfg.gwMailUrl || GW_MAIL_DEFAULT;
-  await chrome.storage.local.set({ gwLastScan: Date.now() });
-  const who = String(cfg.gwId).split('@')[0].trim();
-  if (cfg.gwForceLogin) { await clearGwCookies(cfg); await chrome.storage.local.set({ gwForceLogin: false }); }
-
-  let tab = await openTab(base);
+  const record = (r) => updateAccount(key, (a) => { a.last = { text: r.text, level: r.level, at: Date.now() }; });
+  const tab = await openTab(base);
   try {
-    // 로그인 화면이면 입력한다(최대 2번 시도)
+    // 로그인 화면이면 입력한다. 로그인은 계정당 한 번만 시도한다(계정 잠김 방지).
     for (let i = 0; i < 2; i++) {
       await sleep(800);
-      // 첫 번째에만 로그인을 시도한다. 두 번째에도 로그인 화면이면 실패로 보고 멈춘다(계정 잠김 방지).
       if (i === 1) {
         if (!(await exec(tab.id, pageHasLogin).catch(() => false))) break;
-        await chrome.storage.local.set({ gwBlocked: true });
-        return { level: 'error', text: '그룹웨어 로그인이 안 돼요. 아이디 또는 비밀번호가 맞는지 확인하고, 수신함 화면에서 다시 저장해 주세요. (그룹웨어를 직접 열어 같은 아이디·비밀번호로 로그인되는지도 확인해 보세요.) 계정 잠김을 막으려고 자동으로 다시 시도하지 않아요.' };
+        const r = { level: 'error', text: `그룹웨어(${key}) 로그인이 안 돼요. 아이디 또는 비밀번호가 맞는지 확인하고, 수신함 화면에서 다시 저장해 주세요. 계정 잠김을 막으려고 자동으로 다시 시도하지 않아요.` };
+        await updateAccount(key, (a) => { a.blocked = true; });
+        await record(r);
+        return r;
       }
-      const st = await exec(tab.id, pageLogin, [String(cfg.gwId).split('@')[0].trim(), cfg.gwPw]).catch(() => 'error');
+      const st = await exec(tab.id, pageLogin, [key, acct.pw]).catch(() => 'error');
       if (st === 'nologin') break;
-      // 로그인 뒤 화면이 바뀔 때까지 기다린다
       await new Promise((r) => setTimeout(r, 400));
       await waitLoaded(tab.id);
       await sleep(1500);
@@ -306,29 +362,73 @@ async function scanGroupware(cfg, force) {
       list = (await exec(tab.id, pageListMails).catch(() => null)) || { total: 0, mails: [] };
       if (!list.total) await sleep(400);
     }
-    if (!list.total) return { level: 'warn', text: '그룹웨어 메일함 목록을 읽지 못했어요. 메일함이 비어 있거나, 느리거나, 화면이 바뀌었을 수 있어요. 5분 뒤 다시 확인해요.' };
-    const mails = list.mails;
-    if (!mails.length) return { level: 'ok', text: `그룹웨어(${who}) 확인 완료: 메일 ${list.total}통 중 알바몬 지원 메일이 없어요.` };
-    const seenArr = (await chrome.storage.local.get('gwSeen')).gwSeen || [];
-    const seen = new Set(seenArr);
-    const todo = mails.filter((m) => !seen.has(m.id)).slice(0, GW_MAX_PER_SCAN);
-    if (!todo.length) return { level: 'ok', text: `그룹웨어(${who}) 확인 완료: 알바몬 지원 메일 ${mails.length}통, 새 메일은 없어요.` };
-    let added = 0, dup = 0, skipped = 0, failed = 0;
-    if (todo.length) await setStatus(`그룹웨어 메일 ${todo.length}건 읽는 중…`);
-    const bodies = (await exec(tab.id, pageFetchBodies, [todo]).catch(() => [])) || [];
-    for (const b of bodies) {
-      if (b.html === null) { failed++; continue; }   // 못 받은 건은 기억하지 않아서 다음 확인 때 다시 시도
-      if (!b.html) { skipped++; seen.add(b.id); continue; }
-      const r = await (await api(cfg, '/api/agent/mail', { method: 'POST', body: JSON.stringify({ html: b.html }) })).json();
-      seen.add(b.id);
-      if (r.ok) { if (r.duplicate) dup++; else added++; } else skipped++;
+    let res;
+    if (!list.total) {
+      res = { level: 'warn', text: `그룹웨어(${key}) 메일함 목록을 읽지 못했어요. 메일함이 비어 있거나, 느리거나, 화면이 바뀌었을 수 있어요. 5분 뒤 다시 확인해요.` };
+    } else if (!list.mails.length) {
+      res = { level: 'ok', text: `그룹웨어(${key}) 확인 완료: 메일 ${list.total}통 중 알바몬 지원 메일이 없어요.` };
+    } else {
+      const seen = new Set(acct.seen || []);
+      const todo = list.mails.filter((m) => !seen.has(m.id)).slice(0, GW_MAX_PER_SCAN);
+      if (!todo.length) {
+        res = { level: 'ok', text: `그룹웨어(${key}) 확인 완료: 알바몬 지원 메일 ${list.mails.length}통, 새 메일은 없어요.` };
+      } else {
+        await setStatus(`그룹웨어(${key}) 메일 ${todo.length}건 읽는 중…`);
+        let added = 0, dup = 0, skipped = 0, failed = 0;
+        const bodies = (await exec(tab.id, pageFetchBodies, [todo]).catch(() => [])) || [];
+        for (const b of bodies) {
+          if (b.html === null) { failed++; continue; }   // 못 받은 건은 기억하지 않아서 다음 확인 때 다시 시도
+          if (!b.html) { skipped++; seen.add(b.id); continue; }
+          const r = await (await api(cfg, '/api/agent/mail', { method: 'POST', body: JSON.stringify({ html: b.html, account: key }) })).json();
+          seen.add(b.id);
+          if (r.ok) { if (r.duplicate) dup++; else added++; } else skipped++;
+        }
+        await updateAccount(key, (a) => { a.seen = [...seen].slice(-SEEN_CAP); });
+        if (failed && failed === bodies.length) res = { level: 'error', text: `그룹웨어(${key}) 메일 ${failed}건의 내용을 받지 못했어요. 그룹웨어 로그인이 풀렸거나 화면 구조가 바뀌었을 수 있어요. 다음 확인 때 다시 시도해요.` };
+        else res = { level: failed ? 'warn' : 'ok', text: `그룹웨어(${key}) 메일 ${added}건 새로 가져왔어요${dup ? `(이미 있는 ${dup}건)` : ''}${skipped ? `, 지원 메일이 아니어서 건너뜀 ${skipped}건` : ''}${failed ? `, 받지 못한 ${failed}건은 다음에 다시 시도` : ''}.` };
+      }
     }
-    await chrome.storage.local.set({ gwSeen: [...seen].slice(-SEEN_CAP) });
-    if (failed && failed === bodies.length) return { level: 'error', text: `그룹웨어 메일 ${failed}건의 내용을 받지 못했어요. 그룹웨어 로그인이 풀렸거나 화면 구조가 바뀌었을 수 있어요. 다음 확인 때 다시 시도해요.` };
-    return { level: failed ? 'warn' : 'ok', text: `그룹웨어(${who}) 메일 ${added}건 새로 가져왔어요${dup ? `(이미 있는 ${dup}건)` : ''}${skipped ? `, 지원 메일이 아니어서 건너뜀 ${skipped}건` : ''}${failed ? `, 받지 못한 ${failed}건은 다음에 다시 시도` : ''}.` };
+    await record(res);
+    return res;
   } finally {
     chrome.tabs.remove(tab.id).catch(() => {});
   }
+}
+
+// 등록된 모든 계정을 차례로 읽는다. 반환: null(이번에는 확인하지 않음) | { text, level }
+async function scanGroupware(cfg, force) {
+  const accts = (await getAccounts()).filter((a) => a.on !== false && a.pw);
+  if (!accts.length) return null;
+  const results = [];
+  const active = [];
+  for (const a of accts) {
+    if (a.blocked) results.push({ level: 'error', text: `그룹웨어(${acctKey(a.id)})는 비밀번호 확인이 필요해요. 계정이 잠기지 않도록 자동으로 다시 시도하지 않아요. 수신함 화면에서 다시 저장해 주세요.` });
+    else active.push(a);
+  }
+  const last = (await chrome.storage.local.get('gwLastScan')).gwLastScan || 0;
+  if (!force && Date.now() - last < GW_EVERY_MS) {   // 아직 확인할 때가 아니면, 막힌 계정이 있을 때만 그 안내를 계속 보여 준다
+    return results.length ? { level: 'error', text: results.map((r) => r.text).join(' ') } : null;
+  }
+  await chrome.storage.local.set({ gwLastScan: Date.now() });
+  const multi = active.length >= 2;
+  const domain = cfg.gwCookieDomain || 'willvi.co.kr';
+  let snap = null;
+  if (multi) {   // 여러 계정을 읽는 동안 내 그룹웨어 로그인(쿠키)을 잠깐 바꾸므로, 먼저 보관하고 끝나면 되돌린다
+    snap = await chrome.cookies.getAll({ domain });
+    await chrome.storage.session.set({ gwSwap: { domain, snap } });
+  }
+  try {
+    for (const a of active) {
+      // 계정이 둘 이상이거나 새로 저장한 계정이면 이 크롬의 그룹웨어 로그인을 지우고 그 계정으로 로그인한다(엉뚱한 메일함 방지)
+      if (multi || a.force) await clearGwCookies(domain);
+      if (a.force) await updateAccount(acctKey(a.id), (x) => { x.force = false; });
+      try { results.push(await scanAccount(cfg, a)); } catch (e) { results.push({ level: 'error', text: `그룹웨어(${acctKey(a.id)})를 가져오지 못했어요: ${e.message}` }); }
+    }
+  } finally {
+    if (multi) { await restoreGwCookies(domain, snap); await chrome.storage.session.remove('gwSwap'); }
+  }
+  const level = results.reduce((w, r) => worst(w, r.level), 'ok');
+  return { level, text: results.map((r) => r.text).join(' ') };
 }
 
 async function runContacts(cfg) {
@@ -354,7 +454,7 @@ async function run(force = false) {
   running = true;
   runningSince = Date.now();
   try {
-    const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry', 'gwId', 'gwPw', 'gwOn', 'gwMailUrl', 'gwBlocked', 'gwForceLogin', 'gwCookieDomain']);
+    const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry', 'gwMailUrl', 'gwCookieDomain']);
     if (!cfg.agentToken) { await setStatus('연결 키가 없어요. 문자 관리 시스템의 수신함을 한 번 열면 자동으로 연결돼요.', 'error'); return; }
     cfg.serverUrl = (cfg.serverUrl || 'https://interview.bigbears.me').replace(/\/+$/, '');
     const parts = [];
@@ -373,8 +473,15 @@ async function run(force = false) {
 // ---- 수신함 화면과의 연결(bridge.js) ----
 // 화면에서 보낸 그룹웨어 계정·연결 키를 이 PC의 확장 저장소에만 넣는다. 비밀번호는 화면으로 돌려주지 않는다.
 async function bridgeState() {
-  const s = await chrome.storage.local.get(['agentToken', 'gwId', 'gwPw', 'gwOn', 'lastStatus', 'lastLevel', 'gwBlocked']);
-  return { hasKey: !!s.agentToken, gwId: s.gwId || '', hasPw: !!s.gwPw, blocked: !!s.gwBlocked, gwOn: s.gwOn !== false && !!s.gwId, lastStatus: s.lastStatus || '', lastLevel: s.lastLevel || 'info', version: chrome.runtime.getManifest().version };
+  const s = await chrome.storage.local.get(['agentToken', 'lastStatus', 'lastLevel']);
+  const accts = await getAccounts();
+  const first = accts[0];
+  return {
+    hasKey: !!s.agentToken,
+    accounts: accts.map((x) => ({ id: x.id, on: x.on !== false, blocked: !!x.blocked, hasPw: !!x.pw, last: x.last || null })),
+    gwId: first ? first.id : '', hasPw: first ? !!first.pw : false, blocked: accts.some((x) => x.blocked), gwOn: accts.some((x) => x.on !== false),
+    lastStatus: s.lastStatus || '', lastLevel: s.lastLevel || 'info', version: chrome.runtime.getManifest().version
+  };
 }
 async function senderAllowed(sender) {
   try {
