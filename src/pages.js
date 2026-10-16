@@ -4,6 +4,7 @@ import { all, first } from './d1.js';
 import { esc, fmtTime, icon } from './views.js';
 import { OUTCOMES } from './reminders.js';
 import { outcomeSection } from './outcome-view.js';
+import { monthStats, renderSavingsCard } from './savings.js';
 import { phoneWaitBadge, colHead, colCount, fmtPhone, fmtWhen, badge, messageBadge, responseBar, pageHeader, tableWrap, stat, emptyState } from './ui.js';
 
 const DAY = 86400000;
@@ -145,6 +146,8 @@ export async function renderHome(db, user, deps) {
        FROM campaigns k WHERE k.department_id IN (${dph}) ORDER BY k.id DESC LIMIT 3`, ...depIds);
   }
 
+  const savings = renderSavingsCard(await monthStats(db, depIds));
+
   // 사업장·발송일별 현황 (최근 30일)
   let board = [];
   if (depIds.length) {
@@ -182,6 +185,8 @@ export async function renderHome(db, user, deps) {
       ${stat({ value: scheduled, label: '예약 대기', href: '/messages?dir=scheduled' })}
       ${stat({ value: review, label: '확인이 필요한 답장', tone: review ? 'review' : '', href: '/campaigns' })}
     </div>
+
+    ${savings}
 
     <section class="section">
       <div class="shead"><h2>면접 안내 현황</h2><span class="muted">최근 30일 · 사업장·보낸 날별</span></div>
