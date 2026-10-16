@@ -65,7 +65,7 @@ const mailIn = [];      // /api/agent/mail 로 받아 해석한 결과
 const PAGE = `<!doctype html><meta charset=utf-8><title>수신함</title>
 <div id="extstate" class="notice">확인 중…</div>
 <form id="gwform" data-nolock><input id="gwid"><input id="gwpw" type="password"><button type="submit">내 확장에 저장</button></form>
-<div id="extlast" class="notice" hidden></div><div id="gwok" hidden>저장됨</div><script>${APP_JS}</script><script>${EXT_BRIDGE_JS}</script>`;
+<div id="extlast" class="notice" hidden></div><div id="gwerr" hidden></div><div id="gwok" hidden>저장됨</div><script>${APP_JS}</script><script>${EXT_BRIDGE_JS}</script>`;
 const sys = http.createServer((req, res) => {
   if (req.url === '/applicants/inbox/agent-token.json' && req.method === 'POST') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ token: TOKEN })); }
   if (req.url.startsWith('/applicants/inbox')) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(PAGE); }
@@ -284,6 +284,10 @@ const tWrong = await web.$eval('#extlast', (e) => ({ text: e.textContent, cls: e
 console.log('  화면 결과(틀린 비밀번호):', tWrong.text);
 check(/맞지 않아요/.test(tWrong.text) && /틀린 횟수 \d+\/5/.test(tWrong.text), '틀린 비밀번호를 저장하면 바로 "맞지 않아요"와 틀린 횟수를 알림');
 check(/warn/.test(tWrong.cls), '화면에 경고 색으로 표시');
+const errBox = await web.$eval('#gwerr', (e) => ({ hidden: e.hidden, text: e.textContent }));
+check(!errBox.hidden && /맞지 않아요/.test(errBox.text), '입력칸 바로 아래에도 "맞지 않아요" 오류가 보임');
+check((await web.$eval('#gwpw', (e) => e.value)) === 'wrong-password', '틀렸을 때는 입력한 값을 지우지 않아 고칠 수 있음');
+check((await web.$eval('#gwok', (e) => e.hidden)) === true, '틀렸을 때는 "저장했어요" 성공 안내를 보이지 않음');
 check(gwFlagCalls === flagPre + 1 && gwViews.length === viewsPre, '저장 때 확인 요청은 한 번만, 메일은 읽지 않음');
 check((await sw.evaluate(() => chrome.storage.local.get('gwBlocked'))).gwBlocked === true, '틀리면 자동 재시도를 막음(계정 잠김 방지)');
 // (2) 올바른 비밀번호로 다시 저장
@@ -296,7 +300,8 @@ console.log('  화면 상태(저장 뒤):', t2);
 const stored = await sw.evaluate(() => chrome.storage.local.get(['gwId', 'gwPw', 'gwOn']));
 check(stored.gwId === GW_ID && stored.gwPw === GW_PW && stored.gwOn === true, '그룹웨어 아이디·비밀번호가 확장 저장소에 들어감');
 check(/비밀번호 저장됨/.test(t2) && !t2.includes(GW_PW), '화면에는 저장 여부만 보이고 비밀번호는 보이지 않음');
-check((await web.$eval('#gwpw', (e) => e.value)) === '', '저장 뒤 비밀번호 입력칸은 비워짐');
+check((await web.$eval('#gwpw', (e) => e.value)) === '', '확인에 성공하면 비밀번호 입력칸은 비워짐');
+check((await web.$eval('#gwok', (e) => e.hidden)) === false && (await web.$eval('#gwerr', (e) => e.hidden)) === true, '성공하면 성공 안내만 보이고 오류는 사라짐');
 await sleep(300);
 const btn = await web.$eval('#gwform button', (e) => ({ disabled: e.disabled, text: e.textContent.trim() }));
 check(!btn.disabled && !/처리 중/.test(btn.text), '저장 버튼이 "처리 중…"으로 잠기지 않음(공통 스크립트와 함께 시험)');
