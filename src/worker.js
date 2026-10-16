@@ -463,7 +463,7 @@ async function handle(request, env, ctx) {
 
   if (path === '/people') {
     const deps = await visibleDepartments(db, user);
-    return html(pg('면접 안내 이력', await renderPeople(db, deps, url.searchParams.get('q') || ''), 'applicants'));
+    return html(pg('면접 안내 이력', await renderPeople(db, deps, url.searchParams.get('q') || '', { id: user.id, isSuper: user.role === 'super' }), 'applicants'));
   }
 
   if (path === '/audit' && user.role === 'super') {

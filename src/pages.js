@@ -117,7 +117,7 @@ export async function renderHome(db, user, deps) {
   let recent = [], camps = [], phones = [];
   let noreply7 = 0;
   const unread = await unreadCount(db, user).catch(() => 0);
-  const inboxPending = await pendingInboxCount(db).catch(() => 0);
+  const inboxPending = await pendingInboxCount(db, { id: user.id, isSuper: user.role === 'super' }).catch(() => 0);
 
   if (depIds.length) {
     const dph = idList(depIds);

@@ -12,7 +12,7 @@ const withTimeout = (p, ms, label) => Promise.race([p, new Promise((_, rej) => s
 
 async function setStatus(text) {
   await chrome.storage.local.set({ lastStatus: new Date().toLocaleTimeString('ko-KR') + ' · ' + text });
-  try { await chrome.action.setBadgeText({ text: /로그인|멈췄|키/.test(text) ? '!' : '' }); } catch { /* ignore */ }
+  try { await chrome.action.setBadgeText({ text: /로그인|멈췄|키|안 돼요/.test(text) ? '!' : '' }); } catch { /* ignore */ }
 }
 
 async function api(cfg, path, init = {}) {
@@ -127,28 +127,138 @@ async function processItem(cfg, item) {
   }
 }
 
-async function run() {
+// ---------------- 그룹웨어 메일에서 알바몬 지원 메일 가져오기 ----------------
+// 그룹웨어 아이디·비밀번호는 이 PC 크롬(chrome.storage.local)에만 저장하고, 그룹웨어 로그인 화면에만 입력한다.
+// 문자 관리 시스템으로는 보내지 않는다. 시스템에는 알바몬 지원 메일 본문(표)만 보낸다.
+const GW_MAIL_DEFAULT = 'https://mail.willvi.co.kr/mail/link/emlMail/emlMailMain.do';
+const GW_EVERY_MS = 5 * 60 * 1000;
+const GW_MAX_PER_SCAN = 15;
+const SEEN_CAP = 3000;
+
+async function openTab(url) {
+  const tab = await chrome.tabs.create({ url, active: false });
+  await waitLoaded(tab.id);
+  return tab;
+}
+
+// 그룹웨어 로그인 화면이면 저장된 아이디·비밀번호를 입력한다. 반환: 'ok' | 'login_failed'
+function pageLogin(id, pw) {
+  const idEl = document.querySelector('#cmmLogin_userId');
+  const pwEl = document.querySelector('#cmmLogin_pwd');
+  if (!idEl || !pwEl) return 'nologin';
+  const set = (el, v) => { el.focus(); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); };
+  set(idEl, id); set(pwEl, pw);
+  const btn = document.querySelector('#cmmLogin_login');
+  if (btn) btn.click(); else pwEl.form && pwEl.form.submit();
+  return 'submitted';
+}
+
+// 메일 목록에서 알바몬 발신 메일을 찾는다
+function pageListMails() {
+  const out = [];
+  for (const u of document.querySelectorAll('ul.mail_list')) {
+    const li = u.closest('li');
+    if (!li || !/mailmaster@albamon\.com/.test(li.innerHTML)) continue;
+    const inp = li.querySelector('input[name=key]');
+    const a = li.querySelector('.subject a[data-mailbox-id]');
+    if (inp && a) out.push({ id: inp.value, mb: a.getAttribute('data-mailbox-id') });
+  }
+  return out;
+}
+
+// 메일 본문에서 지원자 표를 찾아 HTML 로 돌려준다
+function pageMailBody() {
+  const els = [...document.querySelectorAll('table,div,td')].filter((e) => {
+    const t = e.innerText || '';
+    return t.includes('공고번호') && t.includes('이력서 보기');
+  });
+  els.sort((x, y) => x.outerHTML.length - y.outerHTML.length);
+  return els[0] ? els[0].outerHTML : '';
+}
+
+async function exec(tabId, func, args = []) {
+  const [r] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
+  return r && r.result;
+}
+
+async function scanGroupware(cfg, force) {
+  if (!cfg.gwId || !cfg.gwPw || cfg.gwOn === false) return '';
+  const last = (await chrome.storage.local.get('gwLastScan')).gwLastScan || 0;
+  if (!force && Date.now() - last < GW_EVERY_MS) return '';
+  const base = cfg.gwMailUrl || GW_MAIL_DEFAULT;
+  await chrome.storage.local.set({ gwLastScan: Date.now() });
+
+  let tab = await openTab(base);
+  try {
+    // 로그인 화면이면 입력한다(최대 2번 시도)
+    for (let i = 0; i < 2; i++) {
+      await sleep(800);
+      const st = await exec(tab.id, pageLogin, [cfg.gwId, cfg.gwPw]).catch(() => 'error');
+      if (st === 'nologin') break;
+      if (i === 1) return '그룹웨어 로그인이 안 돼요. 아이디·비밀번호를 확인해 주세요.';
+      // 로그인 뒤 화면이 바뀔 때까지 기다린다
+      await new Promise((r) => setTimeout(r, 400));
+      await waitLoaded(tab.id);
+      await sleep(1500);
+      await chrome.tabs.update(tab.id, { url: base });
+      await waitLoaded(tab.id);
+    }
+    await sleep(2500);   // 메일 목록은 화면이 열린 뒤에 채워진다
+    const mails = (await exec(tab.id, pageListMails).catch(() => [])) || [];
+    if (!mails.length) return '';
+    const seenArr = (await chrome.storage.local.get('gwSeen')).gwSeen || [];
+    const seen = new Set(seenArr);
+    const todo = mails.filter((m) => !seen.has(m.id)).slice(0, GW_MAX_PER_SCAN);
+    let added = 0, dup = 0, skipped = 0;
+    for (const m of todo) {
+      await setStatus(`그룹웨어 메일 읽는 중… (${added + dup + skipped + 1}/${todo.length})`);
+      await chrome.tabs.update(tab.id, { url: `${base}?mode=view&mailId=${encodeURIComponent(m.id)}&mailboxId=${encodeURIComponent(m.mb)}` });
+      await waitLoaded(tab.id);
+      await sleep(2000);
+      const html = await exec(tab.id, pageMailBody).catch(() => '');
+      if (!html) { skipped++; seen.add(m.id); continue; }
+      const r = await (await api(cfg, '/api/agent/mail', { method: 'POST', body: JSON.stringify({ html }) })).json();
+      seen.add(m.id);
+      if (r.ok) { if (r.duplicate) dup++; else added++; } else skipped++;
+      await sleep(800 + Math.random() * 1200);
+    }
+    await chrome.storage.local.set({ gwSeen: [...seen].slice(-SEEN_CAP) });
+    return todo.length ? `그룹웨어 메일 ${added}건 새로 가져왔어요${dup ? `(이미 있는 ${dup}건)` : ''}.` : '';
+  } finally {
+    chrome.tabs.remove(tab.id).catch(() => {});
+  }
+}
+
+async function runContacts(cfg) {
+  const q = await (await api(cfg, '/api/agent/inbox')).json();
+  const items = (q.items || []).slice(0, MAX_PER_RUN);
+  if (!items.length) return '';
+  let ok = 0, fail = 0, dry = 0;
+  let idx = 0;
+  for (const item of items) {
+    await setStatus(`처리 중… (${++idx}/${items.length})`);
+    const r = await processItem(cfg, item);
+    if (r.stop === 'login') return '알바몬 로그인이 필요해요. 이 크롬에서 알바몬에 로그인해 주세요.';
+    if (r.ok) ok++; else if (r.dry) dry++; else fail++;
+    if (r.stop === 'deduct') return '이용권 확인 창 때문에 멈췄어요. 알바몬 화면을 확인해 주세요.';
+    await sleep(2500 + Math.random() * 3500);
+  }
+  return dry ? `시험 실행: ${dry}건에서 연락처 보기 버튼을 찾았어요.` : `연락처 ${ok}건 채웠어요${fail ? `, ${fail}건 실패` : ''}.`;
+}
+
+async function run(force = false) {
   if (running && Date.now() - runningSince < 5 * 60 * 1000) return;
   running = true;
   runningSince = Date.now();
   try {
-    const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry']);
+    const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry', 'gwId', 'gwPw', 'gwOn', 'gwMailUrl']);
     if (!cfg.agentToken) { await setStatus('연결 키가 없어요. 아이콘을 눌러 키를 넣어 주세요.'); return; }
     cfg.serverUrl = (cfg.serverUrl || 'https://interview.bigbears.me').replace(/\/+$/, '');
-    const q = await (await api(cfg, '/api/agent/inbox')).json();
-    const items = (q.items || []).slice(0, MAX_PER_RUN);
-    if (!items.length) { await setStatus('처리할 요청이 없어요.'); return; }
-    let ok = 0, fail = 0, dry = 0;
-    let idx = 0;
-    for (const item of items) {
-      await setStatus(`처리 중… (${++idx}/${items.length})`);
-      const r = await processItem(cfg, item);
-      if (r.stop === 'login') { await setStatus('알바몬 로그인이 필요해요. 이 크롬에서 알바몬에 로그인해 주세요.'); return; }
-      if (r.ok) ok++; else if (r.dry) dry++; else fail++;
-      if (r.stop === 'deduct') { await setStatus('이용권 확인 창 때문에 멈췄어요. 알바몬 화면을 확인해 주세요.'); return; }
-      await sleep(2500 + Math.random() * 3500);
-    }
-    await setStatus(dry ? `시험 실행: ${dry}건에서 연락처 보기 버튼을 찾았어요.` : `${ok}건 채웠어요${fail ? `, ${fail}건 실패` : ''}.`);
+    const parts = [];
+    try { const g = await scanGroupware(cfg, force); if (g) parts.push(g); } catch (e) { parts.push('그룹웨어 메일을 가져오지 못했어요(' + e.message + ').'); }
+    const c = await runContacts(cfg);
+    if (c) parts.push(c);
+    await setStatus(parts.length ? parts.join(' ') : '새로 처리할 것이 없어요.');
   } catch (e) {
     await setStatus('멈췄어요: ' + e.message);
   } finally {
@@ -158,5 +268,5 @@ async function run() {
 
 chrome.runtime.onInstalled.addListener(() => chrome.alarms.create(ALARM, { periodInMinutes: 1 }));
 chrome.runtime.onStartup.addListener(() => chrome.alarms.create(ALARM, { periodInMinutes: 1 }));
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === ALARM) run(); });
-chrome.runtime.onMessage.addListener((m) => { if (m && m.type === 'run') run(); });
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === ALARM) run(false); });
+chrome.runtime.onMessage.addListener((m) => { if (m && m.type === 'run') run(true); });

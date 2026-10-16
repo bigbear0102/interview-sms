@@ -172,17 +172,25 @@ export function parseAlbamonApply(html) {
 
 // ---------------- 저장 ----------------
 // 반환: { ok, reason?, id?, duplicate? }
-export async function saveParsed(db, p, now = Date.now()) {
+// 이력서 링크는 알바몬(https) 주소만 받는다. 나중에 확장 프로그램이 이 주소를 열기 때문에 다른 곳으로 보내는 링크는 버린다.
+export function safeResumeUrl(u) {
+  try {
+    const x = new URL(String(u || ''));
+    return x.protocol === 'https:' && /(^|\.)albamon\.com$/i.test(x.hostname) ? x.toString() : '';
+  } catch { return ''; }
+}
+
+export async function saveParsed(db, p, now = Date.now(), ownerId = null) {
   const dup = await first(db, `SELECT id FROM applicant_inbox WHERE source=? AND apply_no=?`, p.source, p.applyNo);
   if (dup) return { ok: true, duplicate: true, id: dup.id };
   const clip = (s, n) => String(s || '').slice(0, n);
   // 같은 공고에 이미 정해 둔 원가중심점이 있으면 자동으로 붙인다
   const rule = p.recruitNo ? await first(db, `SELECT cost_center FROM inbox_cost_rules WHERE recruit_no=?`, clip(p.recruitNo, 30)) : null;
   const r = await run(db,
-    `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at, cost_center)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at, cost_center, owner_user_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     p.source, p.applyNo, clip(p.recruitNo, 30), clip(p.company, 100), clip(p.jobTitle, 200), clip(p.name, 50), clip(p.gender, 4),
-    p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), clip(p.resumeUrl, 500), now, rule ? rule.cost_center : '');
+    p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), safeResumeUrl(p.resumeUrl).slice(0, 500), now, rule ? rule.cost_center : '', ownerId);
   return { ok: true, id: Number(r.meta.last_row_id) };
 }
 
@@ -200,14 +208,23 @@ export async function ingestRaw(db, rawBytes, now = Date.now()) {
 }
 
 // 수신함 대기 건수
-export async function pendingInboxCount(db) {
-  const r = await first(db, `SELECT COUNT(*) n FROM applicant_inbox WHERE status='pending'`);
+// viewer: { id, isSuper } — 관리자는 전체, 그 밖에는 내 건과 담당자 없는 공용 건. viewer 가 없으면 전체(내부 용도).
+export function inboxScope(viewer, alias = '') {
+  const c = alias ? alias + '.' : '';
+  if (!viewer || viewer.isSuper) return { sql: '1=1', args: [] };
+  return { sql: `(${c}owner_user_id = ? OR ${c}owner_user_id IS NULL)`, args: [viewer.id] };
+}
+
+export async function pendingInboxCount(db, viewer = null) {
+  const sc = inboxScope(viewer);
+  const r = await first(db, `SELECT COUNT(*) n FROM applicant_inbox WHERE status='pending' AND ${sc.sql}`, ...sc.args);
   return r ? r.n : 0;
 }
 
-export async function listInbox(db, status = 'pending', limit = 200) {
+export async function listInbox(db, status = 'pending', limit = 200, viewer = null) {
   const where = status === 'done' ? `status IN ('registered','ignored')` : `status='pending'`;
-  return all(db, `SELECT * FROM applicant_inbox WHERE ${where} ORDER BY received_at DESC, id DESC LIMIT ${Number(limit) || 200}`);
+  const sc = inboxScope(viewer);
+  return all(db, `SELECT i.*, (SELECT name FROM users WHERE id=i.owner_user_id) owner_name FROM applicant_inbox i WHERE ${where.replace(/status/g, 'i.status')} AND ${inboxScope(viewer, 'i').sql} ORDER BY received_at DESC, i.id DESC LIMIT ${Number(limit) || 200}`, ...inboxScope(viewer, 'i').args);
 }
 
 // ---------------- 연락처 가져오기 요청 · 에이전트 ----------------
@@ -216,28 +233,36 @@ import { sha256Hex } from './crypto.js';
 const AGENT_KEY = 'agent_token_hash';
 const AUTO_KEY = 'inbox_auto_register';
 
-export async function createAgentToken(db) {
+// userId 가 있으면 그 사람의 키, 없으면 예전 공용 키(담당자 없음)
+export async function createAgentToken(db, userId = null) {
   const token = 'ag_' + hex(crypto.getRandomValues(new Uint8Array(24)));
-  await run(db, `INSERT INTO applicant_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-    AGENT_KEY, await sha256Hex(token));
+  const h = await sha256Hex(token);
+  if (userId == null) {
+    await run(db, `INSERT INTO applicant_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, AGENT_KEY, h);
+  } else {
+    await run(db, `INSERT INTO agent_tokens (user_id, token_hash, created_at) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET token_hash=excluded.token_hash, created_at=excluded.created_at, last_used_at=NULL`, userId, h, Date.now());
+  }
   return token;
 }
 
-export async function hasAgentToken(db) {
+export async function hasAgentToken(db, userId = null) {
+  if (userId != null) return !!(await first(db, `SELECT 1 x FROM agent_tokens WHERE user_id=?`, userId));
   const r = await first(db, `SELECT value FROM applicant_settings WHERE key=?`, AGENT_KEY);
   return !!(r && r.value);
 }
 
+// 맞는 키면 { userId } (예전 공용 키는 userId=null), 아니면 null
 export async function verifyAgentToken(db, token) {
   const t = String(token || '');
-  if (!/^ag_[0-9a-f]{48}$/.test(t)) return false;
-  const r = await first(db, `SELECT value FROM applicant_settings WHERE key=?`, AGENT_KEY);
-  if (!r || !r.value) return false;
+  if (!/^ag_[0-9a-f]{48}$/.test(t)) return null;
   const h = await sha256Hex(t);
-  if (h.length !== r.value.length) return false;
+  const u = await first(db, `SELECT user_id FROM agent_tokens WHERE token_hash=?`, h);
+  if (u) { await run(db, `UPDATE agent_tokens SET last_used_at=? WHERE user_id=?`, Date.now(), u.user_id).catch(() => {}); return { userId: u.user_id }; }
+  const r = await first(db, `SELECT value FROM applicant_settings WHERE key=?`, AGENT_KEY);
+  if (!r || !r.value || h.length !== r.value.length) return null;
   let diff = 0;
   for (let i = 0; i < h.length; i++) diff |= h.charCodeAt(i) ^ r.value.charCodeAt(i);
-  return diff === 0;
+  return diff === 0 ? { userId: null } : null;
 }
 
 export async function getAutoRegister(db) {
@@ -249,9 +274,10 @@ export async function setAutoRegister(db, on) {
 }
 
 // 가져오기 요청: 아직 연락처가 없고 대기 중인 건만. ids 가 없으면 대기 전체. 반환: 요청한 건수
-export async function requestFetch(db, ids = null) {
-  let sql = `UPDATE applicant_inbox SET fetch_state='requested', fetch_note='' WHERE status='pending' AND phone='' AND fetch_state != 'requested'`;
-  const args = [];
+export async function requestFetch(db, ids = null, viewer = null) {
+  const sc = inboxScope(viewer);
+  let sql = `UPDATE applicant_inbox SET fetch_state='requested', fetch_note='' WHERE status='pending' AND phone='' AND fetch_state != 'requested' AND ${sc.sql}`;
+  const args = [...sc.args];
   if (Array.isArray(ids)) {
     if (!ids.length) return 0;
     sql += ` AND id IN (${ids.map(() => '?').join(',')})`;
@@ -262,17 +288,20 @@ export async function requestFetch(db, ids = null) {
 }
 
 // 에이전트가 처리할 요청 목록(한 번에 적게)
-export async function agentQueue(db, limit = 5) {
+// userId: 내 건 + 담당자 없는 공용 건만(예전 공용 키는 전체)
+export async function agentQueue(db, limit = 5, userId = null) {
+  const own = userId == null ? '1=1' : '(owner_user_id = ? OR owner_user_id IS NULL)';
   return all(db,
     `SELECT id, apply_no, name, resume_url FROM applicant_inbox
-      WHERE status='pending' AND fetch_state='requested' AND resume_url != ''
-      ORDER BY id LIMIT ${Math.min(Math.max(Number(limit) || 5, 1), 20)}`);
+      WHERE status='pending' AND fetch_state='requested' AND resume_url != '' AND ${own}
+      ORDER BY id LIMIT ${Math.min(Math.max(Number(limit) || 5, 1), 20)}`, ...(userId == null ? [] : [userId]));
 }
 
 // 에이전트 결과 저장. 반환: { ok, phone? }
-export async function saveFetchResult(db, id, { ok, phone = '', note = '' }, now = Date.now()) {
-  const row = await first(db, `SELECT id, status FROM applicant_inbox WHERE id=?`, id);
+export async function saveFetchResult(db, id, { ok, phone = '', note = '' }, now = Date.now(), userId = null) {
+  const row = await first(db, `SELECT id, status, owner_user_id FROM applicant_inbox WHERE id=?`, id);
   if (!row || row.status !== 'pending') return { ok: false, reason: 'gone' };
+  if (userId != null && row.owner_user_id != null && row.owner_user_id !== userId) return { ok: false, reason: 'gone' };
   const p = String(phone || '').replace(/\D/g, '');
   if (ok && /^01[016789]\d{7,8}$/.test(p)) {
     await run(db, `UPDATE applicant_inbox SET phone=?, fetch_state='done', fetch_note='', fetch_at=? WHERE id=?`, p, now, id);

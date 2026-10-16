@@ -678,7 +678,7 @@ export async function renderApplicantSheet(db, opts = {}) {
 
   const notices = [];
   const suggestions = link && link.suggest ? await noshowSuggestions(db, link.threshold) : [];
-  const inboxPending = await pendingInboxCount(db).catch(() => 0);
+  const inboxPending = await pendingInboxCount(db, opts.viewer || null).catch(() => 0);
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
   if (flash === 'undone') {
     notices.push(`<div class="notice ok">${icon('check')}<div><b>업로드를 되돌렸어요.</b> ${Number(extra.removed) || 0}명을 삭제했어요.${Number(extra.kept) ? ` ${Number(extra.kept)}명은 업로드 뒤에 정보가 바뀌어서 남겨 두었어요.` : ''}</div></div>`);
@@ -910,7 +910,7 @@ export async function handleApplicants(c) {
     if (lookup) await audit(db, user, 'applicant.lookup', '');
     const link = await getLinkSettings(db);
     return page('지원자 관리', await renderApplicantSheet(db, {
-      params, back: listUrl(params), lookup, link, isSuper: user.role === 'super',
+      viewer: { id: user.id, isSuper: user.role === 'super' }, params, back: listUrl(params), lookup, link, isSuper: user.role === 'super',
       flash: sp.get('ok') || '', err: sp.get('err') || '',
       extra: { removed: sp.get('n'), kept: sp.get('k') }
     }));
@@ -944,13 +944,13 @@ export async function handleApplicants(c) {
     const back = safeBack(f.back) || '/applicants';
     const params = paramsFrom(new URLSearchParams());
     if (parsed.errors.length) {
-      return html(pg('지원자 관리', await renderApplicantSheet(db, { params, back,
+      return html(pg('지원자 관리', await renderApplicantSheet(db, { viewer: { id: user.id, isSuper: user.role === 'super' }, params, back,
         bulk: { created: 0, added: 0, duplicates: 0, rejected: [], warnings: [], blacklisted: 0, blSkipped: 0, error: parsed.errors[0] } }), 'applicants'), 400);
     }
     const result = await bulkSave(db, parsed.rows, user.id);
     await audit(db, user, 'applicant.bulk',
       `created=${result.created} added=${result.added} duplicates=${result.duplicates} blacklisted=${result.blacklisted} rejected=${result.rejected.length}`);
-    return page('지원자 관리', await renderApplicantSheet(db, { params, back, bulk: result }));
+    return page('지원자 관리', await renderApplicantSheet(db, { viewer: { id: user.id, isSuper: user.role === 'super' }, params, back, bulk: result }));
   }
   // 여러 명 한꺼번에 처리 (선택한 사람 번호 목록 ids 를 여러 개 받는다)
   if (path === '/applicants/bulk-action' && method === 'POST') {

@@ -6,7 +6,7 @@ import { esc, icon, fmtTime } from './views.js';
 import { fmtPhone, pageHeader, tableWrap, emptyState } from './ui.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import {
-  ensureIntakeToken, intakeAddress, intakeDomain, listInbox, pendingInboxCount,
+  inboxScope, ensureIntakeToken, intakeAddress, intakeDomain, listInbox, pendingInboxCount,
   requestFetch, createAgentToken, hasAgentToken, getAutoRegister, setAutoRegister
 } from './mail-intake.js';
 
@@ -38,11 +38,12 @@ const STATUS_BADGE = {
   ignored: '<span class="badge mute">무시</span>'
 };
 
-export async function renderInbox(db, env, { status = 'pending', isSuper = false, flash = '', err = '', origin = '', agentToken = '', fetched = 0 } = {}) {
-  const pending = await pendingInboxCount(db);
-  const rows = await listInbox(db, status === 'done' ? 'done' : 'pending');
+export async function renderInbox(db, env, { status = 'pending', isSuper = false, flash = '', err = '', origin = '', agentToken = '', fetched = 0, viewer = null } = {}) {
+  const pending = await pendingInboxCount(db, viewer);
+  const rows = await listInbox(db, status === 'done' ? 'done' : 'pending', 200, viewer);
   const ccTotal = (await first(db, `SELECT COUNT(*) n FROM cost_centers`)).n;
-  const doneCount = (await first(db, `SELECT COUNT(*) n FROM applicant_inbox WHERE status != 'pending'`)).n;
+  const dsc = inboxScope(viewer);
+  const doneCount = (await first(db, `SELECT COUNT(*) n FROM applicant_inbox WHERE status != 'pending' AND ${dsc.sql}`, ...dsc.args)).n;
   const notices = [];
   const FLASH = { fetch: '연락처 가져오기를 요청했어요. 에이전트가 켜져 있으면 곧 채워져요.', fetchall: `대기 중인 ${Number(fetched) || 0}건의 연락처 가져오기를 요청했어요.`, auto: '자동 등록 설정을 저장했어요.', registered: '지원자로 등록했어요.', cost: '원가중심점을 저장했어요.', ignored: '무시로 처리했어요.', restored: '다시 대기로 돌렸어요.', token: '수신 주소를 새로 만들었어요. 메일 전달 설정도 새 주소로 바꿔 주세요.' };
   const ERR = { invalid: '이름과 휴대폰 번호를 확인해 주세요. (예: 010-1234-5678)', gone: '이미 처리되었거나 찾을 수 없는 건이에요.', cclist: '원가중심점 목록에 없는 이름이에요. 목록에서 골라 주세요. (없으면 "원가중심점 목록"에서 추가해 주세요)' };
@@ -68,9 +69,9 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
       </div></details>`;
   }
 
-  const tokenSet = await hasAgentToken(db);
+  const tokenSet = await hasAgentToken(db, viewer ? viewer.id : null);
   const autoOn = isSuper ? await getAutoRegister(db) : false;
-  const agentCard = `<details class="card" style="margin-bottom:16px"${agentToken ? ' open' : ''}><summary><b>연락처 자동 가져오기 에이전트</b> <span class="muted">${tokenSet ? '연결 키 있음' : '연결 키 없음'} · 담당자 PC에서 알바몬에 로그인해 연락처를 읽어 와요</span></summary>
+  const agentCard = `<details class="card" style="margin-bottom:16px"${agentToken ? ' open' : ''}><summary><b>내 확장 프로그램 (메일 가져오기·연락처 자동 가져오기)</b> <span class="muted">${tokenSet ? '내 연결 키 있음' : '내 연결 키 없음'} · 내 PC의 크롬에서 내 계정으로 가져와요</span></summary>
     <div style="margin-top:12px" class="stack">
       <p class="muted" style="font-size:14px">알바몬 이력서의 연락처는 <b>"클릭해야 보여요"</b>. 그래서 담당자 PC의 크롬(이미 알바몬에 로그인된 상태)이 연락처 보기를 눌러 읽어 와요.
         <b>알바몬 아이디·비밀번호는 이 시스템이 받지도 저장하지도 않아요.</b> 여기서 <b>"연락처 가져오기"를 누른 건만</b> 처리해요.</p>
@@ -80,16 +81,17 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
       <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
         <li>아래 <b>확장 프로그램 내려받기</b>를 눌러 파일을 받고, 압축을 풀어요.</li>
         <li>크롬 주소창에 <code>chrome://extensions</code> 를 입력 → 오른쪽 위 <b>개발자 모드</b> 켜기 → <b>압축해제된 확장 프로그램을 로드합니다</b> → 풀어 둔 <code>albamon-extension</code> 폴더 선택. (한 번만 하면 돼요)</li>
-        <li>그 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 두고, 확장 아이콘에 위의 <b>연결 키</b>를 한 번 넣어요.</li>
+        <li>확장 아이콘을 눌러 <b>내 연결 키</b>(아래 "내 연결 키 만들기")와 <b>내 그룹웨어 아이디·비밀번호</b>를 넣어요. 그룹웨어 아이디·비밀번호는 <b>내 PC 크롬에만 저장</b>되고 이 시스템으로는 보내지 않아요.</li>
+        <li>그 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 둬요.</li>
+        <li>확장이 <b>내 그룹웨어 메일함</b>에서 알바몬 지원 메일을 찾아 <b>내 수신함</b>에 모아 줘요. (메일을 열기 때문에 그룹웨어에서 <b>읽음</b>으로 바뀌어요)</li>
         <li>수신함에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 알아서 연락처를 채워 줘요. 채워진 뒤 <b>등록</b>만 누르면 돼요.</li>
       </ol>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <a class="btn small" href="/applicants/inbox/extension.zip" download>확장 프로그램 내려받기 (v${esc(EXTENSION_VERSION)})</a>
-        ${isSuper ? `<form method="post" action="/applicants/inbox/agent-token" class="inline" data-confirm="${tokenSet ? '연결 키를 새로 만들까요? 이전 키로 실행 중인 에이전트는 멈춰요.' : '에이전트 연결 키를 만들까요?'}"><button class="btn secondary small">${tokenSet ? '연결 키 다시 만들기' : '연결 키 만들기'}</button></form>
-        <form method="post" action="/applicants/inbox/auto" class="inline"><input type="hidden" name="on" value="${autoOn ? 0 : 1}">
+        <form method="post" action="/applicants/inbox/agent-token" class="inline" data-confirm="${tokenSet ? '내 연결 키를 새로 만들까요? 이전 키로 연결된 내 확장 프로그램은 멈춰요.' : '내 연결 키를 만들까요?'}"><button class="btn secondary small">${tokenSet ? '내 연결 키 다시 만들기' : '내 연결 키 만들기'}</button></form>
+        ${isSuper ? `<form method="post" action="/applicants/inbox/auto" class="inline"><input type="hidden" name="on" value="${autoOn ? 0 : 1}">
           <button class="btn secondary small">연락처를 가져오면 바로 지원자로 등록: <b>${autoOn ? '켜짐 (끄기)' : '꺼짐 (켜기)'}</b></button></form>` : ''}
       </div>
-      ${isSuper ? '' : '<p class="muted" style="font-size:14px">연결 키는 관리자에게 받으세요. (키 만들기·자동 등록 설정은 관리자만 할 수 있어요)</p>'}
     </div></details>`;
 
   const tool = `<details class="card" style="margin-bottom:16px"><summary><b>이력서에서 연락처 가져오기 도구</b> <span class="muted">처음 한 번만 설치해요</span></summary>
@@ -110,7 +112,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
 
   const table = rows.length ? tableWrap(`<table class="cards sheet"><thead><tr><th>지원자</th><th>공고</th><th>원가중심점</th><th>정보</th><th>받은 시각</th><th>처리</th></tr></thead><tbody>
     ${rows.map((r) => `<tr>
-      <td><b>${esc(r.name)}</b>${r.gender || r.age ? ` <small class="muted">${esc([r.gender, r.age ? r.age + '세' : ''].filter(Boolean).join(', '))}</small>` : ''}</td>
+      <td><b>${esc(r.name)}</b>${isSuper && r.owner_name ? ` <small class="muted">(${esc(r.owner_name)} 담당)</small>` : ''}${r.gender || r.age ? ` <small class="muted">${esc([r.gender, r.age ? r.age + '세' : ''].filter(Boolean).join(', '))}</small>` : ''}</td>
       <td data-label="공고">${esc(r.company || '-')}<br><small class="muted">${esc(r.job_title)}</small></td>
       <td data-label="원가중심점">${r.status === 'pending'
     ? `<form method="post" action="/applicants/inbox/${r.id}/cost" style="display:grid;gap:6px;min-width:200px">
@@ -171,8 +173,8 @@ export async function renderCostCenters(db, q, isSuper, ok) {
     ${isSuper ? '' : '<p class="muted">이름 삭제는 관리자만 할 수 있어요.</p>'}`;
 }
 
-export async function renderCapture(db) {
-  const items = await listInbox(db, 'pending', 300);
+export async function renderCapture(db, viewer = null) {
+  const items = await listInbox(db, 'pending', 300, viewer);
   const data = items.map((r) => ({ id: r.id, name: r.name, apply_no: r.apply_no, company: r.company, job: r.job_title }));
   return `${pageHeader({ title: '이력서에서 가져온 연락처', back: { href: '/applicants/inbox', label: '메일 수신함' } })}
     <div class="card stack" style="max-width:640px" id="capture">
@@ -252,11 +254,12 @@ export async function handleInbox(c, deps) {
   const { url, path, method, db, user, env, readForm, html, redirect, pg, audit, request } = c;
   if (!path.startsWith('/applicants/inbox')) return null;
   const page = (title, body, status = 200) => html(pg(title, body, 'applicants'), status);
+  const viewer = { id: user.id, isSuper: user.role === 'super' };
 
   if (path === '/applicants/inbox' && method === 'GET') {
     const sp = url.searchParams;
     return page('메일 수신함', await renderInbox(db, env, {
-      status: sp.get('status') === 'done' ? 'done' : 'pending', isSuper: user.role === 'super',
+      status: sp.get('status') === 'done' ? 'done' : 'pending', isSuper: user.role === 'super', viewer,
       flash: sp.get('ok') || '', err: sp.get('err') || '', origin: new URL(request.url).origin, fetched: sp.get('n') || 0
     }));
   }
@@ -295,7 +298,7 @@ export async function handleInbox(c, deps) {
     return redirect('/applicants/inbox/cost-centers?ok=ccdel');
   }
   if (path === '/applicants/inbox/capture' && method === 'GET') {
-    return page('이력서에서 가져온 연락처', await renderCapture(db));
+    return page('이력서에서 가져온 연락처', await renderCapture(db, viewer));
   }
   if (path === '/applicants/inbox/token' && method === 'POST') {
     if (user.role !== 'super') return html(pg('접근 불가', '<p>관리자만 할 수 있어요.</p>', 'applicants'), 403);
@@ -305,7 +308,7 @@ export async function handleInbox(c, deps) {
   }
 
   if (path === '/applicants/inbox/fetch-all' && method === 'POST') {
-    const n = await requestFetch(db, null);
+    const n = await requestFetch(db, null, viewer);
     await audit(db, user, 'applicant.inbox_fetch_all', `n=${n}`);
     return redirect(`/applicants/inbox?ok=fetchall&n=${n}`);
   }
@@ -317,10 +320,9 @@ export async function handleInbox(c, deps) {
     return redirect('/applicants/inbox?ok=auto');
   }
   if (path === '/applicants/inbox/agent-token' && method === 'POST') {
-    if (user.role !== 'super') return html(pg('접근 불가', '<p>관리자만 할 수 있어요.</p>', 'applicants'), 403);
-    const token = await createAgentToken(db);
+    const token = await createAgentToken(db, user.id);
     await audit(db, user, 'applicant.agent_token', '');
-    return page('메일 수신함', await renderInbox(db, env, { isSuper: true, origin: new URL(request.url).origin, agentToken: token }));
+    return page('메일 수신함', await renderInbox(db, env, { isSuper: viewer.isSuper, viewer, origin: new URL(request.url).origin, agentToken: token }));
   }
 
   const m = path.match(/^\/applicants\/inbox\/(\d+)\/(register|ignore|restore|fetch|cost)$/);
@@ -328,9 +330,9 @@ export async function handleInbox(c, deps) {
   const id = Number(m[1]);
   const action = m[2];
   const item = await first(db, `SELECT * FROM applicant_inbox WHERE id=?`, id);
-  if (!item) return redirect('/applicants/inbox?err=gone');
+  if (!item || (!viewer.isSuper && item.owner_user_id != null && item.owner_user_id !== user.id)) return redirect('/applicants/inbox?err=gone');
   if (action === 'fetch') {
-    await requestFetch(db, [id]);
+    await requestFetch(db, [id], viewer);
     await audit(db, user, 'applicant.inbox_fetch', `inbox=${id}`);
     return redirect('/applicants/inbox?ok=fetch');
   }

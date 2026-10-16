@@ -3,6 +3,7 @@
 import http from 'node:http';
 import { createRequire } from 'node:module';
 import { cpSync, readFileSync } from 'node:fs';
+import { parseAlbamonApply } from '../../src/mail-intake.js';
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -57,10 +58,27 @@ const alba = http.createServer((req, res) => {
 });
 
 // ---- 가짜 시스템(에이전트 API) ----
+const sysLog = [];      // 시스템 서버가 받은 모든 요청(주소·머리말·본문)
+const mailIn = [];      // /api/agent/mail 로 받아 해석한 결과
 const sys = http.createServer((req, res) => {
+  let raw = '';
+  req.on('data', (c) => (raw += c));
+  req.on('end', () => sysLog.push(req.method + ' ' + req.url + ' ' + JSON.stringify(req.headers) + ' ' + raw));
   if ((req.headers.authorization || '') !== 'Bearer ' + TOKEN) { res.writeHead(401); return res.end('{}'); }
   const u = new URL(req.url, 'http://x');
   res.setHeader('Content-Type', 'application/json');
+  if (u.pathname === '/api/agent/mail' && req.method === 'POST') {
+    let b = '';
+    req.on('data', (c) => (b += c));
+    req.on('end', () => {
+      const pr = parseAlbamonApply(JSON.parse(b).html);
+      if (!pr || !pr.name) return res.end(JSON.stringify({ ok: false, reason: 'not_albamon' }));
+      const dup = mailIn.some((x) => x.applyNo === pr.applyNo);
+      if (!dup) mailIn.push({ applyNo: pr.applyNo, name: pr.name });
+      res.end(JSON.stringify({ ok: true, duplicate: dup }));
+    });
+    return;
+  }
   if (u.pathname === '/api/agent/inbox') {
     const list = items.filter((i) => pending.has(i.id)).slice(0, 5);
     return res.end(JSON.stringify({ items: list }));
@@ -75,9 +93,60 @@ const sys = http.createServer((req, res) => {
   res.writeHead(404); res.end('{}');
 });
 
+
+// ---- 가짜 그룹웨어 (로그인 화면 + 실제와 같은 모양의 메일 목록 + 메일 보기) ----
+const GW_ID = 'tester', GW_PW = 'Pw!9&zq*test';
+const MBX = 'MBX-TEST-' + Math.random().toString(16).slice(2, 8);   // 사람마다 다른 메일함 번호
+const gwViews = [];   // 열어 본 메일 [{id, mb}]
+const gwBody = (name, apply) => `<table><tr><th><div>공고번호</div></th><td>111222333</td></tr>
+<tr><th><div>근무회사명</div></th><td>㈜테스트-회사</td></tr><tr><th><div>공고제목</div></th><td>[테스트] 현장 직원 모집</td></tr>
+<tr><th><div>이름</div></th><td>${name}(여, 33세)</td></tr><tr><th><div>주소</div></th><td>서울 강서구</td></tr>
+<tr><td><a href="https://www.albamon.com/email-apply-url-route?recruitNo=111222333&amp;applyNo=${apply}">이력서 보기</a></td></tr></table>`;
+const mails = [
+  { id: 'M1', from: '알바몬<mailmaster@albamon.com>', subject: '[알바몬] ㈜테스트 온라인지원자 가나다', body: gwBody('가나다', '700000001') },
+  { id: 'M2', from: '다른회사<hello@other.example>', subject: '광고 메일', body: '<p>광고</p>' },
+  { id: 'M3', from: '알바몬<mailmaster@albamon.com>', subject: '[알바몬] ㈜테스트 온라인지원자 라마바', body: gwBody('라마바', '700000002') }
+];
+const gw = http.createServer((req, res) => {
+  const u = new URL(req.url, 'http://x');
+  const logged = (req.headers.cookie || '').includes('gw=ok');
+  const H = { 'Content-Type': 'text/html; charset=utf-8' };
+  if (u.pathname === '/login' && req.method === 'POST') {
+    let b = '';
+    req.on('data', (c) => (b += c));
+    req.on('end', () => {
+      const p = new URLSearchParams(b);
+      if (p.get('userId') === GW_ID && p.get('pwd') === GW_PW) { res.writeHead(302, { 'Set-Cookie': 'gw=ok; Path=/', Location: '/main' }); res.end(); }
+      else { res.writeHead(200, H); res.end('<meta charset=utf-8><p>로그인 실패</p><form method="post" action="/login"><input id="cmmLogin_userId" name="userId"><input id="cmmLogin_pwd" name="pwd" type="password"><button type="submit" id="cmmLogin_login">로그인</button></form>'); }
+    });
+    return;
+  }
+  if (!logged) {
+    res.writeHead(200, H);
+    return res.end('<meta charset=utf-8><title>로그인</title><form method="post" action="/login"><input id="cmmLogin_userId" name="userId"><input id="cmmLogin_pwd" name="pwd" type="password"><button type="submit" id="cmmLogin_login">로그인</button></form>');
+  }
+  if (u.pathname === '/main') { res.writeHead(200, H); return res.end('<meta charset=utf-8><h1>그룹웨어 메인</h1>'); }
+  if (u.pathname === '/mail/main.do') {
+    res.writeHead(200, H);
+    if (u.searchParams.get('mode') === 'view') {
+      const id = u.searchParams.get('mailId'), mb = u.searchParams.get('mailboxId');
+      gwViews.push({ id, mb });
+      const m = mails.find((x) => x.id === id);
+      return res.end('<meta charset=utf-8><div id="view">' + (m && mb === MBX ? m.body : '<p>메일함이 달라요</p>') + '</div>');
+    }
+    // 목록은 화면이 열린 뒤 조금 있다가 채워진다(실제 그룹웨어처럼)
+    const rows = mails.map((m) => `<li><ul class="mail_list"><li class="checkbox"><input type="checkbox" name="key" value="${m.id}"></li></ul>
+      <div class="from"><span style="display:none">${m.from.replace(/</g, '&lt;')}</span></div>
+      <div class="title"><div class="subject"><a href="javascript:void(0)" id="emlList_key_${m.id}" data-mailbox-id="${MBX}" class="not_read">${m.subject}</a></div></div></li>`).join('');
+    return res.end(`<meta charset=utf-8><ul id="list"></ul><script>setTimeout(function(){document.getElementById('list').innerHTML=${JSON.stringify(rows)};},700);</script>`);
+  }
+  res.writeHead(404); res.end();
+});
+
 const listen = (s) => new Promise((r) => s.listen(0, '127.0.0.1', () => r(s.address().port)));
 const albaPort = await listen(alba);
 const sysPort = await listen(sys);
+const gwPort = await listen(gw);
 items.forEach((i) => { i.resume_url = `http://127.0.0.1:${albaPort}/resume?applyNo=${i.apply_no}`; });
 
 
@@ -97,7 +166,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 await browser.installExtension(dir);
 const wt = await browser.waitForTarget((t) => t.type() === 'service_worker' && t.url().includes('background.js'), { timeout: 20000 });
 const sw = await wt.worker();
-const setCfg = (extra = {}) => sw.evaluate((c) => chrome.storage.local.set(c), { serverUrl: `http://127.0.0.1:${sysPort}`, agentToken: TOKEN, dry: false, ...extra });
+const setCfg = (extra = {}) => sw.evaluate((c) => chrome.storage.local.set(c), { serverUrl: `http://127.0.0.1:${sysPort}`, agentToken: TOKEN, dry: false, gwOn: false, gwId: '', gwPw: '', gwLastScan: 0, gwSeen: [], gwMailUrl: `http://127.0.0.1:${gwPort}/mail/main.do`, ...extra });
 const status = () => sw.evaluate(() => chrome.storage.local.get('lastStatus')).then((r) => r.lastStatus || '');
 const runAndWait = async (ms = 90000) => {
   await sw.evaluate(() => chrome.storage.local.remove('lastStatus'));
@@ -125,6 +194,27 @@ check(byId[2] && byId[2].ok && byId[2].phone === '01055556666', '2번: 이미 �
 check(byId[3] && !byId[3].ok && /이용권|차감|결제/.test(byId[3].note), '3번: 이용권 차감 창이면 누르지 않고 실패 처리');
 check(!byId[4], '4번: 차감 창에서 멈췄으므로 처리하지 않음');
 check(/이용권/.test(s), '상태 문구에 이용권 확인 안내');
+
+
+// ---- 그룹웨어 메일 가져오기 ----
+await setCfg({ gwOn: true, gwId: GW_ID, gwPw: 'wrong-password' });
+s = await runAndWait();
+console.log('  상태(틀린 비밀번호):', s);
+check(/로그인이 안 돼요/.test(s), '그룹웨어 비밀번호가 틀리면 "로그인이 안 돼요"로 알림');
+check(mailIn.length === 0 && gwViews.length === 0, '로그인이 안 되면 메일을 열지 않음');
+
+await setCfg({ gwOn: true, gwId: GW_ID, gwPw: GW_PW });
+s = await runAndWait();
+console.log('  상태(그룹웨어):', s);
+check(mailIn.length === 2 && mailIn.map((x) => x.name).sort().join() === '가나다,라마바', '알바몬 지원 메일 2건만 가져옴(다른 발신 메일은 건너뜀)');
+check(gwViews.length === 2 && gwViews.every((v) => v.mb === MBX), '메일함 번호를 목록의 속성에서 읽어 사용(고정값 아님)');
+check(!gwViews.some((v) => v.id === 'M2'), '알바몬이 아닌 메일은 열지 않음');
+const before = gwViews.length;
+await setCfg({ gwOn: true, gwId: GW_ID, gwPw: GW_PW, gwSeen: (await sw.evaluate(() => chrome.storage.local.get('gwSeen'))).gwSeen });
+await runAndWait();
+check(gwViews.length === before, '이미 가져온 메일은 다시 열지 않음');
+const leaked = sysLog.filter((l) => l.includes(GW_PW) || l.includes(encodeURIComponent(GW_PW)) || l.includes(GW_ID + '"') );
+check(leaked.length === 0, '그룹웨어 비밀번호가 시스템으로 가는 요청에 전혀 없음(' + sysLog.length + '건 검사)');
 
 await browser.close().catch(() => {});
 try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }

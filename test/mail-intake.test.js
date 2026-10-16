@@ -176,7 +176,7 @@ test('수신 주소 다시 만들기는 관리자만, 새 주소가 만들어진
   assert.notEqual(t1, t2);
 });
 
-import { createAgentToken, verifyAgentToken, requestFetch, getAutoRegister } from '../src/mail-intake.js';
+import { createAgentToken, verifyAgentToken, requestFetch, getAutoRegister, saveParsed, safeResumeUrl, hasAgentToken } from '../src/mail-intake.js';
 
 test('에이전트 API: 토큰 인증, 요청 목록, 결과 저장, 자동 등록', async () => {
   const { db, env, call, post } = await setup();
@@ -191,8 +191,8 @@ test('에이전트 API: 토큰 인증, 요청 목록, 결과 저장, 자동 등�
   assert.equal((await api('/api/agent/inbox')).status, 401);
   const token = await createAgentToken(db);
   assert.match(token, /^ag_[0-9a-f]{48}$/);
-  assert.equal(await verifyAgentToken(db, token), true);
-  assert.equal(await verifyAgentToken(db, 'ag_' + '0'.repeat(48)), false);
+  assert.deepEqual(await verifyAgentToken(db, token), { userId: null });   // 예전 공용 키
+  assert.equal(await verifyAgentToken(db, 'ag_' + '0'.repeat(48)), null);
   assert.equal((await api('/api/agent/inbox', {}, 'ag_' + '0'.repeat(48))).status, 401);
 
   // 요청하지 않은 건은 목록에 없다
@@ -303,4 +303,93 @@ test('원가중심점 목록: 붙여넣기로 추가, 찾기, 목록이 있으�
   assert.equal((await post(`/applicants/inbox/${id}/cost`, { cost_center: '아마노코리아(파견)' })).headers.get('location'), '/applicants/inbox?ok=cost');
   const found = await (await call('/applicants/inbox/cost-centers/search?q=' + encodeURIComponent('아마노 현장'))).json();
   assert.deepEqual(found.items, ['아마노코리아(현장HR)']);
+});
+
+test('사람별 연결 키: 내 건만 보이고, 남의 건 결과는 거절, 그룹웨어 메일 본문 저장(중복·링크 검사)', async () => {
+  const { db, env, call, post } = await setup();
+  const mkUser = async (name) => {
+    const u = await db.prepare(`INSERT INTO users (username,pass_hash,role,email_verified_at,name,email) VALUES (?,?,'member',1,?,?)`).bind(name, await hashPassword('x'), name, name + '@willvi.co.kr').run();
+    return Number(u.meta.last_row_id);
+  };
+  const A = await mkUser('에이'), B = await mkUser('비');
+  const tokA = await createAgentToken(db, A);
+  const tokB = await createAgentToken(db, B);
+  assert.deepEqual(await verifyAgentToken(db, tokA), { userId: A });
+  assert.deepEqual(await verifyAgentToken(db, tokB), { userId: B });
+  const api = (path, init = {}, token) => handleRequest(new Request('https://interview.example.test' + path, {
+    ...init, headers: { ...(token ? { authorization: 'Bearer ' + token } : {}), ...(init.headers || {}) }
+  }), env, { waitUntil() {} });
+
+  // 각자 자기 메일함 본문을 보낸다 (알바몬 표 HTML)
+  const send = (tok, html) => api('/api/agent/mail', { method: 'POST', body: JSON.stringify({ html }) }, tok).then((r) => r.json());
+  assert.deepEqual(await send(tokA, bodyHtml('홍길동(여, 32세)', '900000031')), { ok: true, duplicate: false });
+  assert.deepEqual(await send(tokB, bodyHtml('박민수(남, 30세)', '900000032')), { ok: true, duplicate: false });
+  assert.equal((await send(tokA, bodyHtml('홍길동(여, 32세)', '900000031'))).duplicate, true);   // 같은 지원 번호는 한 번만
+  assert.equal((await send(tokA, '<p>알바몬이 아닌 메일</p>')).reason, 'not_albamon');
+  const rows = (await db.prepare(`SELECT name, owner_user_id FROM applicant_inbox ORDER BY id`).all()).results;
+  assert.deepEqual(rows.map((r) => [r.name, r.owner_user_id]), [['홍길동', A], ['박민수', B]]);
+
+  // 이력서 링크가 알바몬 주소가 아니면 버린다(확장 프로그램이 나중에 이 주소를 연다)
+  const evil = bodyHtml('최수아(여, 25세)', '900000033').replace('https://www.albamon.com/email-apply-url-route', 'https://evil.example.com/steal');
+  const r3 = await send(tokA, evil);
+  assert.equal(r3.ok, false);   // 링크가 없는 메일은 지원 메일로 보지 않는다
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicant_inbox`).first()).n, 2);
+
+  // 연락처 가져오기 요청: A 의 키로는 A 건만 보인다
+  await db.prepare(`UPDATE applicant_inbox SET fetch_state='requested'`).run();
+  const listA = await (await api('/api/agent/inbox', {}, tokA)).json();
+  const listB = await (await api('/api/agent/inbox', {}, tokB)).json();
+  assert.deepEqual(listA.items.map((x) => x.name), ['홍길동']);
+  assert.deepEqual(listB.items.map((x) => x.name), ['박민수']);
+  // B 가 A 의 건에 결과를 보내면 거절
+  const idA = listA.items[0].id;
+  const bad = await api(`/api/agent/inbox/${idA}/result`, { method: 'POST', body: JSON.stringify({ ok: true, phone: '010-1111-2222' }) }, tokB);
+  assert.equal(bad.status, 404);
+  assert.equal((await db.prepare(`SELECT phone FROM applicant_inbox WHERE id=?`).bind(idA).first()).phone, '');
+  const good = await api(`/api/agent/inbox/${idA}/result`, { method: 'POST', body: JSON.stringify({ ok: true, phone: '010-1111-2222' }) }, tokA);
+  assert.equal((await good.json()).ok, true);
+
+  // 내가 누구인지
+  const me = await (await api('/api/agent/me', {}, tokA)).json();
+  assert.equal(me.name, '에이');
+  // 용량 제한
+  const big = await api('/api/agent/mail', { method: 'POST', body: JSON.stringify({ html: 'x'.repeat(400001) }) }, tokA);
+  assert.equal(big.status, 413);
+});
+
+test('수신함 화면: 일반 사용자는 내 건+공용 건만, 관리자는 전체(담당자 표시), 누구나 내 연결 키를 만든다', async () => {
+  const { db, env, post } = await setup();   // 관리자 로그인
+  const mk = async (name, role) => {
+    const u = await db.prepare(`INSERT INTO users (username,pass_hash,role,email_verified_at,name,email) VALUES (?,?,?,1,?,?)`).bind(name, await hashPassword('x'), role, name, name + '@willvi.co.kr').run();
+    const id = Number(u.meta.last_row_id);
+    const sid = await createSession(db, id);
+    const call = (p, init = {}) => handleRequest(new Request('https://interview.example.test' + p, { ...init, headers: { cookie: `sid=${sid}`, origin: 'https://interview.example.test', ...(init.headers || {}) } }), env, { waitUntil() {} });
+    return { id, call, post: (p, f) => call(p, { method: 'POST', body: new URLSearchParams(f).toString(), headers: { 'content-type': 'application/x-www-form-urlencoded' } }) };
+  };
+  const a = await mk('에이', 'member'), b = await mk('비', 'member');
+  const save = (name, no, owner) => saveParsed(db, parseAlbamonApply(bodyHtml(name + '(여, 30세)', no)), Date.now(), owner);
+  await save('가나다', '900000041', a.id);
+  await save('라마바', '900000042', b.id);
+  await save('공용사', '900000043', null);
+  const seen = async (u) => visible(await (await u.call('/applicants/inbox')).text());
+  const ta = await seen(a);
+  assert.ok(ta.includes('가나다') && ta.includes('공용사') && !ta.includes('라마바'));
+  const tb = await seen(b);
+  assert.ok(tb.includes('라마바') && tb.includes('공용사') && !tb.includes('가나다'));
+  // 남의 건은 처리할 수 없다
+  const idB = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='라마바'`).first()).id;
+  assert.equal((await a.post(`/applicants/inbox/${idB}/ignore`, {})).headers.get('location'), '/applicants/inbox?err=gone');
+  // 일반 사용자도 내 연결 키를 만든다
+  const html = await (await a.post('/applicants/inbox/agent-token', {})).text();
+  assert.match(html, /ag_[0-9a-f]{48}/);
+  assert.equal(await hasAgentToken(db, a.id), true);
+  assert.equal(await hasAgentToken(db, b.id), false);
+});
+
+test('이력서 링크는 알바몬 https 주소만 저장', () => {
+  assert.equal(safeResumeUrl('https://www.albamon.com/email-apply-url-route?recruitNo=1&applyNo=2'), 'https://www.albamon.com/email-apply-url-route?recruitNo=1&applyNo=2');
+  assert.equal(safeResumeUrl('https://evil.example.com/x'), '');
+  assert.equal(safeResumeUrl('https://www.albamon.com.evil.com/x'), '');
+  assert.equal(safeResumeUrl('http://www.albamon.com/x'), '');
+  assert.equal(safeResumeUrl('javascript:alert(1)'), '');
 });
