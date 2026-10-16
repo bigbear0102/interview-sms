@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dir = join(root, 'tools', 'albamon-extension');
-const names = ['manifest.json', 'background.js', 'popup.html', 'popup.js', 'README.md'];
+const names = ['manifest.json', 'background.js', 'bridge.js', 'popup.html', 'popup.js', 'README.md'];
 const files = {};
 for (const n of names) files[n] = readFileSync(join(dir, n), 'utf8').replace(/\r\n/g, '\n');
 const version = JSON.parse(files['manifest.json']).version;

@@ -2,11 +2,12 @@
 import { first, run, all } from './d1.js';
 import { makeZip } from './zip.js';
 import { EXTENSION_FILES, EXTENSION_VERSION } from './extension-bundle.js';
+import { EXT_BRIDGE_JS } from './ext-bridge-page.js';
 import { esc, icon, fmtTime } from './views.js';
 import { fmtPhone, pageHeader, tableWrap, emptyState } from './ui.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import {
-  inboxScope, ensureIntakeToken, intakeAddress, intakeDomain, listInbox, pendingInboxCount,
+  getUserMailName, setUserMailName, inboxScope, ensureIntakeToken, intakeAddress, intakeDomain, listInbox, pendingInboxCount,
   requestFetch, createAgentToken, hasAgentToken, getAutoRegister, setAutoRegister
 } from './mail-intake.js';
 
@@ -46,22 +47,42 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   const dsc = inboxScope(viewer);
   const doneCount = (await first(db, `SELECT COUNT(*) n FROM applicant_inbox WHERE status != 'pending' AND ${dsc.sql}`, ...dsc.args)).n;
   const notices = [];
-  const FLASH = { fetch: '연락처 가져오기를 요청했어요. 에이전트가 켜져 있으면 곧 채워져요.', fetchall: `대기 중인 ${Number(fetched) || 0}건의 연락처 가져오기를 요청했어요.`, auto: '자동 등록 설정을 저장했어요.', registered: '지원자로 등록했어요.', cost: '원가중심점을 저장했어요.', ignored: '무시로 처리했어요.', restored: '다시 대기로 돌렸어요.', token: '수신 주소를 새로 만들었어요. 메일 전달 설정도 새 주소로 바꿔 주세요.' };
-  const ERR = { invalid: '이름과 휴대폰 번호를 확인해 주세요. (예: 010-1234-5678)', gone: '이미 처리되었거나 찾을 수 없는 건이에요.', cclist: '원가중심점 목록에 없는 이름이에요. 목록에서 골라 주세요. (없으면 "원가중심점 목록"에서 추가해 주세요)' };
+  const FLASH = { fetch: '연락처 가져오기를 요청했어요. 에이전트가 켜져 있으면 곧 채워져요.', fetchall: `대기 중인 ${Number(fetched) || 0}건의 연락처 가져오기를 요청했어요.`, auto: '자동 등록 설정을 저장했어요.', registered: '지원자로 등록했어요.', cost: '원가중심점을 저장했어요.', ignored: '무시로 처리했어요.', restored: '다시 대기로 돌렸어요.', restored2: '다시 대기로 돌렸어요. 이미 등록된 지원자는 지원자 목록에 그대로 있고, 다시 등록해도 중복으로 생기지 않아요.', addr: '내 수신 주소를 바꿨어요. 메일 전달 규칙을 걸어 두셨다면 새 주소로 바꿔 주세요.', token: '수신 주소를 새로 만들었어요. 메일 전달 설정도 새 주소로 바꿔 주세요.' };
+  const ERR = { invalid: '이름과 휴대폰 번호를 확인해 주세요. (예: 010-1234-5678)', gone: '이미 처리되었거나 찾을 수 없는 건이에요.', addr_invalid: '주소 이름은 영문 소문자·숫자·-만 쓸 수 있고 3~30자예요.', addr_taken: '이미 다른 사람이 쓰고 있는 이름이에요. 다른 이름을 써 주세요.', cclist: '원가중심점 목록에 없는 이름이에요. 목록에서 골라 주세요. (없으면 "원가중심점 목록"에서 추가해 주세요)' };
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
   if (ERR[err]) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div>${esc(ERR[err])}</div></div>`);
+
+  // 내 메일 수신 주소(모든 사용자). 이름은 본인이 바꿀 수 있다.
+  let myAddrCard = '';
+  if (viewer) {
+    const myName = await getUserMailName(db, viewer.id);
+    const myAddr = intakeAddress(myName, env);
+    myAddrCard = `<details class="card" style="margin-bottom:16px"${flash === 'addr' || err === 'addr_taken' || err === 'addr_invalid' ? ' open' : ''}><summary><b>내 메일 수신 주소</b> <span class="muted">${esc(myAddr)}</span></summary>
+      <div style="margin-top:12px" class="stack">
+        <div class="copybox"><div class="copylabel">이 주소로 온 알바몬 지원 메일은 <b>내 수신함</b>에 들어와요</div><div class="copyvalue">${esc(myAddr)}</div>
+          <button type="button" class="btn secondary small" data-copy="${esc(myAddr)}">복사</button></div>
+        <form method="post" action="/applicants/inbox/my-address" style="display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));align-items:end">
+          <label style="display:grid;gap:4px"><span style="font-size:13px">주소 이름 바꾸기 <small class="muted">(영문 소문자·숫자·- , 3~30자)</small></span>
+            <input name="name" value="${esc(myName)}" maxlength="30" autocomplete="off" pattern="[a-z0-9][a-z0-9\\-]{2,29}" aria-label="주소 이름"></label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn small">바꾸기</button>
+            <button class="btn secondary small" name="random" value="1" formnovalidate>무작위로 다시 만들기</button></div>
+        </form>
+        <p class="muted" style="font-size:14px;margin:0">내 그룹웨어 메일에서 <b>알바몬 메일을 이 주소로 자동 전달</b>하도록 규칙을 걸어 두면 돼요. 또는 아래 <b>확장 프로그램</b>이 내 그룹웨어 메일함에서 직접 가져와요. 둘 중 편한 방법을 쓰세요.
+          쉽게 짐작되는 이름은 스팸이 올 수 있어요. 알바몬 지원 메일이 아닌 것은 걸러져요.</p>
+      </div></details>`;
+  }
 
   let addressCard = '';
   if (isSuper) {
     const token = await ensureIntakeToken(db);
     const addr = intakeAddress(token, env);
-    addressCard = `<details class="card" style="margin-bottom:16px"><summary><b>메일 수신 주소·설정 방법</b> <span class="muted">관리자만 보여요</span></summary>
+    addressCard = `<details class="card" style="margin-bottom:16px"><summary><b>공용 메일 수신 주소·설정 방법</b> <span class="muted">관리자만 보여요 · 사람별 주소를 쓰려면 한 번 설정이 필요해요</span></summary>
       <div style="margin-top:12px" class="stack">
         <div class="copybox"><div class="copylabel">알바몬 알림 메일을 이 주소로 전달해 주세요</div><div class="copyvalue">${esc(addr)}</div>
           <button type="button" class="btn secondary small" data-copy="${esc(addr)}">복사</button></div>
         <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
           <li>Cloudflare 대시보드 → <b>${esc(intakeDomain(env) || '도메인')}</b> → <b>Email → Email Routing</b>을 켜요.</li>
-          <li><b>Routing rules → Create address</b>로 위 주소를 만들고, 동작을 <b>Send to a Worker</b> → <b>interview-sms</b>로 골라요.</li>
+          <li><b>Routing rules → Catch-all address</b>를 켜고 동작을 <b>Send to a Worker</b> → <b>interview-sms</b>로 골라요. (사람마다 바꾸는 주소를 모두 받으려면 catch-all이 필요해요. 알 수 없는 주소는 시스템이 거절해요.)</li>
           <li>알바몬 알림을 받는 메일함에서 <b>이 주소로 자동 전달</b>(전달 규칙)을 걸어요. 알바몬에서 받는 메일 주소를 이 주소로 직접 바꿔도 돼요.</li>
           <li>알바몬에서 시험 지원을 하나 받아 보면 아래 대기 목록에 나타나요.</li>
         </ol>
@@ -82,18 +103,26 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
       <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
         <li>아래 <b>확장 프로그램 내려받기</b>를 눌러 파일을 받고, 압축을 풀어요.</li>
         <li>크롬 주소창에 <code>chrome://extensions</code> 를 입력 → 오른쪽 위 <b>개발자 모드</b> 켜기 → <b>압축해제된 확장 프로그램을 로드합니다</b> → 풀어 둔 <code>albamon-extension</code> 폴더 선택. (한 번만 하면 돼요)</li>
-        <li>확장 아이콘을 눌러 <b>내 연결 키</b>(아래 "내 연결 키 만들기")와 <b>내 그룹웨어 아이디·비밀번호</b>를 넣어요. 그룹웨어 아이디·비밀번호는 <b>내 PC 크롬에만 저장</b>되고 이 시스템으로는 보내지 않아요.</li>
+        <li>아래 <b>내 연결 키 만들기</b>를 누르면 확장에 자동으로 연결돼요. 이어서 <b>내 그룹웨어 아이디·비밀번호</b>를 아래 칸에 넣고 <b>내 확장에 저장</b>을 눌러요. 비밀번호는 <b>이 PC 크롬의 확장에만 저장</b>되고 이 시스템(서버)으로는 보내지 않아요.</li>
         <li>그 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 둬요.</li>
         <li>확장이 <b>내 그룹웨어 메일함</b>에서 알바몬 지원 메일을 찾아 <b>내 수신함</b>에 모아 줘요. (메일을 열기 때문에 그룹웨어에서 <b>읽음</b>으로 바뀌어요)</li>
         <li>수신함에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 알아서 연락처를 채워 줘요. 채워진 뒤 <b>등록</b>만 누르면 돼요.</li>
       </ol>
+      <div id="extstate" class="notice" role="status">확장 프로그램 확인 중…</div>
+      <form id="gwform" autocomplete="off" style="display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));align-items:end">
+        <label style="display:grid;gap:4px"><span style="font-size:13px">내 그룹웨어 아이디</span><input id="gwid" autocomplete="off" maxlength="60" aria-label="그룹웨어 아이디"></label>
+        <label style="display:grid;gap:4px"><span style="font-size:13px">내 그룹웨어 비밀번호</span><input id="gwpw" type="password" autocomplete="new-password" maxlength="100" aria-label="그룹웨어 비밀번호"></label>
+        <button class="btn small" type="submit">내 확장에 저장</button>
+      </form>
+      <div id="gwok" class="notice ok" hidden>${icon('check')}<div>내 확장에 저장했어요. 이제 5분마다 내 그룹웨어 메일함에서 알바몬 지원 메일을 가져와요.</div></div>
+      ${agentToken ? `<span id="newkey" hidden>${esc(agentToken)}</span>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <a class="btn small" href="/applicants/inbox/extension.zip" download>확장 프로그램 내려받기 (v${esc(EXTENSION_VERSION)})</a>
         <form method="post" action="/applicants/inbox/agent-token" class="inline" data-confirm="${tokenSet ? '내 연결 키를 새로 만들까요? 이전 키로 연결된 내 확장 프로그램은 멈춰요.' : '내 연결 키를 만들까요?'}"><button class="btn secondary small">${tokenSet ? '내 연결 키 다시 만들기' : '내 연결 키 만들기'}</button></form>
         ${isSuper ? `<form method="post" action="/applicants/inbox/auto" class="inline"><input type="hidden" name="on" value="${autoOn ? 0 : 1}">
           <button class="btn secondary small">연락처를 가져오면 바로 지원자로 등록: <b>${autoOn ? '켜짐 (끄기)' : '꺼짐 (켜기)'}</b></button></form>` : ''}
       </div>
-    </div></details>`;
+    </div><script>${EXT_BRIDGE_JS}</script></details>`;
 
   const tool = `<details class="card" style="margin-bottom:16px"><summary><b>이력서에서 연락처 가져오기 도구</b> <span class="muted">처음 한 번만 설치해요</span></summary>
     <div style="margin-top:12px" class="stack">
@@ -148,7 +177,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
     ${peopleTabs('inbox', pending)}
     ${notices.join('')}
     <p style="margin:0 0 12px"><a href="/applicants/inbox/cost-centers">원가중심점 목록 ${ccTotal ? `(${ccTotal}개)` : '(아직 없음)'} 보기·추가</a></p>
-    ${addressCard}${agentCard}${tool}
+    ${myAddrCard}${agentCard}${addressCard}${tool}
     <div class="tabs">${filterTab('pending', '대기', pending)}${filterTab('done', '처리됨', doneCount)}</div>
     ${status === 'pending' && pending ? `<form method="post" action="/applicants/inbox/fetch-all" class="inline" style="margin-bottom:12px" data-confirm="대기 중인 ${pending}건의 연락처를 한꺼번에 가져오도록 요청할까요? 알바몬 이용권이 차감될 수 있어요."><button class="btn secondary small">대기 ${pending}건 모두 연락처 가져오기 요청</button></form>` : ''}
     <div class="card" style="padding:0">${table}</div>
@@ -302,6 +331,13 @@ export async function handleInbox(c, deps) {
   if (path === '/applicants/inbox/capture' && method === 'GET') {
     return page('이력서에서 가져온 연락처', await renderCapture(db, viewer));
   }
+  if (path === '/applicants/inbox/my-address' && method === 'POST') {
+    const f = await readForm(request);
+    const r = await setUserMailName(db, user.id, f.random === '1' ? '' : f.name);
+    if (!r.ok) return redirect(`/applicants/inbox?err=addr_${r.error}`);
+    await audit(db, user, 'applicant.inbox_my_address', '');
+    return redirect('/applicants/inbox?ok=addr');
+  }
   if (path === '/applicants/inbox/token' && method === 'POST') {
     if (user.role !== 'super') return html(pg('접근 불가', '<p>관리자만 할 수 있어요.</p>', 'applicants'), 403);
     await ensureIntakeToken(db, { rotate: true });
@@ -372,9 +408,11 @@ export async function handleInbox(c, deps) {
     await audit(db, user, 'applicant.inbox_ignore', `inbox=${id}`);
     return redirect('/applicants/inbox?ok=ignored');
   }
-  // restore: 무시한 건만 다시 대기로 (이미 지원자로 등록한 건은 되돌리지 않는다)
-  if (item.status === 'ignored') {
-    await run(db, `UPDATE applicant_inbox SET status='pending', handled_by=NULL, handled_at=NULL WHERE id=?`, id);
+  // restore: 무시한 건·등록한 건 모두 다시 대기로 돌린다. 이미 등록된 지원자는 그대로 두고, 다시 등록해도 같은 번호·같은 공고는 중복으로 만들지 않는다.
+  if (item.status === 'ignored' || item.status === 'registered') {
+    await run(db, `UPDATE applicant_inbox SET status='pending', applicant_id=NULL, handled_by=NULL, handled_at=NULL WHERE id=?`, id);
+    await audit(db, user, 'applicant.inbox_restore', `inbox=${id}`);
+    return redirect(item.status === 'registered' ? '/applicants/inbox?ok=restored2' : '/applicants/inbox?ok=restored');
   }
   return redirect('/applicants/inbox?ok=restored');
 }

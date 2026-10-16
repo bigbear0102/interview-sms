@@ -478,3 +478,76 @@ test('마이그레이션 정리 규칙: 예전에 "지원한 곳=근무회사명
   assert.deepEqual(rows[0], { applied_to: '', job: '', recruit_no: '111', posting_title: '[고객사] 직원 모집', company_raw: '㈜우리회사' });
   assert.deepEqual(rows[1], { applied_to: '수동입력곳', job: '수동직무', recruit_no: '', posting_title: '', company_raw: '' });   // 직접 입력한 건은 그대로
 });
+
+import { getUserMailName, setUserMailName, ownerForMailName } from '../src/mail-intake.js';
+
+test('내 메일 수신 주소: 사람마다 따로, 이름 바꾸기(중복·형식 검사), 그 주소로 온 메일은 내 수신함으로', async () => {
+  const { db, env, call, post } = await setup();   // 관리자
+  const mk = async (name) => {
+    const u = await db.prepare(`INSERT INTO users (username,pass_hash,role,email_verified_at,name,email) VALUES (?,?,'member',1,?,?)`).bind(name, await hashPassword('x'), name, name + '@willvi.co.kr').run();
+    const id = Number(u.meta.last_row_id);
+    const sid = await createSession(db, id);
+    const c = (p, init = {}) => handleRequest(new Request('https://interview.example.test' + p, { ...init, headers: { cookie: `sid=${sid}`, origin: 'https://interview.example.test', ...(init.headers || {}) } }), env, { waitUntil() {} });
+    return { id, call: c, post: (p, f) => c(p, { method: 'POST', body: new URLSearchParams(f).toString(), headers: { 'content-type': 'application/x-www-form-urlencoded' } }) };
+  };
+  const a = await mk('에이'), b = await mk('비');
+  // 일반 사용자에게도 내 주소가 보인다
+  const n1 = await getUserMailName(db, a.id);
+  assert.match(n1, /^[0-9a-f]{12}$/);
+  assert.equal(await getUserMailName(db, a.id), n1);   // 그대로 유지
+  let page = await (await a.call('/applicants/inbox')).text();
+  assert.ok(page.includes(`apply-${n1}@bigbears.me`) || page.includes(`apply-${n1}@`));
+  assert.ok(visible(page).includes('내 메일 수신 주소'));
+  // 이름 바꾸기
+  let r = await a.post('/applicants/inbox/my-address', { name: 'Hong-Gildong' });
+  assert.equal(r.headers.get('location'), '/applicants/inbox?ok=addr');
+  assert.equal(await getUserMailName(db, a.id), 'hong-gildong');   // 소문자로
+  assert.equal((await b.post('/applicants/inbox/my-address', { name: 'hong-gildong' })).headers.get('location'), '/applicants/inbox?err=addr_taken');
+  for (const bad of ['ab', '한글이름', 'has space', '-start', 'x'.repeat(31)]) {
+    assert.equal((await setUserMailName(db, b.id, bad)).error, 'invalid', bad);
+  }
+  // 무작위로 다시 만들기
+  r = await a.post('/applicants/inbox/my-address', { random: '1', name: 'whatever' });
+  assert.equal(r.headers.get('location'), '/applicants/inbox?ok=addr');
+  assert.match(await getUserMailName(db, a.id), /^[0-9a-f]{12}$/);
+  await a.post('/applicants/inbox/my-address', { name: 'hong-gildong' });
+  assert.equal(await ownerForMailName(db, 'HONG-GILDONG'), a.id);
+
+  // 그 주소로 온 메일 → A 의 수신함(owner = A), 모르는 주소는 거절
+  const mkMsg = (to, raw) => { const out = { rejected: '' }; return { to, rawSize: raw.length, raw: new Response(raw).body, setReject(w) { out.rejected = w; }, out }; };
+  const raw = new Uint8Array(mailQP(bodyHtml('김영희(여, 28세)', '900000071')));
+  const good = mkMsg('apply-hong-gildong@bigbears.me', raw);
+  assert.equal((await handleEmail(good, env)).ok, true);
+  assert.equal(good.out.rejected, '');
+  const row = await db.prepare(`SELECT owner_user_id FROM applicant_inbox WHERE apply_no='900000071'`).first();
+  assert.equal(row.owner_user_id, a.id);
+  const bad = mkMsg('apply-nobody-here@bigbears.me', raw);
+  await handleEmail(bad, env);
+  assert.equal(bad.out.rejected, 'Address not found');
+  // B 에게는 A 의 메일이 보이지 않는다
+  assert.ok(!visible(await (await b.call('/applicants/inbox')).text()).includes('김영희'));
+});
+
+test('처리됨 → 다시 대기로: 무시한 건도, 등록한 건도 돌아오고 안내가 나온다(중복 등록 없음)', async () => {
+  const { db, call, post } = await setup();
+  await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('홍길동(여, 32세)', '900000081'))), Date.now());
+  await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('박민수(남, 30세)', '900000082'))), Date.now());
+  const ida = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='홍길동'`).first()).id;
+  const idb = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='박민수'`).first()).id;
+  await post(`/applicants/inbox/${ida}/register`, { name: '홍길동', phone: '010-3333-0001' });
+  await post(`/applicants/inbox/${idb}/ignore`, {});
+  assert.equal(await pendingInboxCount(db), 0);
+  // 등록한 건 되돌리기 → 대기로 돌아오고 안내가 나온다
+  let r = await post(`/applicants/inbox/${ida}/restore`, {});
+  assert.equal(r.headers.get('location'), '/applicants/inbox?ok=restored2');
+  assert.equal(await pendingInboxCount(db), 1);
+  assert.ok(visible(await (await call('/applicants/inbox?ok=restored2')).text()).includes('다시 대기로 돌렸어요'));
+  // 무시한 건 되돌리기
+  r = await post(`/applicants/inbox/${idb}/restore`, {});
+  assert.equal(r.headers.get('location'), '/applicants/inbox?ok=restored');
+  assert.equal(await pendingInboxCount(db), 2);
+  // 다시 등록해도 지원자·지원 건이 중복으로 생기지 않는다
+  await post(`/applicants/inbox/${ida}/register`, { name: '홍길동', phone: '010-3333-0001' });
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicants WHERE phone='01033330001'`).first()).n, 1);
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicant_applications WHERE applicant_id=(SELECT id FROM applicants WHERE phone='01033330001')`).first()).n, 1);
+});

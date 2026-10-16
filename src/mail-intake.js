@@ -34,6 +34,35 @@ export function intakeDomain(env) {
 
 export const intakeAddress = (token, env) => `apply-${token}@${intakeDomain(env)}`;
 
+// ---------------- 사람별 수신 주소 ----------------
+export const MAIL_NAME_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
+
+export async function getUserMailName(db, userId) {
+  let r = await first(db, `SELECT name FROM user_mail_addr WHERE user_id=?`, userId);
+  if (!r) {
+    await run(db, `INSERT OR IGNORE INTO user_mail_addr (user_id, name, updated_at) VALUES (?,?,?)`, userId, hex(crypto.getRandomValues(new Uint8Array(6))), Date.now());
+    r = await first(db, `SELECT name FROM user_mail_addr WHERE user_id=?`, userId);
+  }
+  return r.name;
+}
+
+// name 이 비어 있으면 무작위로 다시 만든다. 반환: { ok, name } | { ok:false, error:'invalid'|'taken' }
+export async function setUserMailName(db, userId, raw) {
+  const typed = String(raw || '').trim().toLowerCase();
+  const name = typed || hex(crypto.getRandomValues(new Uint8Array(6)));
+  if (!MAIL_NAME_RE.test(name)) return { ok: false, error: 'invalid' };
+  if (name === (await getIntakeToken(db))) return { ok: false, error: 'taken' };
+  const other = await first(db, `SELECT user_id FROM user_mail_addr WHERE name=?`, name);
+  if (other && other.user_id !== userId) return { ok: false, error: 'taken' };
+  await run(db, `INSERT INTO user_mail_addr (user_id, name, updated_at) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at`, userId, name, Date.now());
+  return { ok: true, name };
+}
+
+export async function ownerForMailName(db, name) {
+  const r = await first(db, `SELECT user_id FROM user_mail_addr WHERE name=?`, String(name || '').toLowerCase());
+  return r ? r.user_id : null;
+}
+
 // ---------------- MIME 해석 (의존성 없는 최소 구현) ----------------
 function bytesToBinary(u8) {
   let s = '';
@@ -195,7 +224,7 @@ export async function saveParsed(db, p, now = Date.now(), ownerId = null) {
 }
 
 // 이메일 Worker 진입점: 반환값은 처리 결과(테스트용). 예외를 던지지 않는다.
-export async function ingestRaw(db, rawBytes, now = Date.now()) {
+export async function ingestRaw(db, rawBytes, now = Date.now(), ownerId = null) {
   if (!rawBytes || rawBytes.length === 0) return { ok: false, reason: 'empty' };
   if (rawBytes.length > MAX_MAIL_BYTES) return { ok: false, reason: 'too_large' };
   let parsed;
@@ -204,7 +233,7 @@ export async function ingestRaw(db, rawBytes, now = Date.now()) {
   const p = parseAlbamonApply(html);
   if (!p) return { ok: false, reason: 'not_albamon' };
   if (!p.name) return { ok: false, reason: 'no_name' };
-  return saveParsed(db, p, now);
+  return saveParsed(db, p, now, ownerId);
 }
 
 // 수신함 대기 건수

@@ -266,6 +266,39 @@ async function run(force = false) {
   }
 }
 
+// ---- 수신함 화면과의 연결(bridge.js) ----
+// 화면에서 보낸 그룹웨어 계정·연결 키를 이 PC의 확장 저장소에만 넣는다. 비밀번호는 화면으로 돌려주지 않는다.
+async function bridgeState() {
+  const s = await chrome.storage.local.get(['agentToken', 'gwId', 'gwPw', 'gwOn', 'lastStatus']);
+  return { hasKey: !!s.agentToken, gwId: s.gwId || '', hasPw: !!s.gwPw, gwOn: s.gwOn !== false && !!s.gwId, lastStatus: s.lastStatus || '', version: chrome.runtime.getManifest().version };
+}
+async function senderAllowed(sender) {
+  try {
+    const o = new URL(sender.url || sender.tab?.url || '').origin;
+    const cfg = await chrome.storage.local.get('serverUrl');
+    const mine = cfg.serverUrl ? new URL(cfg.serverUrl).origin : 'https://interview.bigbears.me';
+    return o === mine || o === 'https://interview.bigbears.me';
+  } catch { return false; }
+}
+chrome.runtime.onMessage.addListener((m, sender, send) => {
+  if (!m || (m.type !== 'bridge-state' && m.type !== 'bridge-save')) return false;
+  (async () => {
+    if (!(await senderAllowed(sender))) return send({});
+    if (m.type === 'bridge-save') {
+      const p = m.patch || {};
+      const set = {};
+      if (p.agentToken) set.agentToken = p.agentToken;
+      if (typeof p.gwId === 'string') set.gwId = p.gwId;
+      if (p.gwPw) set.gwPw = p.gwPw;
+      if (typeof p.gwOn === 'boolean') set.gwOn = p.gwOn;
+      if (set.agentToken || set.gwId || set.gwPw) set.serverUrl = new URL(sender.url).origin;
+      if (Object.keys(set).length) { await chrome.storage.local.set(set); setTimeout(() => run(true), 500); }
+    }
+    send(await bridgeState());
+  })();
+  return true;
+});
+
 chrome.runtime.onInstalled.addListener(() => chrome.alarms.create(ALARM, { periodInMinutes: 1 }));
 chrome.runtime.onStartup.addListener(() => chrome.alarms.create(ALARM, { periodInMinutes: 1 }));
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === ALARM) run(false); });

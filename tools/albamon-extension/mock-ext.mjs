@@ -4,6 +4,7 @@ import http from 'node:http';
 import { createRequire } from 'node:module';
 import { cpSync, readFileSync } from 'node:fs';
 import { parseAlbamonApply } from '../../src/mail-intake.js';
+import { EXT_BRIDGE_JS } from '../../src/ext-bridge-page.js';
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -60,7 +61,12 @@ const alba = http.createServer((req, res) => {
 // ---- 가짜 시스템(에이전트 API) ----
 const sysLog = [];      // 시스템 서버가 받은 모든 요청(주소·머리말·본문)
 const mailIn = [];      // /api/agent/mail 로 받아 해석한 결과
+const PAGE = `<!doctype html><meta charset=utf-8><title>수신함</title>
+<div id="extstate" class="notice">확인 중…</div>
+<form id="gwform"><input id="gwid"><input id="gwpw" type="password"><button type="submit">내 확장에 저장</button></form>
+<div id="gwok" hidden>저장됨</div><span id="newkey" hidden>${TOKEN}</span><script>${EXT_BRIDGE_JS}</script>`;
 const sys = http.createServer((req, res) => {
+  if (req.url.startsWith('/applicants/inbox')) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(PAGE); }
   let raw = '';
   req.on('data', (c) => (raw += c));
   req.on('end', () => sysLog.push(req.method + ' ' + req.url + ' ' + JSON.stringify(req.headers) + ' ' + raw));
@@ -155,6 +161,7 @@ const dir = mkdtempSync(join(tmpdir(), 'ext-test-'));
 cpSync(HERE, dir, { recursive: true, filter: (p) => !/mock-ext/.test(p) });
 const mf = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
 mf.host_permissions = ['http://127.0.0.1/*'];
+mf.content_scripts[0].matches = ['http://127.0.0.1/applicants/inbox*'];
 writeFileSync(join(dir, 'manifest.json'), JSON.stringify(mf));
 
 const chrome = ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'].find((p) => existsSync(p));
@@ -215,6 +222,37 @@ await runAndWait();
 check(gwViews.length === before, '이미 가져온 메일은 다시 열지 않음');
 const leaked = sysLog.filter((l) => l.includes(GW_PW) || l.includes(encodeURIComponent(GW_PW)) || l.includes(GW_ID + '"') );
 check(leaked.length === 0, '그룹웨어 비밀번호가 시스템으로 가는 요청에 전혀 없음(' + sysLog.length + '건 검사)');
+
+
+// ---- 수신함 화면 ↔ 확장 연결 (그룹웨어 계정을 웹 화면에서 입력) ----
+await sw.evaluate(() => chrome.storage.local.clear());
+await sw.evaluate((c) => chrome.storage.local.set(c), { serverUrl: `http://127.0.0.1:${sysPort}`, gwMailUrl: `http://127.0.0.1:${gwPort}/mail/main.do` });
+const web = await browser.newPage();
+const sentBefore = sysLog.length;
+await web.goto(`http://127.0.0.1:${sysPort}/applicants/inbox`, { waitUntil: 'load' });
+await web.waitForFunction(() => /연결됨/.test(document.getElementById('extstate').textContent), { timeout: 15000 }).catch(() => {});
+const t1 = await web.$eval('#extstate', (e) => e.textContent);
+console.log('  화면 상태:', t1);
+check(/확장 프로그램: 연결됨/.test(t1), '화면이 확장 프로그램을 알아봄');
+await sleep(1500);
+const afterKey = await sw.evaluate(() => chrome.storage.local.get(['agentToken', 'serverUrl']));
+check(afterKey.agentToken === TOKEN, '새로 만든 연결 키가 확장에 자동으로 들어감');
+await web.type('#gwid', GW_ID);
+await web.type('#gwpw', GW_PW);
+await web.click('#gwform button');
+await web.waitForFunction(() => /그룹웨어 계정 저장됨/.test(document.getElementById('extstate').textContent), { timeout: 15000 }).catch(() => {});
+const t2 = await web.$eval('#extstate', (e) => e.textContent);
+console.log('  화면 상태(저장 뒤):', t2);
+const stored = await sw.evaluate(() => chrome.storage.local.get(['gwId', 'gwPw', 'gwOn']));
+check(stored.gwId === GW_ID && stored.gwPw === GW_PW && stored.gwOn === true, '그룹웨어 아이디·비밀번호가 확장 저장소에 들어감');
+check(/비밀번호 저장됨/.test(t2) && !t2.includes(GW_PW), '화면에는 저장 여부만 보이고 비밀번호는 보이지 않음');
+check((await web.$eval('#gwpw', (e) => e.value)) === '', '저장 뒤 비밀번호 입력칸은 비워짐');
+const htmlNow = await web.content();
+check(!htmlNow.includes(GW_PW), '화면 어디에도 비밀번호가 남지 않음');
+await sleep(3500);   // 저장 뒤 자동 실행이 끝날 시간
+const leaked2 = sysLog.slice(sentBefore).filter((l) => l.includes(GW_PW) || l.includes(encodeURIComponent(GW_PW)));
+check(leaked2.length === 0, '화면에서 저장해도 비밀번호가 시스템 서버로 가는 요청에 없음(' + (sysLog.length - sentBefore) + '건 검사)');
+await web.close();
 
 await browser.close().catch(() => {});
 try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }

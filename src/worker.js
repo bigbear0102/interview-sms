@@ -27,7 +27,7 @@ import { renderPhoneHelp } from './pages-help.js';
 import { renderPeople } from './people.js';
 import { handleApplicants, registerFromCampaign, saveApplicant, addEvent } from './applicants.js';
 import { handleAgentApi } from './agent-api.js';
-import { getIntakeToken, ingestRaw, MAX_MAIL_BYTES } from './mail-intake.js';
+import { getIntakeToken, ingestRaw, ownerForMailName, MAX_MAIL_BYTES } from './mail-intake.js';
 import { getLinkSettings, flaggedInCampaign } from './applicants-link.js';
 import { renderLanding } from './landing.js';
 import { OUTCOMES, setOutcome, queueAutoReminders } from './reminders.js';
@@ -610,10 +610,16 @@ export async function handleEmail(message, env) {
   try {
     const token = await getIntakeToken(env.DB);
     const local = String(message.to || '').toLowerCase().split('@')[0];
-    if (!token || local !== `apply-${token}`) { message.setReject('Address not found'); return { ok: false, reason: 'address' }; }
+    // 공용 주소(비밀 토큰) 또는 사람별 주소(apply-<이름>). 사람별 주소로 온 메일은 그 사람의 수신함으로 들어간다.
+    let owner = null, known = !!token && local === `apply-${token}`;
+    if (!known && local.startsWith('apply-')) {
+      owner = await ownerForMailName(env.DB, local.slice(6));
+      known = owner != null;
+    }
+    if (!known) { message.setReject('Address not found'); return { ok: false, reason: 'address' }; }
     if (message.rawSize && message.rawSize > MAX_MAIL_BYTES) { message.setReject('Message too large'); return { ok: false, reason: 'too_large' }; }
     const buf = new Uint8Array(await new Response(message.raw).arrayBuffer());
-    const r = await ingestRaw(env.DB, buf);
+    const r = await ingestRaw(env.DB, buf, Date.now(), owner);
     return r;
   } catch (e) {
     await recordError(env, 'mail', e, 'intake').catch(() => {});
