@@ -1047,7 +1047,7 @@ export async function handleApplicants(c) {
   if (method === 'GET' && !action) {
     const sp = url.searchParams;
     const note = sp.get('ok') === 'posting'
-      ? `<div class="notice ok">${icon('check')}<div>원가중심점을 정했어요. 같은 공고로 지원한 <b>${Number(sp.get('n')) || 0}건</b>에 적용했어요. 앞으로 같은 공고도 자동으로 정리돼요.</div></div>`
+      ? `<div class="notice ok">${icon('check')}<div>원가중심점을 정했어요. 같은 공고로 지원한 <b>${Number(sp.get('n')) || 0}건</b>에 적용했어요. 앞으로 같은 공고도 자동으로 정리돼요.${Number(sp.get('fr')) ? ` 대기 중인 ${Number(sp.get('fr'))}명의 연락처 가져오기도 요청했어요.` : ''}</div></div>`
       : (sp.get('err') === 'cclist' ? `<div class="notice warn" role="alert">${icon('alert')}<div>원가중심점 목록에 없는 이름이에요. 공고 정리에서 목록을 확인해 주세요.</div></div>` : '');
     const body = await renderApplicantDetail(db, id, { user, notice: note, link: await getLinkSettings(db) });
     if (!body) return html(pg('없음', '<p>지원자를 찾을 수 없어요.</p>', 'applicants'), 404);

@@ -5,7 +5,7 @@ import { esc, icon } from './views.js';
 import { pageHeader, emptyState } from './ui.js';
 import { peopleTabs, bracketName, suggestCostCenters } from './workspace.js';
 export { bracketName, suggestCostCenters };
-import { inboxScope, pendingInboxCount } from './mail-intake.js';
+import { inboxScope, pendingInboxCount, requestFetchByPosting } from './mail-intake.js';
 
 const clip = (s, n) => String(s || '').trim().slice(0, n);
 
@@ -38,7 +38,9 @@ export async function classifyPosting(db, recruitNo, costCenter, job, userId, no
   const b = await run(db, `UPDATE applicant_inbox SET cost_center=?, job=? WHERE recruit_no=? AND status='pending'`, cc, j, r);
   await run(db, `INSERT INTO inbox_cost_rules (recruit_no, cost_center, job, updated_by, updated_at) VALUES (?,?,?,?,?)
                  ON CONFLICT(recruit_no) DO UPDATE SET cost_center=excluded.cost_center, job=excluded.job, updated_by=excluded.updated_by, updated_at=excluded.updated_at`, r, cc, j, userId ?? null, now);
-  return { ok: true, people: (a.meta.changes || 0) + (b.meta.changes || 0) };
+  // 분류가 끝났으니 이 공고 대기 건의 연락처 가져오기도 이어서 요청한다
+  const fetchReq = await requestFetchByPosting(db, r);
+  return { ok: true, people: (a.meta.changes || 0) + (b.meta.changes || 0), fetchReq };
 }
 
 const FLASH = { saved: '정리했어요.' };
@@ -47,7 +49,7 @@ const ERR = {
   cclist: '원가중심점 목록에 없는 이름이에요. 입력하면 나오는 목록에서 골라 주세요.'
 };
 
-export async function renderPostings(db, { tab = 'todo', viewer = null, flash = '', n = 0, err = '', pending = 0 } = {}) {
+export async function renderPostings(db, { tab = 'todo', viewer = null, flash = '', n = 0, err = '', pending = 0, fr = 0 } = {}) {
   const groups = await postingGroups(db, viewer);
   const todo = groups.filter((g) => g.blank > 0);
   const done = groups.filter((g) => g.blank === 0);
@@ -81,7 +83,7 @@ export async function renderPostings(db, { tab = 'todo', viewer = null, flash = 
 
   const tabLink = (key, label, count) => `<a href="/applicants/postings${key === 'done' ? '?tab=done' : ''}"${tab === key ? ' aria-current="page"' : ''}>${label} <span class="n">${count}</span></a>`;
   const notice = flash === 'saved'
-    ? `<div class="notice ok">${icon('check')}<div><b>${Number(n) || 0}명</b>에게 적용했어요. 앞으로 같은 공고로 오는 지원도 자동으로 정리돼요.${todo.length ? ` 남은 공고 <b>${todo.length}개</b>` : ' 정리할 공고가 모두 끝났어요.'}</div></div>` : '';
+    ? `<div class="notice ok">${icon('check')}<div><b>${Number(n) || 0}명</b>에게 적용했어요. 앞으로 같은 공고로 오는 지원도 자동으로 정리돼요.${Number(fr) ? ` 대기 중인 <b>${Number(fr)}명</b>의 연락처 가져오기도 요청했어요(확장 프로그램이 켜져 있으면 1분 안에 채워져요).` : ''}${todo.length ? ` 남은 공고 <b>${todo.length}개</b>` : ' 정리할 공고가 모두 끝났어요.'}</div></div>` : '';
   const errBox = ERR[err] ? `<div class="notice warn" role="alert">${icon('alert')}<div>${esc(ERR[err])}</div></div>` : '';
 
   return `${pageHeader({ title: '공고 정리', desc: '같은 공고로 지원한 사람들을 한 번에 정리해요. 공고마다 한 번만 입력하면 그 공고의 모든 지원자에게 적용돼요.' })}
@@ -100,7 +102,7 @@ export async function handlePostings(c) {
   if (path === '/applicants/postings' && method === 'GET') {
     const sp = url.searchParams;
     return html(pg('공고 정리', await renderPostings(db, {
-      tab: sp.get('tab') === 'done' ? 'done' : 'todo', viewer, flash: sp.get('ok') || '', n: sp.get('n') || 0, err: sp.get('err') || '', pending
+      tab: sp.get('tab') === 'done' ? 'done' : 'todo', viewer, flash: sp.get('ok') || '', n: sp.get('n') || 0, fr: sp.get('fr') || 0, err: sp.get('err') || '', pending
     }), 'applicants'));
   }
   if (path === '/applicants/postings/save' && method === 'POST') {
@@ -110,8 +112,8 @@ export async function handlePostings(c) {
     const r = await classifyPosting(db, f.recruit_no, f.cost_center, f.job, user.id);
     if (!r.ok) return redirect(back ? `${back}?err=cclist` : `/applicants/postings${tab}${tab ? '&' : '?'}err=${r.error}`);
     await audit(db, user, 'applicant.posting_classify', `n=${r.people}`);
-    if (back) return redirect(`${back}?ok=posting&n=${r.people}`);
-    return redirect(`/applicants/postings${tab}${tab ? '&' : '?'}ok=saved&n=${r.people}`);
+    if (back) return redirect(`${back}?ok=posting&n=${r.people}&fr=${r.fetchReq}`);
+    return redirect(`/applicants/postings${tab}${tab ? '&' : '?'}ok=saved&n=${r.people}&fr=${r.fetchReq}`);
   }
   return null;
 }

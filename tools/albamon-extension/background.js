@@ -45,6 +45,7 @@ function waitLoaded(tabId, ms = 45000) {
 }
 
 // ---- 이력서 탭 안에서 실행되는 함수 (다른 것을 참조하지 않는다) ----
+// 알바몬 이력서는 화면이 늦게 그려지고 번호도 눌러야 늦게 나타난다. 그래서 고정 시간만 기다리지 않고 "보일 때까지" 짧게 확인하며 기다린다.
 async function pageRead(item, dry) {
   const sleepP = (ms) => new Promise((r) => setTimeout(r, ms));
   const text = () => (document.body && document.body.innerText) || '';
@@ -66,44 +67,72 @@ async function pageRead(item, dry) {
     return false;
   };
   const visible = (e) => { const r = e.getBoundingClientRect(); const st = getComputedStyle(e); return r.width > 0 && r.height > 0 && st.display !== 'none' && st.visibility !== 'hidden'; };
-
-  await sleepP(1500);
-  const pw = document.querySelector('input[type=password]');
-  if ((pw && visible(pw)) || /user-account\/login|\/login/i.test(location.href)) return { state: 'login' };
-
-  const before = text();
-  const urlOk = location.href.includes(item.apply_no);
-  const nameOk = nameMatches(before, item.name);
-  let phone = pickPhone(before);
-  let clicked = false;
-  if (!phone) {
-    const pats = [/(연락처|전화번호|휴대폰|핸드폰|휴대전화).{0,6}(보기|확인|열람|조회)/, /(보기|확인|열람|조회).{0,6}(연락처|전화번호|휴대폰|핸드폰)/];
+  const DEDUCT = /(차감|이용권|열람권|포인트|결제|구매|사용하시겠|유료|잔여|캐시|상품)/;
+  const GONE = /(삭제된 이력서|존재하지 않는|찾을 수 없|열람 기간|열람기간|기간이 만료|비공개)/;
+  const pats = [/(연락처|전화번호|휴대폰|핸드폰|휴대전화).{0,6}(보기|확인|열람|조회)/, /(보기|확인|열람|조회).{0,6}(연락처|전화번호|휴대폰|핸드폰)/];
+  const findReveal = () => {
     const els = [...document.querySelectorAll('button,a,[role=button],span,div,li,label')];
     const hit = els.filter((e) => {
       const t = (e.innerText || '').replace(/\s+/g, ' ').trim();
       return t && t.length <= 24 && visible(e) && pats.some((re) => re.test(t));
     });
-    const el = hit.find((e) => !hit.some((o) => o !== e && e.contains(o))) || hit[0];
-    if (!el) return { state: 'nobutton' };
+    return hit.find((e) => !hit.some((o) => o !== e && e.contains(o))) || hit[0] || null;
+  };
+  const labels = () => [...new Set([...document.querySelectorAll('button,[role=button],input[type=button],input[type=submit]')].filter(visible)
+    .map((e) => (e.innerText || e.value || '').replace(/\s+/g, ' ').trim()).filter((t) => t && t.length <= 14))].slice(0, 10);
+  const dialogs = () => [...document.querySelectorAll('dialog[open],[role=dialog],[role=alertdialog],.modal,.popup,.layer,[class*=modal],[class*=popup],[class*=layer]')].filter(visible);
+  const loginNow = () => { const pw = document.querySelector('input[type=password]'); return (pw && visible(pw)) || /user-account\/login|\/login/i.test(location.href); };
+
+  // 1) 화면이 준비될 때까지(최대 15초): 로그인 화면 / 번호가 이미 보임 / 연락처 보기 버튼 / 이력서 없음 안내
+  const start = Date.now();
+  let phone = '', el = null;
+  for (;;) {
+    if (loginNow()) return { state: 'login' };
+    const t = text();
+    phone = pickPhone(t);
+    if (phone) break;
+    el = findReveal();
+    if (el) break;
+    if (Date.now() - start > 3000 && GONE.test(t)) return { state: 'gone' };
+    if (Date.now() - start > 15000) return { state: 'nobutton', labels: labels() };
+    await sleepP(500);
+  }
+  const before = text();
+  const urlOk = location.href.includes(item.apply_no);
+  const nameOk = nameMatches(before, item.name);
+
+  // 2) 번호가 이미 보이면 누르지 않는다. 아니면 눌러서 번호가 보일 때까지(최대 12초) 기다린다.
+  if (!phone) {
     if (dry) return { state: 'dry' };
     el.click();
-    clicked = true;
-    await sleepP(1500);
-    let after = text();
-    if (after === before) { el.click(); await sleepP(1200); after = text(); }
-    const dlg = [...document.querySelectorAll('dialog[open],[role=dialog],[role=alertdialog],.modal,.popup,.layer,[class*=modal],[class*=popup],[class*=layer]')]
-      .filter(visible).map((e) => e.innerText || '').join(' ');
-    phone = pickPhone(after);
-    if (/(차감|이용권|열람권|포인트|결제|구매|사용하시겠|유료|잔여|캐시|상품)/.test(dlg) && !phone) return { state: 'deduct' };
+    const t0 = Date.now();
+    let confirmed = false, retried = false;
+    for (;;) {
+      await sleepP(500);
+      const t = text();
+      phone = pickPhone(t);
+      if (phone) break;
+      const dlg = dialogs();
+      const dtext = dlg.map((e) => e.innerText || '').join(' ');
+      if (DEDUCT.test(dtext)) return { state: 'deduct' };
+      // 이용권과 상관없는 "연락처를 확인하시겠어요?" 같은 확인 창이면 확인을 한 번 눌러 준다
+      if (!confirmed && dlg.length && /연락처|전화번호|휴대폰/.test(dtext)) {
+        const ok = dlg.flatMap((d) => [...d.querySelectorAll('button,[role=button],a')]).find((b) => visible(b) && /^(확인|예|열람|보기|계속)$/.test((b.innerText || '').trim()));
+        if (ok) { ok.click(); confirmed = true; continue; }
+      }
+      // 4초 동안 아무 변화가 없으면 한 번 더 누른다
+      if (!retried && Date.now() - t0 > 4000 && t === before) { el.click(); retried = true; }
+      if (Date.now() - t0 > 12000) return { state: 'nophone', labels: labels() };
+    }
   }
-  if (!phone) return { state: 'nophone', clicked };
   if (!urlOk && !nameOk && !nameMatches(text(), item.name)) return { state: 'mismatch' };
   return { state: 'ok', phone };
 }
 
 const NOTES = {
-  nobutton: '연락처 보기 버튼을 찾지 못했어요(화면 구조가 다를 수 있어요).',
-  nophone: '버튼을 눌렀지만 전화번호가 보이지 않았어요.',
+  nobutton: '연락처 보기 버튼을 찾지 못했어요(15초 기다렸어요).',
+  nophone: '버튼을 눌렀지만 전화번호가 보이지 않았어요(12초 기다렸어요).',
+  gone: '이력서를 찾을 수 없어요(삭제되었거나 열람 기간이 지났을 수 있어요).',
   mismatch: '이력서가 맞는지 확인하지 못했어요(이름·지원 번호가 화면에 없어요).',
   deduct: '이용권 차감·결제 확인 창이 떠서 멈췄어요. 알바몬 화면에서 직접 확인해 주세요.'
 };
@@ -128,7 +157,8 @@ async function processItem(cfg, item) {
       await api(cfg, `/api/agent/inbox/${item.id}/result`, { method: 'POST', body: JSON.stringify({ ok: true, phone: r.phone, note: '' }) });
       return { ok: true };
     }
-    await api(cfg, `/api/agent/inbox/${item.id}/result`, { method: 'POST', body: JSON.stringify({ ok: false, phone: '', note: NOTES[r.state] || '알 수 없는 이유로 실패했어요.' }) });
+    const hint = r.labels && r.labels.length ? ` (화면 버튼: ${r.labels.join(', ')})` : '';
+    await api(cfg, `/api/agent/inbox/${item.id}/result`, { method: 'POST', body: JSON.stringify({ ok: false, phone: '', note: ((NOTES[r.state] || '알 수 없는 이유로 실패했어요.') + hint).slice(0, 190) }) });
     return { stop: r.state === 'deduct' ? 'deduct' : '', failed: true };
   } finally {
     chrome.tabs.remove(tab.id).catch(() => {});
@@ -446,21 +476,26 @@ async function scanGroupware(cfg, force) {
 }
 
 async function runContacts(cfg) {
-  const q = await (await api(cfg, '/api/agent/inbox')).json();
-  const items = (q.items || []).slice(0, MAX_PER_RUN);
-  if (!items.length) return null;
-  let ok = 0, fail = 0, dry = 0;
-  let idx = 0;
-  for (const item of items) {
-    await setStatus(`처리 중… (${++idx}/${items.length})`);
-    const r = await processItem(cfg, item);
-    if (r.stop === 'login') return { level: 'error', text: '알바몬 로그인이 필요해요. 이 크롬에서 알바몬(기업회원)에 로그인한 뒤 다시 "연락처 가져오기"를 눌러 주세요.' };
-    if (r.ok) ok++; else if (r.dry) dry++; else fail++;
-    if (r.stop === 'deduct') return { level: 'error', text: '이용권 차감·결제 확인 창이 떠서 멈췄어요. 알바몬 화면에서 직접 확인해 주세요.' };
-    await sleep(2500 + Math.random() * 3500);
+  let ok = 0, fail = 0, dry = 0, total = 0;
+  // 요청이 많으면 5건씩 이어서 처리한다(한 번에 최대 6번 = 30건). 남은 건은 다음 확인 때 이어서 한다.
+  for (let round = 0; round < 6; round++) {
+    const q = await (await api(cfg, '/api/agent/inbox')).json();
+    const items = (q.items || []).slice(0, MAX_PER_RUN);
+    if (!items.length) break;
+    let idx = 0;
+    for (const item of items) {
+      await setStatus(`연락처 가져오는 중… (${++total}번째)`);
+      const r = await processItem(cfg, item);
+      if (r.stop === 'login') return { level: 'error', text: '알바몬 로그인이 필요해요. 이 크롬에서 알바몬(기업회원)에 로그인한 뒤 다시 "연락처 가져오기"를 눌러 주세요.' };
+      if (r.ok) ok++; else if (r.dry) dry++; else fail++;
+      if (r.stop === 'deduct') return { level: 'error', text: '이용권 차감·결제 확인 창이 떠서 멈췄어요. 알바몬 화면에서 직접 확인해 주세요.' };
+      await sleep(2500 + Math.random() * 3500);
+    }
+    if (dry) break;   // 시험 실행은 한 번만
   }
+  if (!total) return null;
   if (dry) return { level: 'ok', text: `시험 실행: ${dry}건에서 연락처 보기 버튼을 찾았어요.` };
-  return { level: fail ? (ok ? 'warn' : 'error') : 'ok', text: `연락처 ${ok}건 채웠어요${fail ? `, ${fail}건은 못 채웠어요(이유는 수신함의 해당 줄에 적혀 있어요)` : ''}.` };
+  return { level: fail ? (ok ? 'warn' : 'error') : 'ok', text: `연락처 ${ok}건 채웠어요${fail ? `, ${fail}건은 못 채웠어요(이유는 새 지원 화면의 해당 카드에 적혀 있어요)` : ''}.` };
 }
 
 async function run(force = false) {

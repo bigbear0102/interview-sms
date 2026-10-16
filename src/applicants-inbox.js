@@ -9,7 +9,7 @@ import { peopleTabs, connState, unclassifiedPostings, suggestForTitles } from '.
 import { normalizePhone, isValidMobile } from './parser.js';
 import {
   getUserMailName, setUserMailName, inboxScope, ensureIntakeToken, intakeAddress, intakeDomain, listInbox, pendingInboxCount,
-  requestFetch, createAgentToken, hasAgentToken, getAutoRegister, setAutoRegister, agentStatus
+  requestFetch, requestFetchByPosting, createAgentToken, hasAgentToken, getAutoRegister, setAutoRegister, agentStatus
 } from './mail-intake.js';
 
 // 수신함은 열어 둔 채로 두면 1분마다 새로 고친다(새 지원 메일이 저절로 보이게).
@@ -54,7 +54,7 @@ const STATUS_BADGE = {
 
 const SUBLINE = (r) => [r.gender, r.age ? r.age + '세' : '', r.address, r.career ? '경력 ' + r.career : ''].filter(Boolean).join(' · ');
 
-export async function renderInbox(db, env, { status = 'pending', isSuper = false, flash = '', err = '', origin = '', fetched = 0, viewer = null, filter = '', n = 0, skipped = 0 } = {}) {
+export async function renderInbox(db, env, { status = 'pending', isSuper = false, flash = '', err = '', origin = '', fetched = 0, viewer = null, filter = '', n = 0, skipped = 0, fr = 0 } = {}) {
   const pending = await pendingInboxCount(db, viewer);
   const todo = await unclassifiedPostings(db).catch(() => 0);
   const all_ = await listInbox(db, status === 'done' ? 'done' : 'pending', 200, viewer);
@@ -66,7 +66,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   const FLASH = {
     fetch: '연락처 가져오기를 요청했어요. 확장 프로그램이 켜져 있으면 1분 안에 채워져요.',
     fetchall: `${Number(fetched) || 0}건의 연락처 가져오기를 요청했어요. 확장 프로그램이 켜져 있으면 1분 안에 채워져요.`,
-    registered: '지원자로 등록했어요.', cost: '원가중심점을 저장했어요.', ignored: '무시로 처리했어요.', restored: '다시 대기로 돌렸어요.',
+    registered: '지원자로 등록했어요.', cost: `원가중심점을 저장했어요.${Number(fr) ? ` 연락처 ${Number(fr)}건의 가져오기도 요청했어요. 확장 프로그램이 켜져 있으면 1분 안에 채워져요.` : ''}`, ignored: '무시로 처리했어요.', restored: '다시 대기로 돌렸어요.',
     restored2: '다시 대기로 돌렸어요. 이미 등록된 지원자는 지원자 목록에 그대로 있고, 다시 등록해도 중복으로 생기지 않아요.',
     bulkreg: `${Number(n) || 0}명을 지원자로 등록했어요.${Number(skipped) ? ` 연락처가 없는 ${Number(skipped)}건은 건너뛰었어요.` : ''}`,
     bulkign: `${Number(n) || 0}건을 무시로 처리했어요.`
@@ -392,7 +392,7 @@ export async function handleInbox(c, deps) {
     const sp = url.searchParams;
     return page('새 지원', await renderInbox(db, env, {
       status: sp.get('status') === 'done' ? 'done' : 'pending', isSuper: user.role === 'super', viewer, filter: sp.get('f') || '',
-      flash: sp.get('ok') || '', err: sp.get('err') || '', origin: new URL(request.url).origin, fetched: sp.get('n') || 0, n: sp.get('n') || 0, skipped: sp.get('s') || 0
+      flash: sp.get('ok') || '', err: sp.get('err') || '', origin: new URL(request.url).origin, fetched: sp.get('n') || 0, n: sp.get('n') || 0, skipped: sp.get('s') || 0, fr: sp.get('fr') || 0
     }));
   }
   if (path === '/applicants/inbox/connect' && method === 'GET') {
@@ -534,8 +534,11 @@ export async function handleInbox(c, deps) {
     } else {
       await run(db, `UPDATE applicant_inbox SET cost_center=?, job=? WHERE id=?`, cc, jb, id);
     }
-    await audit(db, user, 'applicant.inbox_cost', `inbox=${id} all=${f.apply_all === '1' ? 1 : 0}`);
-    return redirect('/applicants/inbox?ok=cost');
+    // 분류가 끝났으니 연락처 가져오기도 이어서 요청한다(원가중심점을 비운 경우는 제외)
+    let fr = 0;
+    if (cc) fr = f.apply_all === '1' && item.recruit_no ? await requestFetchByPosting(db, item.recruit_no) : await requestFetch(db, [id], viewer);
+    await audit(db, user, 'applicant.inbox_cost', `inbox=${id} all=${f.apply_all === '1' ? 1 : 0} fetch=${fr}`);
+    return redirect(`/applicants/inbox?ok=cost${fr ? `&fr=${fr}` : ''}`);
   }
   if (action === 'register') {
     if (item.status !== 'pending') return redirect('/applicants/inbox?err=gone');

@@ -216,10 +216,10 @@ export async function saveParsed(db, p, now = Date.now(), ownerId = null, mailAc
   // 같은 공고에 이미 정해 둔 원가중심점이 있으면 자동으로 붙인다
   const rule = p.recruitNo ? await first(db, `SELECT cost_center, job FROM inbox_cost_rules WHERE recruit_no=?`, clip(p.recruitNo, 30)) : null;
   const r = await run(db,
-    `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at, cost_center, owner_user_id, job, mail_account)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at, cost_center, owner_user_id, job, mail_account, fetch_state)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     p.source, p.applyNo, clip(p.recruitNo, 30), clip(p.company, 100), clip(p.jobTitle, 200), clip(p.name, 50), clip(p.gender, 4),
-    p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), safeResumeUrl(p.resumeUrl).slice(0, 500), now, rule ? rule.cost_center : '', ownerId, rule ? rule.job : '', clip(mailAccount, 60));
+    p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), safeResumeUrl(p.resumeUrl).slice(0, 500), now, rule ? rule.cost_center : '', ownerId, rule ? rule.job : '', clip(mailAccount, 60), rule && rule.cost_center && safeResumeUrl(p.resumeUrl) ? 'requested' : '');
   return { ok: true, id: Number(r.meta.last_row_id) };
 }
 
@@ -321,6 +321,14 @@ export async function requestFetch(db, ids = null, viewer = null) {
   }
   const r = await run(db, sql, ...args);
   return r.meta.changes || 0;
+}
+
+// 같은 공고의 대기 건 중 연락처가 없는 건의 가져오기를 한꺼번에 요청한다(원가중심점을 정한 직후에 부른다). 반환: 요청한 건수
+export async function requestFetchByPosting(db, recruitNo) {
+  const r = String(recruitNo || '');
+  if (!r) return 0;
+  const x = await run(db, `UPDATE applicant_inbox SET fetch_state='requested', fetch_note='' WHERE recruit_no=? AND status='pending' AND phone='' AND fetch_state != 'requested' AND resume_url != ''`, r);
+  return x.meta.changes || 0;
 }
 
 // 에이전트가 처리할 요청 목록(한 번에 적게)

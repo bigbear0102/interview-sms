@@ -54,6 +54,12 @@ const alba = http.createServer((req, res) => {
       return res.end(`<meta charset=utf-8><h1>이력서</h1><p>이름 이영희</p><p>연락처 <button id="b" onclick="document.getElementById('m').style.display='block'">연락처 보기</button></p>
         <div id="m" role="dialog" style="display:none">이용권 1개가 차감됩니다. 계속하시겠습니까?<button>확인</button></div>`);
     }
+    // 늦게 그려지는 화면 / 번호가 늦게 나타남 / 이용권과 무관한 확인 창 / 삭제된 이력서 / 연락처 보기 버튼이 없는 화면
+    if (no === '411') return res.end(`<meta charset=utf-8><h1>이력서</h1><div id="c">이력서를 불러오는 중…</div><script>setTimeout(function(){document.getElementById('c').innerHTML='<p>이름 지연생성</p><p>연락처 <span id="p"><button onclick="document.getElementById(\\'p\\').textContent=\\'010-4110-0411\\'">연락처 보기</button></span></p>';},3500);</script>`);
+    if (no === '412') return res.end(`<meta charset=utf-8><h1>이력서</h1><p>이름 늦게나옴</p><p>연락처 <span id="p"><button onclick="setTimeout(function(){document.getElementById('p').textContent='010-4120-0412'},3000)">연락처 보기</button></span></p>`);
+    if (no === '413') return res.end(`<meta charset=utf-8><h1>이력서</h1><p>이름 확인창</p><p>연락처 <span id="p"><button onclick="document.getElementById('d').style.display='block'">연락처 보기</button></span></p><div id="d" role="dialog" style="display:none">연락처를 확인하시겠습니까? <button onclick="document.getElementById('p').textContent='010-4130-0413';document.getElementById('d').style.display='none'">확인</button></div>`);
+    if (no === '414') return res.end(`<meta charset=utf-8><h1>이력서</h1><p>삭제된 이력서입니다.</p>`);
+    if (no === '415') return res.end(`<meta charset=utf-8><h1>이력서</h1><p>이름 버튼없음</p><button>스크랩</button><button>인쇄</button>`);
     return res.end(`<meta charset=utf-8><h1>이력서</h1><p>이름 홍길동</p><p>연락처 <span id="p"><button onclick="document.getElementById('p').textContent='010-1234-5678'">연락처 보기</button></span></p>`);
   }
   res.writeHead(404); res.end();
@@ -258,6 +264,25 @@ check(byId[3] && !byId[3].ok && /이용권|차감|결제/.test(byId[3].note), '3
 check(!byId[4], '4번: 차감 창에서 멈췄으므로 처리하지 않음');
 check(/이용권/.test(s), '상태 문구에 이용권 확인 안내');
 
+
+
+// ---- 이력서 읽기 견고성: 늦게 그려지는 화면, 늦게 나타나는 번호, 확인 창, 삭제된 이력서, 버튼 없는 화면 ----
+pending.delete(4);
+for (const [id, no, nm] of [[11, '411', '지연생성'], [12, '412', '늦게나옴'], [13, '413', '확인창'], [14, '414', '삭제됨'], [15, '415', '버튼없음']]) {
+  items.push({ id, apply_no: no, name: nm, resume_url: `http://127.0.0.1:${albaPort}/resume?applyNo=${no}` });
+  pending.add(id);
+}
+await setCfg();
+const tRead = Date.now();
+s = await runAndWait(150000);
+console.log('  상태(이력서 읽기):', s, ' (' + Math.round((Date.now() - tRead) / 1000) + '초)');
+const rr = Object.fromEntries(results.map((r) => [r.id, r]));
+console.log('  결과 기록:', JSON.stringify(Object.values(rr).filter((x) => x.id >= 11).map((x) => ({ id: x.id, ok: x.ok, note: String(x.note).slice(0, 90) }))));
+check(rr[11] && rr[11].ok && rr[11].phone === '01041100411', '화면이 3.5초 늦게 그려져도 기다렸다가 연락처 보기를 눌러 번호를 가져옴');
+check(rr[12] && rr[12].ok && rr[12].phone === '01041200412', '번호가 누른 뒤 3초 늦게 나타나도 기다렸다가 가져옴');
+check(rr[13] && rr[13].ok && rr[13].phone === '01041300413', '이용권과 상관없는 "연락처를 확인하시겠습니까?" 창은 확인을 눌러 번호를 가져옴');
+check(rr[14] && !rr[14].ok && /찾을 수 없어요/.test(rr[14].note), '삭제된 이력서는 "찾을 수 없어요"로 이유를 남김');
+check(rr[15] && !rr[15].ok && /연락처 보기 버튼을 찾지 못했어요/.test(rr[15].note) && /스크랩/.test(rr[15].note), '버튼이 없으면 이유와 함께 화면에 있던 버튼 이름을 남김(원인 파악용)');
 
 // ---- 그룹웨어 메일 가져오기 ----
 await setCfg({ gwOn: true, gwId: GW_ID, gwPw: 'wrong-password' });

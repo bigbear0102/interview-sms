@@ -270,7 +270,7 @@ test('원가중심점: 같은 공고에 한 번에 적용·기억, 새 메일에
   assert.match(await (await call('/applicants/inbox')).text(), /name="cost_center" data-cc-search/);
   // 같은 공고 모두 적용
   let r = await post(`/applicants/inbox/${id1}/cost`, { cost_center: '아마노코리아(현장HR)', apply_all: '1' });
-  assert.equal(r.headers.get('location'), '/applicants/inbox?ok=cost');
+  assert.match(r.headers.get('location'), /^\/applicants\/inbox\?ok=cost/);
   const rows = (await db.prepare(`SELECT name, cost_center FROM applicant_inbox ORDER BY id`).all()).results;
   assert.deepEqual(rows.map((x) => x.cost_center), ['아마노코리아(현장HR)', '아마노코리아(현장HR)']);
   // 이후 같은 공고의 새 메일에도 자동으로 붙는다
@@ -295,7 +295,7 @@ test('원가중심점 목록: 붙여넣기로 추가, 찾기, 목록이 있으�
   await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('홍길동(여, 32세)', '900000021'))), Date.now());
   const id = (await db.prepare(`SELECT id FROM applicant_inbox`).first()).id;
   // 목록이 없으면 자유 입력
-  assert.equal((await post(`/applicants/inbox/${id}/cost`, { cost_center: '아무거나' })).headers.get('location'), '/applicants/inbox?ok=cost');
+  assert.match((await post(`/applicants/inbox/${id}/cost`, { cost_center: '아무거나' })).headers.get('location'), /^\/applicants\/inbox\?ok=cost/);
   const lines = Array.from({ length: 300 }, (_, i) => `원가센터${i}`).concat(['아마노코리아(현장HR)', '아마노코리아(파견)', '아마노코리아(현장HR)']).join('\r\n');
   assert.equal((await post('/applicants/inbox/cost-centers/add', { names: lines })).headers.get('location'), '/applicants/inbox/cost-centers?ok=ccadd');
   assert.equal((await db.prepare(`SELECT COUNT(*) n FROM cost_centers`).first()).n, 302);
@@ -305,7 +305,7 @@ test('원가중심점 목록: 붙여넣기로 추가, 찾기, 목록이 있으�
   assert.ok(!visible(page).includes('원가센터1'));
   // 목록이 생기면 목록 밖 이름은 거절, 안의 이름은 저장
   assert.equal((await post(`/applicants/inbox/${id}/cost`, { cost_center: '아무거나' })).headers.get('location'), '/applicants/inbox?err=cclist');
-  assert.equal((await post(`/applicants/inbox/${id}/cost`, { cost_center: '아마노코리아(파견)' })).headers.get('location'), '/applicants/inbox?ok=cost');
+  assert.match((await post(`/applicants/inbox/${id}/cost`, { cost_center: '아마노코리아(파견)' })).headers.get('location'), /^\/applicants\/inbox\?ok=cost/);
   const found = await (await call('/applicants/inbox/cost-centers/search?q=' + encodeURIComponent('아마노 현장'))).json();
   assert.deepEqual(found.items, ['아마노코리아(현장HR)']);
 });
@@ -590,7 +590,7 @@ test('원가중심점 제안: 새 지원 카드와 지원자 상세에서도 버
   // 버튼 = 같은 공고 대기 건 모두에 적용(분류 저장과 같은 경로)
   const id1 = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='홍길동'`).first()).id;
   const r = await post(`/applicants/inbox/${id1}/cost`, { cost_center: '아마노코리아(현장HR)', apply_all: '1' });
-  assert.equal(r.headers.get('location'), '/applicants/inbox?ok=cost');
+  assert.match(r.headers.get('location'), /^\/applicants\/inbox\?ok=cost/);
   assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicant_inbox WHERE cost_center='아마노코리아(현장HR)'`).first()).n, 3);
   // 정리된 카드에는 제안이 나오지 않는다
   page = await (await call('/applicants/inbox')).text();
@@ -610,4 +610,41 @@ test('원가중심점 제안: 새 지원 카드와 지원자 상세에서도 버
   // 밖으로 나가는 주소는 따르지 않는다
   const bad = await post('/applicants/postings/save', { recruit_no: '111222333', cost_center: '아마노코리아(파견)', job: '', back: 'https://evil.example/' });
   assert.match(bad.headers.get('location'), /^\/applicants\/postings/);
+});
+
+test('원가중심점을 정하면 연락처 가져오기가 자동으로 요청된다(새 지원·공고 정리·규칙이 있는 새 메일)', async () => {
+  const { db, post, call } = await setup();
+  const mail = (name, no, body = bodyHtml) => ingestRaw(db, new Uint8Array(mailQP(bodyHtml(name + '(여, 30세)', no))), Date.now());
+  await mail('홍길동', '900000101'); await mail('박민수', '900000102'); await mail('최수아', '900000103');
+  const state = async () => Object.fromEntries((await db.prepare(`SELECT name, fetch_state s FROM applicant_inbox`).all()).results.map((r) => [r.name, r.s]));
+  assert.deepEqual(await state(), { 홍길동: '', 박민수: '', 최수아: '' });          // 처음에는 요청하지 않는다
+  const id1 = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='홍길동'`).first()).id;
+  // 최수아는 이미 연락처가 있다 → 다시 요청하지 않는다
+  await db.prepare(`UPDATE applicant_inbox SET phone='01011112222', fetch_state='done' WHERE name='최수아'`).run();
+  // 1) 새 지원: 이 사람만 분류(같은 공고 적용 끔) → 이 사람만 요청
+  let r = await post(`/applicants/inbox/${id1}/cost`, { cost_center: 'A센터' });
+  assert.match(r.headers.get('location'), /ok=cost&fr=1$/);
+  assert.deepEqual(await state(), { 홍길동: 'requested', 박민수: '', 최수아: 'done' });
+  assert.ok(visible(await (await call('/applicants/inbox?ok=cost&fr=1')).text()).includes('연락처 1건의 가져오기도 요청했어요'));
+  // 분류를 비우면 요청하지 않는다
+  await db.prepare(`UPDATE applicant_inbox SET fetch_state='' WHERE name='홍길동'`).run();
+  r = await post(`/applicants/inbox/${id1}/cost`, { cost_center: '' });
+  assert.equal(r.headers.get('location'), '/applicants/inbox?ok=cost');
+  assert.equal((await state()).홍길동, '');
+  // 2) 공고 정리: 같은 공고의 연락처 없는 대기 건 모두 요청(연락처 있는 건·이미 요청한 건 제외)
+  r = await post('/applicants/postings/save', { recruit_no: '111222333', cost_center: 'A센터', job: '' });
+  assert.match(r.headers.get('location'), /ok=saved&n=\d+&fr=2$/);
+  assert.deepEqual(await state(), { 홍길동: 'requested', 박민수: 'requested', 최수아: 'done' });
+  assert.ok(visible(await (await call('/applicants/postings?ok=saved&n=3&fr=2')).text()).includes('연락처 가져오기도 요청했어요'));
+  // 확장이 가져갈 목록에 나온다
+  const { agentQueue } = await import('../src/mail-intake.js');
+  assert.deepEqual((await agentQueue(db, 10)).map((x) => x.name).sort(), ['박민수', '홍길동']);
+  // 3) 규칙이 이미 있는 공고의 새 메일은 들어오자마자 분류 + 연락처 가져오기 요청
+  await mail('정다은', '900000104');
+  assert.equal((await state()).정다은, 'requested');
+  assert.equal((await db.prepare(`SELECT cost_center c FROM applicant_inbox WHERE name='정다은'`).first()).c, 'A센터');
+  // 규칙이 없는 공고의 새 메일은 요청하지 않는다
+  await db.prepare(`DELETE FROM inbox_cost_rules`).run();
+  await mail('강하늘', '900000105');
+  assert.equal((await state()).강하늘, '');
 });
