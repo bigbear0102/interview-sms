@@ -52,14 +52,15 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
   if (ERR[err]) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div>${esc(ERR[err])}</div></div>`);
 
-  // 내 메일 수신 주소(모든 사용자). 이름은 본인이 바꿀 수 있다.
+  // 메일 자동 전달용 주소(모든 사용자, 선택). 이름은 본인이 바꿀 수 있다. 그룹웨어 메일 주소와는 다른, 이 시스템이 받는 주소다.
   let myAddrCard = '';
   if (viewer) {
     const myName = await getUserMailName(db, viewer.id);
     const myAddr = intakeAddress(myName, env);
-    myAddrCard = `<details class="card" style="margin-bottom:16px"${flash === 'addr' || err === 'addr_taken' || err === 'addr_invalid' ? ' open' : ''}><summary><b>내 메일 수신 주소</b> <span class="muted">${esc(myAddr)}</span></summary>
+    myAddrCard = `<details class="card" style="margin-bottom:16px"${flash === 'addr' || err === 'addr_taken' || err === 'addr_invalid' ? ' open' : ''}><summary><b>(선택) 메일 자동 전달용 주소</b> <span class="muted">내 메일 주소가 아니에요 · 확장 프로그램을 쓰면 필요 없어요</span></summary>
       <div style="margin-top:12px" class="stack">
-        <div class="copybox"><div class="copylabel">이 주소로 온 알바몬 지원 메일은 <b>내 수신함</b>에 들어와요</div><div class="copyvalue">${esc(myAddr)}</div>
+        <p class="muted" style="font-size:14px;margin:0">이 주소는 <b>내 그룹웨어 메일 주소(예: bigbear@willvi.co.kr)와 다른, 이 시스템이 메일을 받는 별도 주소</b>예요. 내 그룹웨어 메일에서 알바몬 메일을 이 주소로 <b>자동 전달</b>하도록 규칙을 걸 때만 써요. 위의 <b>내 그룹웨어 메일 가져오기</b>를 쓰면 이 주소는 필요 없어요.</p>
+        <div class="copybox"><div class="copylabel">자동 전달할 주소 — 이 주소로 온 알바몬 지원 메일은 <b>내 수신함</b>에 들어와요</div><div class="copyvalue">${esc(myAddr)}</div>
           <button type="button" class="btn secondary small" data-copy="${esc(myAddr)}">복사</button></div>
         <form method="post" action="/applicants/inbox/my-address" style="display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));align-items:end">
           <label style="display:grid;gap:4px"><span style="font-size:13px">주소 이름 바꾸기 <small class="muted">(영문 소문자·숫자·- , 3~30자)</small></span>
@@ -67,8 +68,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
           <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn small">바꾸기</button>
             <button class="btn secondary small" name="random" value="1" formnovalidate>무작위로 다시 만들기</button></div>
         </form>
-        <p class="muted" style="font-size:14px;margin:0">내 그룹웨어 메일에서 <b>알바몬 메일을 이 주소로 자동 전달</b>하도록 규칙을 걸어 두면 돼요. 또는 아래 <b>확장 프로그램</b>이 내 그룹웨어 메일함에서 직접 가져와요. 둘 중 편한 방법을 쓰세요.
-          쉽게 짐작되는 이름은 스팸이 올 수 있어요. 알바몬 지원 메일이 아닌 것은 걸러져요.</p>
+        <p class="muted" style="font-size:14px;margin:0">쉽게 짐작되는 이름은 스팸이 올 수 있어요. 알바몬 지원 메일이 아닌 것은 걸러져요.</p>
       </div></details>`;
   }
 
@@ -93,8 +93,9 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
 
   const tokenSet = await hasAgentToken(db, viewer ? viewer.id : null);
   const autoOn = isSuper ? await getAutoRegister(db) : false;
-  const agentCard = `<details class="card" style="margin-bottom:16px"${agentToken ? ' open' : ''}><summary><b>내 확장 프로그램 (메일 가져오기·연락처 자동 가져오기)</b> <span class="muted">${tokenSet ? '내 연결 키 있음' : '내 연결 키 없음'} · 내 PC의 크롬에서 내 계정으로 가져와요</span></summary>
+  const agentCard = `<details class="card" style="margin-bottom:16px"${agentToken ? ' open' : ''}><summary><b>내 그룹웨어 메일 가져오기 (확장 프로그램)</b> <span class="muted">${tokenSet ? '내 연결 키 있음' : '내 연결 키 없음'} · 내 PC의 크롬에서 내 계정으로 가져와요</span></summary>
     <div style="margin-top:12px" class="stack">
+      <div class="notice" role="note">${icon('check')}<div><b>이렇게 가져와요</b>: 내 PC 크롬의 확장이 <b>내 그룹웨어 메일함</b>(예: bigbear@willvi.co.kr)에 내 계정으로 로그인해서 알바몬 지원 메일을 찾아 내 수신함에 넣어요. 그래서 <b>그룹웨어 메일 주소(또는 아이디)와 비밀번호</b>를 아래에 넣어요.</div></div>
       <p class="muted" style="font-size:14px">알바몬 이력서의 연락처는 <b>"클릭해야 보여요"</b>. 그래서 담당자 PC의 크롬(이미 알바몬에 로그인된 상태)이 연락처 보기를 눌러 읽어 와요.
         <b>알바몬 아이디·비밀번호는 이 시스템이 받지도 저장하지도 않아요.</b> 여기서 <b>"연락처 가져오기"를 누른 건만</b> 처리해요.</p>
       <div class="notice warn" role="note">${icon('alert')}<div>알바몬은 연락처를 열람할 때 <b>이용권이 차감될 수 있어요</b>. 에이전트는 차감·결제 확인 창이 보이면 누르지 않고 멈춰요. 처음에는 한두 건으로 확인해 보세요.</div></div>
@@ -103,15 +104,15 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
       <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
         <li>아래 <b>확장 프로그램 내려받기</b>를 눌러 파일을 받고, 압축을 풀어요.</li>
         <li>크롬 주소창에 <code>chrome://extensions</code> 를 입력 → 오른쪽 위 <b>개발자 모드</b> 켜기 → <b>압축해제된 확장 프로그램을 로드합니다</b> → 풀어 둔 <code>albamon-extension</code> 폴더 선택. (한 번만 하면 돼요)</li>
-        <li>아래 <b>내 연결 키 만들기</b>를 누르면 확장에 자동으로 연결돼요. 이어서 <b>내 그룹웨어 아이디·비밀번호</b>를 아래 칸에 넣고 <b>내 확장에 저장</b>을 눌러요. 비밀번호는 <b>이 PC 크롬의 확장에만 저장</b>되고 이 시스템(서버)으로는 보내지 않아요.</li>
+        <li>아래 <b>내 연결 키 만들기</b>를 누르면 확장에 자동으로 연결돼요. 이어서 <b>내 그룹웨어 메일 주소(또는 아이디)와 비밀번호</b>를 아래 칸에 넣고 <b>내 확장에 저장</b>을 눌러요. 비밀번호는 <b>이 PC 크롬의 확장에만 저장</b>되고 이 시스템(서버)으로는 보내지 않아요.</li>
         <li>그 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 둬요.</li>
         <li>확장이 <b>내 그룹웨어 메일함</b>에서 알바몬 지원 메일을 찾아 <b>내 수신함</b>에 모아 줘요. (메일을 열기 때문에 그룹웨어에서 <b>읽음</b>으로 바뀌어요)</li>
         <li>수신함에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 알아서 연락처를 채워 줘요. 채워진 뒤 <b>등록</b>만 누르면 돼요.</li>
       </ol>
       <div id="extstate" class="notice" role="status">확장 프로그램 확인 중…</div>
       <form id="gwform" autocomplete="off" style="display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));align-items:end">
-        <label style="display:grid;gap:4px"><span style="font-size:13px">내 그룹웨어 아이디</span><input id="gwid" autocomplete="off" maxlength="60" aria-label="그룹웨어 아이디"></label>
-        <label style="display:grid;gap:4px"><span style="font-size:13px">내 그룹웨어 비밀번호</span><input id="gwpw" type="password" autocomplete="new-password" maxlength="100" aria-label="그룹웨어 비밀번호"></label>
+        <label style="display:grid;gap:4px"><span style="font-size:13px">내 그룹웨어 메일 주소 (또는 아이디)</span><input id="gwid" autocomplete="off" maxlength="80" placeholder="예: bigbear@willvi.co.kr" aria-label="그룹웨어 메일 주소 또는 아이디"></label>
+        <label style="display:grid;gap:4px"><span style="font-size:13px">그룹웨어 비밀번호</span><input id="gwpw" type="password" autocomplete="new-password" maxlength="100" aria-label="그룹웨어 비밀번호"></label>
         <button class="btn small" type="submit">내 확장에 저장</button>
       </form>
       <div id="gwok" class="notice ok" hidden>${icon('check')}<div>내 확장에 저장했어요. 이제 5분마다 내 그룹웨어 메일함에서 알바몬 지원 메일을 가져와요.</div></div>
@@ -177,7 +178,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
     ${peopleTabs('inbox', pending)}
     ${notices.join('')}
     <p style="margin:0 0 12px"><a href="/applicants/inbox/cost-centers">원가중심점 목록 ${ccTotal ? `(${ccTotal}개)` : '(아직 없음)'} 보기·추가</a></p>
-    ${myAddrCard}${agentCard}${addressCard}${tool}
+    ${agentCard}${myAddrCard}${addressCard}${tool}
     <div class="tabs">${filterTab('pending', '대기', pending)}${filterTab('done', '처리됨', doneCount)}</div>
     ${status === 'pending' && pending ? `<form method="post" action="/applicants/inbox/fetch-all" class="inline" style="margin-bottom:12px" data-confirm="대기 중인 ${pending}건의 연락처를 한꺼번에 가져오도록 요청할까요? 알바몬 이용권이 차감될 수 있어요."><button class="btn secondary small">대기 ${pending}건 모두 연락처 가져오기 요청</button></form>` : ''}
     <div class="card" style="padding:0">${table}</div>

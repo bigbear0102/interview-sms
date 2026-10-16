@@ -497,7 +497,8 @@ test('내 메일 수신 주소: 사람마다 따로, 이름 바꾸기(중복·�
   assert.equal(await getUserMailName(db, a.id), n1);   // 그대로 유지
   let page = await (await a.call('/applicants/inbox')).text();
   assert.ok(page.includes(`apply-${n1}@bigbears.me`) || page.includes(`apply-${n1}@`));
-  assert.ok(visible(page).includes('내 메일 수신 주소'));
+  assert.ok(visible(page).includes('메일 자동 전달용 주소'));
+  assert.ok(visible(page).includes('내 그룹웨어 메일 가져오기'));
   // 이름 바꾸기
   let r = await a.post('/applicants/inbox/my-address', { name: 'Hong-Gildong' });
   assert.equal(r.headers.get('location'), '/applicants/inbox?ok=addr');

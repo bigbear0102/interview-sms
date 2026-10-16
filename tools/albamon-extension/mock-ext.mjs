@@ -220,6 +220,13 @@ const before = gwViews.length;
 await setCfg({ gwOn: true, gwId: GW_ID, gwPw: GW_PW, gwSeen: (await sw.evaluate(() => chrome.storage.local.get('gwSeen'))).gwSeen });
 await runAndWait();
 check(gwViews.length === before, '이미 가져온 메일은 다시 열지 않음');
+// 메일 주소(아이디@도메인)로 입력해도 아이디 부분으로 로그인한다
+await sw.evaluate(() => chrome.storage.local.set({ gwSeen: [], gwLastScan: 0 }));
+await setCfg({ gwOn: true, gwId: GW_ID + '@willvi.co.kr', gwPw: GW_PW });
+await sw.evaluate(() => chrome.storage.local.set({ gwSeen: [] }));
+const viewsBefore = gwViews.length;
+await runAndWait();
+check(gwViews.length > viewsBefore, '메일 주소로 입력해도 그룹웨어 로그인이 됨(@ 앞 아이디 사용)');
 const leaked = sysLog.filter((l) => l.includes(GW_PW) || l.includes(encodeURIComponent(GW_PW)) || l.includes(GW_ID + '"') );
 check(leaked.length === 0, '그룹웨어 비밀번호가 시스템으로 가는 요청에 전혀 없음(' + sysLog.length + '건 검사)');
 

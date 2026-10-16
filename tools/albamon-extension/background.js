@@ -193,7 +193,7 @@ async function scanGroupware(cfg, force) {
     // 로그인 화면이면 입력한다(최대 2번 시도)
     for (let i = 0; i < 2; i++) {
       await sleep(800);
-      const st = await exec(tab.id, pageLogin, [cfg.gwId, cfg.gwPw]).catch(() => 'error');
+      const st = await exec(tab.id, pageLogin, [String(cfg.gwId).split('@')[0].trim(), cfg.gwPw]).catch(() => 'error');
       if (st === 'nologin') break;
       if (i === 1) return '그룹웨어 로그인이 안 돼요. 아이디·비밀번호를 확인해 주세요.';
       // 로그인 뒤 화면이 바뀔 때까지 기다린다
