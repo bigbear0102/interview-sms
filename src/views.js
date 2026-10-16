@@ -117,6 +117,7 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
 /* ---------- 면/카드 ---------- */
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);padding:20px}
 .card+.card{margin-top:16px}
+[hidden]{display:none!important}
 .notice{display:flex;gap:12px;align-items:flex-start;border-radius:var(--r-m);padding:14px 16px;margin:0 0 20px;font-size:16px;color:var(--ink)}
 .notice.ok{background:var(--green-bg)}.notice.warn{background:var(--red-bg)}.notice.info{background:var(--blue-bg)}
 .notice .ico{margin-top:2px}

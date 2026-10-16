@@ -106,3 +106,10 @@ test('공통 스크립트: 확인 대화상자, 제출 중 잠금, 표 머리글
   const own = html.replace(/window\.confirm\(msg\)/g, '');
   assert.ok(!/[^.a-zA-Z]confirm\(/.test(own));
 });
+
+test("hidden 속성이 붙은 안내 상자는 화면에 나오지 않는다(display:flex 가 hidden 을 덮어쓰지 않게)", async () => {
+  const { baseCss } = await import('../src/views.js').then((m) => ({ baseCss: m.CSS || '' }));
+  const src = await (await import('node:fs/promises')).readFile(new URL('../src/views.js', import.meta.url), 'utf8');
+  assert.match(src, /\[hidden\]\{display:none!important\}/);
+  assert.ok(src.indexOf('[hidden]{display:none!important}') < src.indexOf('.notice{display:flex'));
+});
