@@ -435,7 +435,7 @@ export function renderCampaignDetail(d) {
     ${delivered ? `<div class="card" style="margin-top:12px">
       ${responseBar({ attending: totals.attending || 0, absent: totals.absent || 0, unclear: totals.unclear || 0, noreply: totals.sent || 0 })}
       <div class="legend"><span><i style="background:var(--green)"></i>참석 ${totals.attending || 0}</span><span><i style="background:var(--red)"></i>불참 ${totals.absent || 0}</span>
-        <span><i style="background:var(--purple)"></i>확인 필요 ${totals.unclear || 0}</span><span><i style="background:var(--amber)"></i>답 없음 ${totals.sent || 0}</span>
+        <span><i style="background:var(--purple)"></i>확인 필요 ${totals.unclear || 0}</span><span><i style="background:var(--amber-bar)"></i>답 없음 ${totals.sent || 0}</span>
         <span style="margin-left:auto">회신율 ${siteTotal.rate}</span></div></div>` : ''}
     ${d.delivery && delivered ? `<p class="muted" style="margin-top:10px">${icon('check', 14)} 전달 확인 ${d.delivery.delivered}명 / 보냄 ${delivered}명${d.delivery.retrying ? ` · 다시 시도 중 ${d.delivery.retrying}명` : ''}</p>` : ''}
     ${d.delivery && d.delivery.stuck ? `<div class="notice warn" style="margin-top:12px" role="alert">${icon('alert')}<div><b>${d.delivery.stuck}명은 폰이 아직 문자를 보내지 않았어요.</b><br>문자 서버는 받았지만 폰이 보내지 못하고 있어요. 폰이 켜져 있는지, SMSGate 앱에서 <b>Cloud server</b>가 켜져 있는지, 인터넷이 되는지 확인해 주세요. 폰이 다시 연결되면 자동으로 나가요.</div></div>` : ''}
@@ -499,12 +499,18 @@ export function renderSend({ gws, deps, gwSel, toPhone = '', text = '', notice =
         document.getElementById('byte-count').textContent = b + '바이트';
         document.getElementById('kind').textContent = b === 0 ? '' : (b <= 90 ? '단문(SMS)' : '장문(LMS) · 90바이트가 넘어 장문으로 나가요');
       }
-      ph.addEventListener('input', upd); tx.addEventListener('input', upd); upd();
-      document.getElementById('send-form').addEventListener('submit', function (e) {
+      // 지금 2명 이상에게 보낼 때만 확인 창을 띄운다 (공통 스크립트가 data-confirm 을 읽는다)
+      function syncConfirm() {
+        var f = document.getElementById('send-form');
         var n = ph.value.split(/[\\s,;]+/).filter(Boolean).length;
         var mode = document.querySelector('#send-form input[name=send_mode]:checked');
-        if (mode && mode.value === 'now' && n >= 2 && !confirm(n + '명에게 지금 문자를 보낼까요?')) e.preventDefault();
-      });
+        if (mode && mode.value === 'now' && n >= 2) f.setAttribute('data-confirm', n + '명에게 지금 문자를 보낼까요?');
+        else f.removeAttribute('data-confirm');
+      }
+      ph.addEventListener('input', function () { upd(); syncConfirm(); });
+      tx.addEventListener('input', upd);
+      document.querySelectorAll('#send-form input[name=send_mode]').forEach(function (r) { r.addEventListener('change', syncConfirm); });
+      upd(); syncConfirm();
     })();
     </script>`;
 }

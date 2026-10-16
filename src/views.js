@@ -1,3 +1,4 @@
+import { APP_JS } from './appjs.js';
 export const STATUS_LABEL = {
   pending: '보내는 중', sending: '보내는 중', sent: '답 없음', attending: '참석', absent: '불참', unclear: '확인 필요', failed: '못 보냄'
 };
@@ -55,14 +56,14 @@ const CSS = `
   --bg:#f5f5f7;--surface:#ffffff;--surface-2:#fafafc;--ink:#1d1d1f;--muted:#6e6e73;--line:#e0e0e0;--line-soft:#ececf0;
   --blue:#0066cc;--blue-hover:#0071e3;--on-blue:#fff;--blue-bg:#e8f1fb;
   --green:#1d8a3a;--green-bg:#eaf6ee;--red:#d70015;--red-bg:#fdecee;--amber:#9a5b00;--amber-bg:#fff4dc;--purple:#6b4fbb;--purple-bg:#f0ecfb;
-  --chip:#ececf0;--focus:#0071e3;
+  --chip:#ececf0;--focus:#0071e3;--amber-bar:#e3a008;
   --green-t:#17692b;--red-t:#b3001a;--amber-t:#8a5200;--purple-t:#5a3fb0;--blue-t:#0057b3;
   --r-s:8px;--r-m:12px;--r-l:18px;--nav-h:56px;--tab-h:64px}
 @media (prefers-color-scheme:dark){:root{
   --bg:#000;--surface:#1c1c1e;--surface-2:#242426;--ink:#f5f5f7;--muted:#a1a1a6;--line:#3a3a3c;--line-soft:#2c2c2e;
   --blue:#2997ff;--blue-hover:#4aa9ff;--blue-bg:#0c2a45;
   --green:#30d158;--green-bg:#102a18;--red:#ff453a;--red-bg:#3a1618;--amber:#ffb340;--amber-bg:#332508;--purple:#b39dff;--purple-bg:#241d3d;
-  --chip:#2c2c2e;--focus:#4aa9ff;
+  --chip:#2c2c2e;--focus:#4aa9ff;--amber-bar:#ffb340;
   --green-t:#30d158;--red-t:#ff6961;--amber-t:#ffb340;--purple-t:#b39dff;--blue-t:#4aa9ff}}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -163,6 +164,12 @@ a.stat:hover{background:var(--surface-2);text-decoration:none}
 .subnav a:hover{background:var(--line)}
 [id^=sec-]{scroll-margin-top:calc(var(--nav-h) + 56px)}
 .moresheet{display:none}
+dialog.cdlg{border:0;border-radius:20px;padding:0;max-width:min(420px,calc(100vw - 32px));width:100%;background:var(--surface);color:var(--ink);box-shadow:0 24px 64px rgba(0,0,0,.35)}
+dialog.cdlg::backdrop{background:rgba(0,0,0,.45)}
+dialog.cdlg form{padding:22px}
+dialog.cdlg p{margin:0 0 20px;font-size:17px;font-weight:600;line-height:1.5;word-break:keep-all}
+.cdlg-actions{display:flex;gap:10px;justify-content:flex-end}
+.cdlg-actions .btn{min-height:44px}
 .rbtn{position:absolute;right:10px;bottom:8px;display:inline-grid;place-items:center;width:40px;height:40px;border-radius:999px;color:var(--blue)}
 .mrow .mtext{padding-right:44px}
 .rbtn:hover{background:var(--blue-bg)}
@@ -211,7 +218,7 @@ details summary{cursor:pointer;min-height:32px}
 .badge.info{background:var(--blue-bg);color:var(--blue-t)}.badge.fail{background:transparent;color:var(--red-t);box-shadow:inset 0 0 0 1px var(--red)}
 .rbar{display:flex;height:10px;border-radius:999px;overflow:hidden;background:var(--chip);min-width:80px}
 .rbar span{display:block;height:100%}.rbar .yes{background:var(--green)}.rbar .no{background:var(--red)}
-.rbar .review{background:var(--purple)}.rbar .wait{background:var(--amber)}
+.rbar .review{background:var(--purple)}.rbar .wait{background:var(--amber-bar)}
 .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-top:8px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
 
@@ -394,12 +401,10 @@ export function page(user, title, body, nav = '', badges = {}) {
     </div>
   </details>
 </div>
-<main id="main" class="page">${body}</main>
+<main id="main" class="page">${body.replace(/<thead>[\s\S]*?<\/thead>/g, (m) => m.replace(/<th(?=[\s>])(?![^>]*\bscope=)/g, '<th scope="col"'))}</main>
 <nav class="tabbar" aria-label="하단 메뉴">${tabItems.map((n) => link(n, true)).join('')}<button type="button" class="tabmore${moreCurrent ? ' cur' : ''}" aria-expanded="false" aria-controls="moresheet">${icon('more', 22)}<span>더보기</span></button></nav>
 <div class="moresheet" id="moresheet" hidden><ul>${moreLinks.map((m) => `<li><a href="${m.href}"${nav === m.key ? ' class="cur" aria-current="page"' : ''}>${icon(m.icon, 20)}<span>${esc(m.label)}</span></a></li>`).join('')}
   <li><form method="post" action="/logout"><button type="submit">${icon('send', 20)}<span>로그아웃</span></button></form></li></ul></div>
-<script>document.addEventListener('submit',function(e){var m=e.target.getAttribute&&e.target.getAttribute('data-confirm');if(m&&!confirm(m))e.preventDefault();});
-(function(){var b=document.querySelector('.tabmore'),s=document.getElementById('moresheet');if(!b||!s)return;b.addEventListener('click',function(e){e.stopPropagation();var open=s.hidden;s.hidden=!open;b.setAttribute('aria-expanded',String(open));});document.addEventListener('click',function(e){if(!s.hidden&&!s.contains(e.target)){s.hidden=true;b.setAttribute('aria-expanded','false');}});})();
-try{var u=new URL(location.href),ch=false;['ok','err','n','k'].forEach(function(k){if(u.searchParams.has(k)){u.searchParams.delete(k);ch=true;}});if(ch)history.replaceState(null,'',u.pathname+u.search+u.hash);}catch(e){}</script>
+<script>${APP_JS}</script>
 </body></html>`;
 }

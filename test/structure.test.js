@@ -93,3 +93,16 @@ test('지원자 줄 행동: 수정 · 기록 + 더 보기 메뉴', async () => {
   assert.match(html, /상세 화면 열기/);
   assert.match(html, /class="tabs"><a href="\/applicants" aria-current="page">지원자 목록<\/a><a href="\/people">면접 안내 이력<\/a>/);
 });
+
+test('공통 스크립트: 확인 대화상자, 제출 중 잠금, 표 머리글 scope', async () => {
+  const { call, post } = await setup('super');
+  await post('/applicants/new', { name: '홍길동', phone: '010-1111-0001', applied_to: 'A', job: '현장' });
+  const html = await (await call('/applicants')).text();
+  assert.match(html, /window\.askConfirm/);
+  assert.match(html, /aria-busy/);
+  assert.match(html, /<th scope="col">/);
+  assert.ok(!/\bconfirm\(m\)/.test(html), '브라우저 기본 confirm 을 직접 쓰지 않는다');
+  // 쓰던 브라우저 기본 확인 창 호출이 화면 코드에 남아 있지 않다(대체 경로의 폴백 제외)
+  const own = html.replace(/window\.confirm\(msg\)/g, '');
+  assert.ok(!/[^.a-zA-Z]confirm\(/.test(own));
+});

@@ -601,15 +601,13 @@ const SHEET_JS = `<script>
       bar.querySelectorAll('.only').forEach(function (el) { el.style.display = el.classList.contains('only-' + v) ? 'inline-flex' : 'none'; });
       var t = bar.querySelector('[name=reason_text]'), s = bar.querySelector('select.bl-reason');
       if (t && s) t.required = v === 'blacklist' && s.value === 'other';
+      // 공통 스크립트가 이 문구로 확인 창을 띄운다
+      var label = { blacklist: '블랙리스트로 등록', release: '블랙리스트 해제', 'delete': '삭제' }[v];
+      bar.setAttribute('data-confirm', n + '명을 "' + label + '" 처리할까요?' + (v === 'delete' ? ' 되돌릴 수 없어요.' : ''));
     }
     document.addEventListener('change', function (e) {
       if (e.target.classList && (e.target.classList.contains('rowchk') || e.target.id === 'bulkop')) refresh();
       if (e.target.id === 'chkall') { boxes().forEach(function (b) { b.checked = e.target.checked; }); refresh(); }
-    });
-    bar.addEventListener('submit', function (e) {
-      var n = boxes().filter(function (b) { return b.checked; }).length;
-      var label = { blacklist: '블랙리스트로 등록', release: '블랙리스트 해제', 'delete': '삭제' }[op.value];
-      if (!n || !confirm(n + '명을 "' + label + '" 처리할까요?' + (op.value === 'delete' ? ' 되돌릴 수 없어요.' : ''))) e.preventDefault();
     });
     refresh();
   }
