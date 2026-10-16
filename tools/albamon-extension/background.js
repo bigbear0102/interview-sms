@@ -132,7 +132,7 @@ async function processItem(cfg, item) {
 // 문자 관리 시스템으로는 보내지 않는다. 시스템에는 알바몬 지원 메일 본문(표)만 보낸다.
 const GW_MAIL_DEFAULT = 'https://mail.willvi.co.kr/mail/link/emlMail/emlMailMain.do';
 const GW_EVERY_MS = 5 * 60 * 1000;
-const GW_MAX_PER_SCAN = 15;
+const GW_MAX_PER_SCAN = 40;
 const SEEN_CAP = 3000;
 
 async function openTab(url) {
@@ -166,14 +166,23 @@ function pageListMails() {
   return out;
 }
 
-// 메일 본문에서 지원자 표를 찾아 HTML 로 돌려준다
-function pageMailBody() {
-  const els = [...document.querySelectorAll('table,div,td')].filter((e) => {
-    const t = e.innerText || '';
-    return t.includes('공고번호') && t.includes('이력서 보기');
-  });
-  els.sort((x, y) => x.outerHTML.length - y.outerHTML.length);
-  return els[0] ? els[0].outerHTML : '';
+// 메일 본문을 화면을 열지 않고 그룹웨어의 메일 보기 API 로 바로 받아 온다(메일당 약 0.1초).
+// 이미 로그인된 이 탭의 쿠키를 그대로 쓴다. 반환: [{ id, html }]
+async function pageFetchBodies(mails) {
+  const out = [];
+  let next = 0;
+  const one = async (m) => {
+    try {
+      const url = '/mail/data/emlMail/selectMailView.do?_=' + Date.now() + '&mode=view&mailType=all&searchField=&mailboxId=' + encodeURIComponent(m.mb) +
+        '&pageSize=30&startDt=&endDt=&mailId=' + encodeURIComponent(m.id) + '&isLazy=Y&keyword=';
+      const j = await (await fetch(url, { credentials: 'include' })).json();
+      const c = j && j.mailList && j.mailList[0] && j.mailList[0].emlMessageVo && j.mailList[0].emlMessageVo.content;
+      out.push({ id: m.id, html: typeof c === 'string' ? c : '' });
+    } catch { out.push({ id: m.id, html: null }); }   // null = 받지 못함(다음에 다시 시도)
+  };
+  const worker = async () => { while (next < mails.length) await one(mails[next++]); };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  return out;
 }
 
 async function exec(tabId, func, args = []) {
@@ -203,24 +212,25 @@ async function scanGroupware(cfg, force) {
       await chrome.tabs.update(tab.id, { url: base });
       await waitLoaded(tab.id);
     }
-    await sleep(2500);   // 메일 목록은 화면이 열린 뒤에 채워진다
-    const mails = (await exec(tab.id, pageListMails).catch(() => [])) || [];
+    // 메일 목록은 화면이 열린 뒤에 채워진다: 보일 때까지 짧게 확인한다(최대 10초)
+    let mails = [];
+    for (let i = 0; i < 25 && !mails.length; i++) {
+      mails = (await exec(tab.id, pageListMails).catch(() => [])) || [];
+      if (!mails.length) await sleep(400);
+    }
     if (!mails.length) return '';
     const seenArr = (await chrome.storage.local.get('gwSeen')).gwSeen || [];
     const seen = new Set(seenArr);
     const todo = mails.filter((m) => !seen.has(m.id)).slice(0, GW_MAX_PER_SCAN);
     let added = 0, dup = 0, skipped = 0;
-    for (const m of todo) {
-      await setStatus(`그룹웨어 메일 읽는 중… (${added + dup + skipped + 1}/${todo.length})`);
-      await chrome.tabs.update(tab.id, { url: `${base}?mode=view&mailId=${encodeURIComponent(m.id)}&mailboxId=${encodeURIComponent(m.mb)}` });
-      await waitLoaded(tab.id);
-      await sleep(2000);
-      const html = await exec(tab.id, pageMailBody).catch(() => '');
-      if (!html) { skipped++; seen.add(m.id); continue; }
-      const r = await (await api(cfg, '/api/agent/mail', { method: 'POST', body: JSON.stringify({ html }) })).json();
-      seen.add(m.id);
+    if (todo.length) await setStatus(`그룹웨어 메일 ${todo.length}건 읽는 중…`);
+    const bodies = (await exec(tab.id, pageFetchBodies, [todo]).catch(() => [])) || [];
+    for (const b of bodies) {
+      if (b.html === null) continue;   // 못 받은 건은 기억하지 않아서 다음 확인 때 다시 시도
+      if (!b.html) { skipped++; seen.add(b.id); continue; }
+      const r = await (await api(cfg, '/api/agent/mail', { method: 'POST', body: JSON.stringify({ html: b.html }) })).json();
+      seen.add(b.id);
       if (r.ok) { if (r.duplicate) dup++; else added++; } else skipped++;
-      await sleep(800 + Math.random() * 1200);
     }
     await chrome.storage.local.set({ gwSeen: [...seen].slice(-SEEN_CAP) });
     return todo.length ? `그룹웨어 메일 ${added}건 새로 가져왔어요${dup ? `(이미 있는 ${dup}건)` : ''}.` : '';

@@ -133,6 +133,13 @@ const gw = http.createServer((req, res) => {
     return res.end('<meta charset=utf-8><title>로그인</title><form method="post" action="/login"><input id="cmmLogin_userId" name="userId"><input id="cmmLogin_pwd" name="pwd" type="password"><button type="submit" id="cmmLogin_login">로그인</button></form>');
   }
   if (u.pathname === '/main') { res.writeHead(200, H); return res.end('<meta charset=utf-8><h1>그룹웨어 메인</h1>'); }
+  if (u.pathname === '/mail/data/emlMail/selectMailView.do') {
+    const id = u.searchParams.get('mailId'), mb = u.searchParams.get('mailboxId');
+    gwViews.push({ id, mb });
+    const m = mails.find((x) => x.id === id);
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    return res.end(JSON.stringify({ mailList: [{ emlMessageVo: { content: m && mb === MBX ? m.body : '<p>메일함이 달라요</p>' } }] }));
+  }
   if (u.pathname === '/mail/main.do') {
     res.writeHead(200, H);
     if (u.searchParams.get('mode') === 'view') {
