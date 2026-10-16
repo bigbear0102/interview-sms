@@ -3,25 +3,11 @@
 import { first, run, all } from './d1.js';
 import { esc, icon } from './views.js';
 import { pageHeader, emptyState } from './ui.js';
-import { peopleTabs } from './applicants-inbox.js';
+import { peopleTabs, bracketName, suggestCostCenters } from './workspace.js';
+export { bracketName, suggestCostCenters };
 import { inboxScope, pendingInboxCount } from './mail-intake.js';
 
 const clip = (s, n) => String(s || '').trim().slice(0, n);
-
-// 공고 제목의 대괄호 안(예: [아마노코리아(주)])에서 고객사 이름을 뽑는다
-export function bracketName(title) {
-  const m = String(title || '').match(/\[([^\]]{1,60})\]/);
-  if (!m) return '';
-  return m[1].replace(/\(주\)|㈜|\(유\)|주식회사|\s+/g, '').trim();
-}
-
-// 원가중심점 목록에서 비슷한 이름을 제안한다(목록이 없으면 빈 배열)
-export async function suggestCostCenters(db, title, limit = 4) {
-  const core = bracketName(title);
-  if (core.length < 2) return [];
-  const rows = await all(db, `SELECT name FROM cost_centers WHERE name LIKE ? ORDER BY name LIMIT ?`, '%' + core.replace(/[%_]/g, '') + '%', limit);
-  return rows.map((r) => r.name);
-}
 
 export async function postingGroups(db, viewer = null) {
   const sc = inboxScope(viewer);
@@ -120,9 +106,11 @@ export async function handlePostings(c) {
   if (path === '/applicants/postings/save' && method === 'POST') {
     const f = await readForm(request);
     const tab = f.tab === 'done' ? '?tab=done' : '';
+    const back = /^\/applicants\/\d+$/.test(String(f.back || '')) ? f.back : '';   // 지원자 상세에서 눌렀으면 거기로 돌아간다
     const r = await classifyPosting(db, f.recruit_no, f.cost_center, f.job, user.id);
-    if (!r.ok) return redirect(`/applicants/postings${tab}${tab ? '&' : '?'}err=${r.error}`);
+    if (!r.ok) return redirect(back ? `${back}?err=cclist` : `/applicants/postings${tab}${tab ? '&' : '?'}err=${r.error}`);
     await audit(db, user, 'applicant.posting_classify', `n=${r.people}`);
+    if (back) return redirect(`${back}?ok=posting&n=${r.people}`);
     return redirect(`/applicants/postings${tab}${tab ? '&' : '?'}ok=saved&n=${r.people}`);
   }
   return null;

@@ -571,3 +571,43 @@ test('연결 키 자동 발급(JSON): 로그인한 사람의 키가 만들어지
   const anon = await handleRequest(new Request('https://interview.example.test/applicants/inbox/agent-token.json', { method: 'POST', headers: { origin: 'https://interview.example.test' } }), { DB: db, ENCRYPTION_KEY: 'k', PUBLIC_BASE_URL: 'https://interview.example.test' }, { waitUntil() {} });
   assert.notEqual(anon.status, 200);
 });
+
+test('원가중심점 제안: 새 지원 카드와 지원자 상세에서도 버튼 한 번으로 같은 공고 전체에 적용', async () => {
+  const { db, call, post } = await setup();
+  await post('/applicants/inbox/cost-centers/add', { names: '아마노코리아(현장HR)\n아마노코리아(파견)\n효성안양공장(도급)' });
+  const mail = (name, no) => ingestRaw(db, new Uint8Array(mailQP(bodyHtml(name + '(여, 30세)', no))), Date.now());
+  await mail('홍길동', '900000091'); await mail('박민수', '900000092'); await mail('최수아', '900000093');
+  // 새 지원 카드: 대괄호 안 이름으로 목록에서 비슷한 이름을 제안한다(여기서는 테스트 공고 제목에 대괄호가 없어 제안 없음)
+  let page = await (await call('/applicants/inbox')).text();
+  assert.ok(!page.includes('class="sugg"'));
+  // 제목에 고객사가 들어 있는 공고로 바꾼다
+  await db.prepare(`UPDATE applicant_inbox SET job_title='[아마노코리아(주)] 현장 직원 모집'`).run();
+  page = await (await call('/applicants/inbox')).text();
+  assert.match(page, /class="sugg"/);
+  assert.ok(page.includes('value="아마노코리아(파견)"') && page.includes('value="아마노코리아(현장HR)"'));
+  assert.ok(!page.includes('value="효성안양공장(도급)"'));       // 비슷한 것만
+  assert.ok(visible(page).includes('누르면 같은 공고에 한 번에 적용돼요'));
+  // 버튼 = 같은 공고 대기 건 모두에 적용(분류 저장과 같은 경로)
+  const id1 = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='홍길동'`).first()).id;
+  const r = await post(`/applicants/inbox/${id1}/cost`, { cost_center: '아마노코리아(현장HR)', apply_all: '1' });
+  assert.equal(r.headers.get('location'), '/applicants/inbox?ok=cost');
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicant_inbox WHERE cost_center='아마노코리아(현장HR)'`).first()).n, 3);
+  // 정리된 카드에는 제안이 나오지 않는다
+  page = await (await call('/applicants/inbox')).text();
+  assert.ok(!page.includes('class="sugg"'));
+  // 지원자 상세: 정리 필요한 지원 건에 제안 버튼이 있고, 누르면 그 공고 전체에 적용되고 상세로 돌아온다
+  await post(`/applicants/inbox/${id1}/register`, { name: '홍길동', phone: '010-5555-0001' });
+  await db.prepare(`UPDATE applicant_applications SET applied_to=''`).run();     // 정리 전 상태로
+  const ap = await db.prepare(`SELECT id FROM applicants`).first();
+  let d = await (await call('/applicants/' + ap.id)).text();
+  assert.match(d, /class="sugg"/);
+  assert.ok(d.includes('action="/applicants/postings/save"') && d.includes('value="/applicants/' + ap.id + '"'));
+  const sv = await post('/applicants/postings/save', { recruit_no: '111222333', cost_center: '아마노코리아(파견)', job: '', back: '/applicants/' + ap.id });
+  assert.match(sv.headers.get('location'), new RegExp('^/applicants/' + ap.id + '\\?ok=posting&n=\\d+'));
+  d = await (await call('/applicants/' + ap.id + '?ok=posting&n=1')).text();
+  assert.ok(visible(d).includes('원가중심점을 정했어요'));
+  assert.equal((await db.prepare(`SELECT applied_to FROM applicant_applications`).first()).applied_to, '아마노코리아(파견)');
+  // 밖으로 나가는 주소는 따르지 않는다
+  const bad = await post('/applicants/postings/save', { recruit_no: '111222333', cost_center: '아마노코리아(파견)', job: '', back: 'https://evil.example/' });
+  assert.match(bad.headers.get('location'), /^\/applicants\/postings/);
+});

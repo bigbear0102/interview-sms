@@ -274,6 +274,9 @@ a.conn:hover{text-decoration:none;filter:brightness(.96)}
 .appcard .post{margin-top:2px;font-size:14px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .appcard .post b{color:var(--ink);font-weight:600}
 .appcard .states{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.appcard .sugg{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;font-size:13px;color:var(--muted);font-weight:600}
+.chipbtn{min-height:32px;padding:4px 12px;font-size:14px;background:var(--blue-bg);color:var(--blue-t);border:0;font-weight:600}
+.chipbtn:hover{background:var(--blue-bg);filter:brightness(.95)}
 .appcard .cl{margin-top:4px}
 .appcard .cl>summary{display:inline-flex;align-items:center;min-height:32px;color:var(--blue);font-size:14px;font-weight:500;cursor:pointer}
 .appcard .classify{margin-top:8px;display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr) auto;gap:8px;align-items:end}

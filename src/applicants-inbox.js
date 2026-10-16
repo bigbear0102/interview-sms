@@ -5,7 +5,7 @@ import { EXTENSION_FILES, EXTENSION_VERSION } from './extension-bundle.js';
 import { EXT_BRIDGE_JS } from './ext-bridge-page.js';
 import { esc, icon, fmtTime } from './views.js';
 import { fmtPhone, fmtWhen, pageHeader, tableWrap, emptyState } from './ui.js';
-import { peopleTabs, connState, unclassifiedPostings } from './workspace.js';
+import { peopleTabs, connState, unclassifiedPostings, suggestForTitles } from './workspace.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import {
   getUserMailName, setUserMailName, inboxScope, ensureIntakeToken, intakeAddress, intakeDomain, listInbox, pendingInboxCount,
@@ -81,6 +81,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   const ready = all_.filter((r) => r.phone).length;
   const same = {};
   for (const r of all_) if (r.recruit_no) same[r.recruit_no] = (same[r.recruit_no] || 0) + 1;
+  const sugg = status === 'done' ? new Map() : await suggestForTitles(db, all_.filter((r) => !r.cost_center && r.recruit_no).map((r) => r.job_title));
   const f = ['phone', 'class', 'ready'].includes(filter) ? filter : '';
   const rows = status === 'done' ? all_ : all_.filter((r) => (f === 'phone' ? !r.phone : f === 'class' ? !r.cost_center : f === 'ready' ? !!r.phone : true));
 
@@ -107,6 +108,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
         <div class="head"><b class="name">${esc(r.name)}</b><span class="meta">${esc(SUBLINE(r))}</span><span class="when" title="${esc(fmtTime(r.received_at))}">${esc(fmtWhen(r.received_at))}</span></div>
         <div class="post" title="${esc(r.job_title)}"><b>${esc(r.company || '-')}</b> · ${esc(r.job_title)}</div>
         <div class="states">${open ? `${contactState(r)}${classState(r)}` : (STATUS_BADGE[r.status] || '')}${who ? `<span class="badge">${who}</span>` : ''}${r.fetch_state === 'failed' && !r.phone ? `<small class="muted">${esc(r.fetch_note)}</small>` : ''}</div>
+        ${open && !r.cost_center && (sugg.get(r.job_title) || []).length ? `<div class="sugg"><span>제안</span>${sugg.get(r.job_title).map((nm) => `<form method="post" action="/applicants/inbox/${r.id}/cost" class="inline"><input type="hidden" name="cost_center" value="${esc(nm)}"><input type="hidden" name="apply_all" value="1"><button class="chipbtn" title="누르면 같은 공고${same[r.recruit_no] > 1 ? ` 대기 ${same[r.recruit_no]}명` : ''}에 한 번에 적용돼요">${esc(nm)}</button></form>`).join('')}<small class="muted">누르면 같은 공고에 한 번에 적용돼요</small></div>` : ''}
         ${open ? `<details class="cl"><summary>${r.cost_center ? '분류 바꾸기' : '원가중심점·직무 정하기'}</summary>
         <form method="post" action="/applicants/inbox/${r.id}/cost" class="classify">
           <label class="fl">원가중심점<input name="cost_center" data-cc-search value="${esc(r.cost_center)}" placeholder="글자를 입력하면 목록이 나와요" maxlength="80" autocomplete="off" aria-label="${esc(r.name)} 원가중심점"></label>

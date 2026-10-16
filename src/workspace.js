@@ -29,3 +29,31 @@ export async function unclassifiedPostings(db) {
       UNION SELECT recruit_no FROM applicant_inbox WHERE status='pending' AND recruit_no != '' AND cost_center = '')`);
   return r ? r.n : 0;
 }
+
+// 공고 제목의 대괄호 안(예: [아마노코리아(주)])에서 고객사 이름을 뽑는다
+export function bracketName(title) {
+  const m = String(title || '').match(/\[([^\]]{1,60})\]/);
+  if (!m) return '';
+  return m[1].replace(/\(주\)|㈜|\(유\)|주식회사|\s+/g, '').trim();
+}
+
+// 원가중심점 목록에서 비슷한 이름을 제안한다(목록이 없으면 빈 배열)
+export async function suggestCostCenters(db, title, limit = 4) {
+  const core = bracketName(title);
+  if (core.length < 2) return [];
+  const rows = await all(db, `SELECT name FROM cost_centers WHERE name LIKE ? ORDER BY name LIMIT ?`, '%' + core.replace(/[%_]/g, '') + '%', limit);
+  return rows.map((r) => r.name);
+}
+
+// 여러 제목의 제안을 한꺼번에(같은 고객사 이름은 한 번만 찾는다). 반환: Map(제목 → 이름 배열)
+export async function suggestForTitles(db, titles, limit = 3) {
+  const byCore = new Map();
+  const out = new Map();
+  for (const t of new Set(titles)) {
+    const core = bracketName(t);
+    if (!core) { out.set(t, []); continue; }
+    if (!byCore.has(core)) byCore.set(core, await suggestCostCenters(db, t, limit));
+    out.set(t, byCore.get(core));
+  }
+  return out;
+}

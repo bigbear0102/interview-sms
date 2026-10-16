@@ -11,7 +11,7 @@ import {
 } from './applicants-link.js';
 import { peopleTabs, handleInbox } from './applicants-inbox.js';
 import { handlePostings } from './applicants-postings.js';
-import { unclassifiedPostings } from './workspace.js';
+import { unclassifiedPostings, suggestForTitles } from './workspace.js';
 import { pendingInboxCount } from './mail-intake.js';
 
 export const canUseApplicants = (user) => !!user; // 이후: user.role === 'super' 등으로 제한
@@ -380,6 +380,7 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
 
   const pastBl = bls.filter((b) => b.status !== 'active');
   const latest = apps[0] || {};
+  const sugg = await suggestForTitles(db, apps.filter((x) => !x.applied_to && x.recruit_no).map((x) => x.posting_title));
   const created = fmtTime(a.created_at).slice(0, 10);
   const dialog = (idd, title, body) => `<dialog id="${idd}" class="sheet" aria-labelledby="${idd}-t"><div class="dlgbox"><h2 id="${idd}-t">${esc(title)}</h2>${body}</div></dialog>`;
   const cancel = '<button type="button" class="secondary" data-close>닫기</button>';
@@ -396,6 +397,7 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
   const appsPanel = apps.length ? apps.map((x) => `<div class="aitem">
       <div class="t">${esc(x.posting_title || x.job || x.applied_to || '지원')}</div>
       <div class="chips">${x.applied_to ? `<span class="badge info">${esc(x.applied_to)}</span>` : (x.recruit_no ? '<span class="badge wait">원가중심점 정리 필요</span>' : '')}${x.job ? `<span class="badge">${esc(x.job)}</span>` : ''}</div>
+      ${!x.applied_to && x.recruit_no && (sugg.get(x.posting_title) || []).length ? `<div class="sugg"><span>제안</span>${sugg.get(x.posting_title).map((nm) => `<form method="post" action="/applicants/postings/save" class="inline"><input type="hidden" name="recruit_no" value="${esc(x.recruit_no)}"><input type="hidden" name="cost_center" value="${esc(nm)}"><input type="hidden" name="job" value="${esc(x.job || '')}"><input type="hidden" name="back" value="/applicants/${a.id}"><button class="chipbtn" title="이 공고로 지원한 모든 사람에게 적용돼요">${esc(nm)}</button></form>`).join('')}<small class="muted">누르면 같은 공고 지원자 전체에 적용돼요</small></div>` : ''}
       <small class="muted">${esc(fmtTime(x.created_at).slice(0, 10))}${x.recruit_no ? ` · 공고번호 ${esc(x.recruit_no)}` : ''}${x.company_raw ? ` · ${esc(x.company_raw)}` : ''}${x.recruit_no && !x.applied_to ? ' · <a href="/applicants/postings">공고 정리에서 정하기</a>' : ''}</small></div>`).join('')
     : '<p class="muted">등록된 지원 이력이 없어요.</p>';
 
@@ -1043,7 +1045,11 @@ export async function handleApplicants(c) {
     return html(frag);
   }
   if (method === 'GET' && !action) {
-    const body = await renderApplicantDetail(db, id, { user, link: await getLinkSettings(db) });
+    const sp = url.searchParams;
+    const note = sp.get('ok') === 'posting'
+      ? `<div class="notice ok">${icon('check')}<div>원가중심점을 정했어요. 같은 공고로 지원한 <b>${Number(sp.get('n')) || 0}건</b>에 적용했어요. 앞으로 같은 공고도 자동으로 정리돼요.</div></div>`
+      : (sp.get('err') === 'cclist' ? `<div class="notice warn" role="alert">${icon('alert')}<div>원가중심점 목록에 없는 이름이에요. 공고 정리에서 목록을 확인해 주세요.</div></div>` : '');
+    const body = await renderApplicantDetail(db, id, { user, notice: note, link: await getLinkSettings(db) });
     if (!body) return html(pg('없음', '<p>지원자를 찾을 수 없어요.</p>', 'applicants'), 404);
     await audit(db, user, 'applicant.view', `id=${id}`);
     return page('지원자 상세', body);
