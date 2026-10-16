@@ -10,13 +10,15 @@ export const EXT_BRIDGE_JS = String.raw`
   var present = false, queued = [], autoTried = false;
   var last = document.getElementById('extlast');
   var err = document.getElementById('gwerr'), btn = form.querySelector('button[type=submit]'), showPw = document.getElementById('gwshow');
-  var waiting = false, waitTimer = null, old = false;
+  var waiting = false, waitTimer = null, old = false, lastReply = Date.now();
+  var prog = document.getElementById('gwprog');
   function cmp(a, b) { var x = a.split('.'), y = b.split('.'); for (var i = 0; i < 3; i++) { var d = (parseInt(x[i], 10) || 0) - (parseInt(y[i], 10) || 0); if (d) return d; } return 0; }
   function busy(on) {
     waiting = on;
     if (btn) { btn.disabled = on; btn.textContent = on ? '확인하는 중…' : '내 확장에 저장'; }
+    if (prog) prog.hidden = !on;
     clearTimeout(waitTimer);
-    if (on) waitTimer = setTimeout(function () { busy(false); fail('확인이 오래 걸려요. 잠시 뒤 다시 눌러 주세요.'); }, 25000);
+    if (on) waitTimer = setTimeout(function () { busy(false); fail('확장 프로그램에서 답이 오지 않았어요. 확장 프로그램을 새로고침(chrome://extensions)했다면 이 페이지도 새로고침(F5)한 뒤 다시 눌러 주세요.'); }, 12000);
   }
   function fail(msg) {
     if (err) { err.hidden = false; err.textContent = msg; }
@@ -49,6 +51,7 @@ export const EXT_BRIDGE_JS = String.raw`
   window.addEventListener('message', function (e) {
     var d = e.data;
     if (e.source !== window || !d || d.source !== 'albamon-ext') return;
+    lastReply = Date.now();
     if (d.type === 'ready' || d.type === 'state') {
       present = true; show(d.state);
       while (queued.length) post(queued.shift());
@@ -90,7 +93,12 @@ export const EXT_BRIDGE_JS = String.raw`
   var key = document.getElementById('newkey');
   if (key && key.textContent.trim()) queued.push({ type: 'save', agentToken: key.textContent.trim() });
   post({ type: 'hello' });
-  setInterval(function () { if (present && !document.hidden) post({ type: 'hello' }); }, 3000);
+  setInterval(function () {
+    if (document.hidden) { lastReply = Date.now(); return; }   // 보이지 않는 탭에서는 확인하지 않는다
+    post({ type: 'hello' });
+    // 확장을 새로고침하면 이 페이지와의 연결이 끊긴다: 한동안 답이 없으면 알려 준다
+    if (present && Date.now() - lastReply > 9000) { present = false; st.className = 'notice warn'; st.textContent = '확장 프로그램과의 연결이 끊겼어요. 확장을 새로고침했거나 업데이트했다면 이 페이지를 새로고침(F5)해 주세요.'; }
+  }, 3000);
   setTimeout(function () {
     if (!present) { st.textContent = '이 PC의 크롬에서 확장 프로그램이 보이지 않아요. 아직 설치 전이면 위의 "확장 프로그램 내려받기"로 설치하고, 설치했다면 이 페이지를 새로고침해 주세요.'; st.className = 'notice warn'; }
   }, 1800);

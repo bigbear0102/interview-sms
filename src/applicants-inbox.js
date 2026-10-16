@@ -117,6 +117,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
         <label style="display:grid;gap:4px"><span style="font-size:13px">그룹웨어 비밀번호 <label style="font-weight:400"><input type="checkbox" id="gwshow"> 보기</label></span><input id="gwpw" type="password" autocomplete="new-password" maxlength="100" aria-label="그룹웨어 비밀번호"></label>
         <button class="btn small" type="submit">내 확장에 저장</button>
       </form>
+      <div id="gwprog" class="notice" role="status" hidden>확인하는 중… 그룹웨어에 로그인할 수 있는지 확인하고 있어요. (몇 초 걸려요)</div>
       <div id="gwerr" class="notice warn" role="alert" hidden></div>
       <div id="gwok" class="notice ok" hidden>${icon('check')}<div><b>그룹웨어 로그인을 확인했고</b> 내 확장에 저장했어요. 이제 5분마다 내 그룹웨어 메일함에서 알바몬 지원 메일을 가져와요.</div></div>
       ${agentToken ? `<span id="newkey" hidden>${esc(agentToken)}</span>` : ''}
