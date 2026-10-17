@@ -125,16 +125,20 @@ test('일반 문자(면접 안내와 연결 안 됨): 종류·요약을 문자�
 
 test('공고 원가중심점 추천: 목록에 있는 이름만, 확정은 사람이', async () => {
   const { db, env, call } = await setup((sys, user) => sys.includes('원가중심점(현장 이름)')
-    ? (user.includes('공고 제목: [아마노') ? { costCenter: '아마노코리아(현장HR)', job: '상담', confidence: 0.9, reason: '제목의 고객사' } : { costCenter: '없는현장', job: 'x', confidence: 0.99, reason: '' })
+    ? (user.includes('공고 제목: [아마노') ? { costCenter: '아마노코리아(현장HR)', job: '상담', confidence: 0.9, reason: '제목의 고객사' }
+      : user.includes('공고 제목: [평택') ? { costCenter: '효성안양공장(도급)', job: '물류', confidence: 0.9, reason: '지역' }   // 목록엔 있지만 제목에 회사 이름이 없음
+      : { costCenter: '없는현장', job: 'x', confidence: 0.99, reason: '' })
     : undefined);
   for (const n of ['아마노코리아(현장HR)', '효성안양공장(도급)']) await db.prepare(`INSERT INTO cost_centers (name, created_at) VALUES (?, ?)`).bind(n, Date.now()).run();
   const ins = `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, received_at, status) VALUES ('albamon',?,?,?,?,?,?,'pending')`;
   await db.prepare(ins).bind('1', '111', '윌앤비전', '[아마노코리아(주)] 상담 직원 모집', '가', Date.now()).run();
   await db.prepare(ins).bind('2', '222', '윌앤비전', '이상한 공고', '나', Date.now()).run();
-  assert.equal(await aiSuggestPostings(env), 2);
+  await db.prepare(ins).bind('3', '333', '윌앤비전', '[평택/물류] 한국기업 피킹', '다', Date.now()).run();
+  assert.equal(await aiSuggestPostings(env, { limit: 3 }), 3);
   const rows = (await db.prepare(`SELECT * FROM ai_postings ORDER BY recruit_no`).all()).results;
   assert.equal(rows[0].cost_center, '아마노코리아(현장HR)');
   assert.equal(rows[1].cost_center, '');                       // 목록에 없는 이름은 버림
+  assert.equal(rows[2].cost_center, '');                       // 제목에 회사 이름이 없으면 버림
   assert.equal(await aiSuggestPostings(env), 0);                // 한 번 본 공고는 다시 묻지 않음
   const page = await (await call('/applicants/postings')).text();
   assert.match(page, /AI 추천: <button[^>]*data-fill="아마노코리아\(현장HR\)" data-fill-job="상담"/);

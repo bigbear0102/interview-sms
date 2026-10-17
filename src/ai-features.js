@@ -14,7 +14,9 @@ const clip = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 // ---------------- 2) 공고 → 원가중심점 추천 ----------------
 const POSTING_SYSTEM = `채용 공고를 회사 내부 원가중심점(현장 이름) 목록 중 하나에 연결한다. JSON 한 개만 출력한다.
 형식: {"costCenter":"목록에 있는 이름 그대로 또는 빈 문자열","job":"직무(10자 이내, 예: 주차관리)","confidence":0~1,"reason":"근거(20자 이내)"}
-- 공고 제목·회사명에 나온 고객사·지점·현장 이름과 같은 것을 고른다. 근거가 약하면 빈 문자열과 낮은 confidence.
+- 공고 제목·회사명에 나온 **고객사(회사) 이름**이 원가중심점 이름에도 들어 있을 때만 고른다(예: "[아마노코리아(주)]" → "아마노코리아(현장HR)").
+- 지역(평택, 강남 등)·업종(물류, 주차)만 같은 것은 근거가 아니다. 그런 경우 빈 문자열.
+- 근거(reason)에는 공고와 원가중심점에 함께 나온 회사 이름을 적는다.
 - 목록에 없는 이름을 만들지 않는다.`;
 
 // 정리 안 된 공고 중 아직 추천이 없는 것을 몇 개씩 추천해 둔다(주기 작업). 반환: 추천한 공고 수
@@ -37,7 +39,14 @@ export async function aiSuggestPostings(env, { now = Date.now(), limit = 2 } = {
     const j = await askJson(env, { system: POSTING_SYSTEM, maxTokens: 2000,
       user: `공고 제목: ${clip(g.title, 200)}\n회사명: ${clip(g.company, 100)}\n자주 쓰는 직무: ${jobs.join(', ') || '없음'}\n원가중심점 목록:\n${names.join('\n')}` });
     if (!j || j.error) break;   // 실패하면 다음 주기에 다시
-    const cc = set.has(String(j.costCenter || '')) && Number(j.confidence) >= 0.6 ? j.costCenter : '';
+    // 목록에 있고, 확실하고, 원가중심점 이름(괄호 앞)의 3글자 이상이 공고 제목·회사명에 실제로 있어야 한다
+    // ("한국가스공사…"를 "한국기업" 공고에 추천한 일이 있어 2글자 일치는 근거로 보지 않는다)
+    const name = String(j.costCenter || '');
+    const core = name.replace(/\(.*$/, '').replace(/\(주\)|㈜|주식회사|\s+/g, '');
+    const hay = `${g.title} ${g.company}`.replace(/\(주\)|㈜|주식회사|윌앤비전|\s+/g, '');   // 우리 회사 이름은 근거가 아님
+    let shared = false;
+    for (let i = 0; i + 3 <= core.length && !shared; i++) shared = hay.includes(core.slice(i, i + 3));
+    const cc = set.has(name) && Number(j.confidence) >= 0.8 && shared ? name : '';
     await run(db, `INSERT OR REPLACE INTO ai_postings (recruit_no, cost_center, job, note, at) VALUES (?,?,?,?,?)`,
       g.recruit_no, cc, cc ? clip(j.job, 20) : '', cc ? clip(j.reason, 40) : '', now);
     n++;
