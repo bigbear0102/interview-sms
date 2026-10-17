@@ -12,6 +12,7 @@ import { encryptText, decryptText } from './crypto.js';
 import { parseAlbamonApply, saveParsed } from './mail-intake.js';
 
 export const GW_BASE = 'https://gw.willvi.co.kr';
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36';
 export const MAIL_BASE = 'https://mail.willvi.co.kr';
 const ALBAMON_FROM = 'mailmaster@albamon.com';
 const BODY_BUDGET = 25;        // 한 번에 받는 본문 수(외부 요청 한도)
@@ -59,7 +60,8 @@ export class CookieJar {
 async function req(jar, url, init = {}, diag = null, label = '') {
   let cur = url, method = init.method || 'GET', body = init.body;
   for (let hop = 0; hop < 8; hop++) {
-    const headers = { 'User-Agent': 'Mozilla/5.0 (interview-sms groupware)', Accept: init.accept || '*/*', ...(init.headers || {}) };
+    // 그룹웨어는 브라우저 정보(User-Agent)를 해석하므로 실제 크롬과 같은 값을 보낸다(낯선 값이면 로그인이 500 으로 실패한 사례)
+    const headers = { 'User-Agent': BROWSER_UA, 'Accept-Language': 'ko-KR,ko;q=0.9', Accept: init.accept || '*/*', ...(init.headers || {}) };
     const ck = jar.header(cur);
     if (ck) headers.Cookie = ck;
     const res = await fetch(cur, { method, headers, body, redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT) });
@@ -75,10 +77,14 @@ async function req(jar, url, init = {}, diag = null, label = '') {
   }
   throw new Error('리다이렉트가 너무 많아요');
 }
-const jsonPost = (jar, url, obj, diag, label) => req(jar, url, {
-  method: 'POST', body: JSON.stringify(obj), accept: 'application/json',
-  headers: { 'Content-Type': 'application/json;charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' }
-}, diag, label);
+// 로그인 화면의 $.common.ajax 와 같은 모양(Content-Type: application/json, 같은 출처 Origin·Referer)
+const jsonPost = (jar, url, obj, diag, label) => {
+  const o = new URL(url).origin;
+  return req(jar, url, {
+    method: 'POST', body: JSON.stringify(obj), accept: 'application/json, text/javascript, */*; q=0.01',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', Origin: o, Referer: o + (o.includes('mail') ? '/mail/link/emlMail/emlMailMain.do' : '/gw/sub/common/login/cmmLogin.do') }
+  }, diag, label);
+};
 
 // 그룹웨어 로그인. 반환: { ok } | { ok:false, wrong:true, code, now, limit } | { ok:false, error }
 export async function gwLogin(jar, id, pw, diag = [], base = GW_BASE) {
@@ -88,9 +94,15 @@ export async function gwLogin(jar, id, pw, diag = [], base = GW_BASE) {
   let depts = [];
   try { depts = await dr.res.json(); } catch { /* 부서 목록이 없으면 빈 값으로 */ }
   const d = Array.isArray(depts) ? (depts.find((x) => x.reprsntDeptYn === 'Y') || depts[0]) : null;
-  const r = await jsonPost(jar, `${base}/gw/data/common/login/selectLoginFlag.do?lang=ko`, { deptId: d ? d.deptId : '', langCode: 'ko', gwUrl: host, userId: gwId(id), pwd: pw, sec: '', token: null }, diag, '로그인');
+  diag.push(`부서 ${Array.isArray(depts) ? depts.length : '없음'}개${d ? ' (대표 부서 있음)' : ''}`);
+  const r = await jsonPost(jar, `${base}/gw/data/common/login/selectLoginFlag.do?lang=ko&_=${Date.now()}t`, { deptId: d ? d.deptId : '', langCode: 'ko', gwUrl: host, userId: gwId(id), pwd: pw, sec: '', token: null }, diag, '로그인');
+  const text = await r.res.text();
   let j = {};
-  try { j = await r.res.json(); } catch { return { ok: false, error: `로그인 응답을 읽지 못했어요(${r.res.status})` }; }
+  try { j = JSON.parse(text); } catch {
+    // 오류 화면의 앞부분만 남긴다(진단용, 우리가 보낸 값은 들어 있지 않다)
+    diag.push('로그인 응답 앞부분: ' + text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200));
+    return { ok: false, error: `로그인 응답을 읽지 못했어요(${r.res.status})` };
+  }
   diag.push(`로그인 결과 코드 ${j.resultCode}`);
   if (String(j.resultCode) === '0') {
     if (j.mainUrl) await req(jar, `${base}/gw${j.mainUrl}`, {}, diag, '메인');
