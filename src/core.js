@@ -248,6 +248,8 @@ export async function handleInbound(db, gatewayId, { sender, message }) {
     result = parseReply(message);
   }
   const kind = isRescheduleRequest(message) ? 'reschedule' : '';
+  // 일정 변경 요청은 불참이 아니라 담당자가 확인할 일이다("죄송한데 다음 주로 미룰 수 있을까요?")
+  if (kind && result === 'absent' && !slotText) result = 'unclear';
   if (cand.manual) {
     // 관리자가 이미 확정한 건은 원문만 기록
     await run(db, `UPDATE candidates SET reply_text=?, replied_at=?, reply_kind=? WHERE id=?`, message, now, kind, cand.id);

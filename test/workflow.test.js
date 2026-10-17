@@ -87,6 +87,10 @@ test('일정 변경 요청 → 표시, 새 일정으로 이 사람에게만 다�
     candidates: [{ site: '강남', name: '가', phone: '01011110001', interview_at: '10/21 14:00' }, { site: '강남', name: '나', phone: '01011110002', interview_at: '10/21 14:00' }] });
   await db.prepare(`UPDATE candidates SET status='sent', sent_at=?`).bind(Date.now()).run();
   await db.prepare(`UPDATE campaigns SET status='done'`).run();
+  await handleInbound(db, 1, { sender: '01011110002', message: '죄송한데 다음주로 미룰 수 있을까요' });
+  const n = await cand(db, '01011110002');
+  assert.equal(n.status, 'unclear'); // "죄송"이 있어도 변경 요청이면 불참이 아니라 확인 필요
+  assert.equal(n.reply_kind, 'reschedule');
   await handleInbound(db, 1, { sender: '01011110001', message: '다른 날로 변경 가능한가요?' });
   let c = await cand(db, '01011110001');
   assert.equal(c.status, 'unclear');
