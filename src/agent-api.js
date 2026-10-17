@@ -1,7 +1,7 @@
 // 연락처 가져오기 에이전트(담당자 PC에서 도는 프로그램)가 부르는 API
 //  - 로그인 대신 에이전트 토큰(Authorization: Bearer ag_...)으로 인증한다.
 //  - GET  /api/agent/inbox                 처리할 요청 목록(한 번에 최대 5건)
-//  - POST /api/agent/inbox/:id/result      { ok, phone, note } 결과 저장
+//  - POST /api/agent/inbox/:id/result      { ok, phone, note, resume? } 결과 저장(resume: 이력서 화면 전체, v1.9)
 //  - GET  /api/agent/me                    이 키의 주인
 //  - POST /api/agent/mail                  { html } 그룹웨어 메일 본문을 해석해 내 수신함에 저장
 //  - GET  /api/agent/albamon-accounts      등록된 알바몬 계정(관리자 키·공용 키만, 비밀번호 포함)
@@ -74,7 +74,7 @@ export async function handleAgentApi(request, env, url, deps) {
     try { body = await request.json(); } catch { return json({ error: 'bad_json' }, 400); }
     // 관리자 확장(여러 알바몬 계정으로 모든 담당자 건을 처리)은 다른 담당자 건의 결과도 저장할 수 있다
     const isAdmin = uid != null && (await first(db, `SELECT role FROM users WHERE id=? AND active=1`, uid))?.role === 'super';
-    const r = await saveFetchResult(db, id, { ok: !!body.ok, phone: body.phone, note: body.note }, Date.now(), isAdmin ? null : uid);
+    const r = await saveFetchResult(db, id, { ok: !!body.ok, phone: body.phone, note: body.note, resume: body.resume || null }, Date.now(), isAdmin ? null : uid);
     if (!r.ok && r.reason === 'gone') return json({ error: 'gone' }, 404);
     // 어느 알바몬 계정으로 열었는지: 성공이면 그 공고를 그 계정 것으로 배운다
     if (r.ok && body.account_id) {
@@ -82,7 +82,7 @@ export async function handleAgentApi(request, env, url, deps) {
       await noteAccountResult(db, body.account_id, { ok: true, recruitNo: it ? it.recruit_no : '' });
     }
     let registered = false;
-    if (r.ok && (await getAutoRegister(db))) {
+    if (r.ok && !r.resumeOnly && (await getAutoRegister(db))) {
       const item = await first(db, `SELECT * FROM applicant_inbox WHERE id=?`, id);
       if (item && item.status === 'pending') {
         const s = await deps.saveApplicant(db, { name: item.name, phone: r.phone, applied_to: item.cost_center, job: item.job, recruit_no: item.recruit_no, posting_title: item.job_title, company_raw: item.company }, uid, 'mail');
@@ -94,7 +94,7 @@ export async function handleAgentApi(request, env, url, deps) {
         }
       }
     }
-    return json({ ok: r.ok, registered });
+    return json({ ok: r.ok, registered, resume: !!r.resume });
   }
   return json({ error: 'not_found' }, 404);
 }

@@ -15,6 +15,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const puppeteer = createRequire(join(HERE, '..', 'albamon-agent', 'package.json'))('puppeteer-core');
 const TOKEN = 'ag_' + 'a'.repeat(48);
 const results = [];
+const clicks = [];   // 가짜 알바몬에서 "연락처 보기"가 눌린 이력서
+let buys = 0;        // 결제 버튼이 눌린 횟수(0이어야 함)
 const items = [
   { id: 1, apply_no: '111', name: '홍길동', resume_url: '' },     // 정상: 버튼 클릭 → 번호
   { id: 2, apply_no: '222', name: '박민수', resume_url: '' },     // 번호가 이미 보이는 페이지
@@ -43,6 +45,8 @@ const alba = http.createServer((req, res) => {
       <ul><li>개인회원</li><li id="corp">기업회원</li></ul>
       <form method="post" action="/user-account/login"><input name="id" type="text"><input name="pw" type="password"><button type="submit">로그인</button></form>`);
   }
+  if (u.pathname === '/clicked') { clicks.push(u.searchParams.get('no')); res.writeHead(200); return res.end('ok'); }
+  if (u.pathname === '/buy') { buys++; res.writeHead(200); return res.end('ok'); }
   if (u.pathname === '/login-as') { res.writeHead(200, { 'Set-Cookie': 'sid=ok; Path=/', 'Content-Type': 'text/plain' }); return res.end('ok'); }
   if (u.pathname === '/') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end('<meta charset=utf-8><h1>홈</h1>'); }
   if (u.pathname === '/resume') {
@@ -59,6 +63,15 @@ const alba = http.createServer((req, res) => {
     if (no === '412') return res.end(`<meta charset=utf-8><h1>이력서</h1><p>이름 늦게나옴</p><p>연락처 <span id="p"><button onclick="setTimeout(function(){document.getElementById('p').textContent='010-4120-0412'},3000)">연락처 보기</button></span></p>`);
     if (no === '413') return res.end(`<meta charset=utf-8><h1>이력서</h1><p>이름 확인창</p><p>연락처 <span id="p"><button onclick="document.getElementById('d').style.display='block'">연락처 보기</button></span></p><div id="d" role="dialog" style="display:none">연락처를 확인하시겠습니까? <button onclick="document.getElementById('p').textContent='010-4130-0413';document.getElementById('d').style.display='none'">확인</button></div>`);
     if (no === '414') return res.end(`<meta charset=utf-8><h1>이력서</h1><p>삭제된 이력서입니다.</p>`);
+    // v1.9 이력서 전체: 정의 목록·표·구역 제목·접힌 자기소개(더보기). 결제 버튼은 누르면 안 됨.
+    if (no === '416' || no === '417') return res.end(`<meta charset=utf-8><title>이력서 보기</title><h1>이력서</h1>
+      <section><h2>기본정보</h2><dl><dt>이름</dt><dd>${no === '416' ? '전체읽기' : '다시읽기'}</dd><dt>이메일</dt><dd>full@example.com</dd><dt>생년월일</dt><dd>1995.03.04 (31세)</dd></dl>
+      <p>연락처 <span id="p"><button onclick="fetch('/clicked?no=${no}');document.getElementById('p').textContent='010-4160-0416'">연락처 보기</button></span></p></section>
+      <section><h2>희망근무조건</h2><table><tr><th>희망근무지</th><td>서울 강남구</td></tr><tr><th>근무형태</th><td>알바</td><td>주말</td></tr></table></section>
+      <section><h2>경력사항</h2><p>아마노코리아 주차관리 2년</p></section>
+      <section><h2>자격증</h2><table><tr><th>자격증</th><td>운전면허 1종 보통</td></tr></table></section>
+      <section><h2>자기소개</h2><p>성실하게 일하겠습니다.</p><div id="more" style="display:none">야간 근무도 가능합니다.</div><button onclick="document.getElementById('more').style.display='block'">더보기</button></section>
+      <button onclick="fetch('/buy')">열람권 구매</button>`);
     if (no === '415') return res.end(`<meta charset=utf-8><h1>이력서</h1><p>이름 버튼없음</p><button>스크랩</button><button>인쇄</button>`);
     return res.end(`<meta charset=utf-8><h1>이력서</h1><p>이름 홍길동</p><p>연락처 <span id="p"><button onclick="document.getElementById('p').textContent='010-1234-5678'">연락처 보기</button></span></p>`);
   }
@@ -285,6 +298,25 @@ check(rr[12] && rr[12].ok && rr[12].phone === '01041200412', '번호가 누른 �
 check(rr[13] && rr[13].ok && rr[13].phone === '01041300413', '이용권과 상관없는 "연락처를 확인하시겠습니까?" 창은 확인을 눌러 번호를 가져옴');
 check(rr[14] && !rr[14].ok && /찾을 수 없어요/.test(rr[14].note), '삭제된 이력서는 "찾을 수 없어요"로 이유를 남김');
 check(rr[15] && !rr[15].ok && /연락처 보기 버튼을 찾지 못했어요/.test(rr[15].note) && /스크랩/.test(rr[15].note), '버튼이 없으면 이유와 함께 화면에 있던 버튼 이름을 남김(원인 파악용)');
+
+// ---- v1.9: 이력서 전체 읽기, 이력서만 다시 읽기(연락처 보기는 누르지 않음) ----
+for (const [id, no, nm, ro] of [[16, '416', '전체읽기', 0], [17, '417', '다시읽기', 1]]) {
+  items.push({ id, apply_no: no, name: nm, resume_only: ro, resume_url: `http://127.0.0.1:${albaPort}/resume?applyNo=${no}` });
+  pending.add(id);
+}
+await setCfg();
+s = await runAndWait(120000);
+const rv = Object.fromEntries(results.map((r) => [r.id, r]));
+const r16 = rv[16] && rv[16].resume, r17 = rv[17] && rv[17].resume;
+const has = (r, k, v) => r && r.pairs.some(([a, b]) => a === k && b.includes(v));
+console.log('  이력서 읽기 결과(16):', JSON.stringify(r16 && { pairs: r16.pairs, sections: r16.sections, textLen: r16.text.length }));
+check(rv[16] && rv[16].ok && rv[16].phone === '01041600416', '이력서 전체 읽기: 연락처도 함께 가져옴');
+check(has(r16, '이메일', 'full@example.com') && has(r16, '생년월일', '1995.03.04') && has(r16, '희망근무지', '서울 강남구') && has(r16, '근무형태', '알바 / 주말') && has(r16, '자격증', '운전면허'), '이력서의 항목·값(정의 목록·표)을 모두 보냄');
+check(r16 && ['기본정보', '희망근무조건', '경력사항', '자격증', '자기소개'].every((x) => r16.sections.includes(x)), '이력서의 구역 제목을 보냄');
+check(r16 && /야간 근무도 가능합니다/.test(r16.text) && /아마노코리아 주차관리 2년/.test(r16.text), '접힌 "더보기" 내용까지 펼쳐서 글 전체를 보냄');
+check(buys === 0, '결제(열람권 구매) 버튼은 누르지 않음');
+check(rv[17] && rv[17].ok && rv[17].phone === '' && r17 && has(r17, '이메일', 'full@example.com'), '이력서만 다시 읽기: 이력서 내용을 보냄');
+check(!clicks.includes('417') && clicks.includes('416'), '이력서만 다시 읽기에서는 연락처 보기 버튼을 누르지 않음');
 
 // ---- v1.8: 예전 버전이 저장한 그룹웨어 계정·비밀번호를 지운다(그룹웨어 메일은 시스템이 POP3 로 직접) ----
 await sw.evaluate(() => chrome.storage.local.set({ gwAccounts: [{ id: 'x', pw: 'old-secret' }], gwId: 'x', gwPw: 'old-secret', gwSeen: ['1'] }));

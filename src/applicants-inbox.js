@@ -9,6 +9,7 @@ import { getLinkSettings, linkSettingsPanel } from './applicants-link.js';
 import { listAccounts, saveAccount, setAccountActive, deleteAccount, MULTI_ACCOUNT_ENABLED } from './albamon-accounts.js';
 import { listGwAccounts, saveGwAccount, deleteGwAccount, scanGwAccount } from './groupware.js';
 import { opFor } from './oplog.js';
+import { resumeOfInbox, resumePanel, RESUME_CSS } from './resume.js';
 import { peopleTabs, connState, unclassifiedPostings, suggestForTitles, agentIdle, stalledText } from './workspace.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import {
@@ -74,12 +75,18 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
     registered: '지원자로 등록했어요.', cost: `원가중심점을 저장했어요.${Number(fr) ? ` 연락처 ${Number(fr)}건의 가져오기도 요청했어요. 확장 프로그램이 켜져 있으면 1분 안에 채워져요.` : ''}`, ignored: '무시로 처리했어요.', restored: '다시 대기로 돌렸어요.',
     restored2: '다시 대기로 돌렸어요. 이미 등록된 지원자는 지원자 목록에 그대로 있고, 다시 등록해도 중복으로 생기지 않아요.',
     bulkreg: `${Number(n) || 0}명을 지원자로 등록했어요.${Number(skipped) ? ` 연락처가 없는 ${Number(skipped)}건은 건너뛰었어요.` : ''}${Number(later) ? ` 한 번에 ${BULK_REGISTER_MAX}명까지 등록해요. 남은 ${Number(later)}명은 한 번 더 눌러 주세요.` : ''}`,
-    bulkign: `${Number(n) || 0}건을 무시로 처리했어요.`
+    bulkign: `${Number(n) || 0}건을 무시로 처리했어요.`,
+    resumeall: `${Number(n) || 0}명의 이력서를 다시 읽도록 요청했어요. 확장 프로그램이 켜져 있으면 차례로 채워져요(연락처 보기는 다시 누르지 않아요).`
   };
   const ERR = { invalid: '이름과 휴대폰 번호를 확인해 주세요. (예: 010-1234-5678)', gone: '이미 처리되었거나 찾을 수 없는 건이에요.', nopick: '먼저 지원자를 골라 주세요.', cclist: '원가중심점 목록에 없는 이름이에요. 입력하면 나오는 목록에서 골라 주세요.' };
   const notices = [];
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
   if (ERR[err]) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div>${esc(ERR[err])}</div></div>`);
+  // 연락처는 가져왔지만 이력서 내용은 없는 사람(확장 v1.9 전에 가져온 사람): 이력서만 다시 읽기
+  const noResume = (await first(db, `SELECT COUNT(*) n FROM applicant_inbox i WHERE i.resume_url != '' AND i.phone != '' AND i.fetch_state != 'requested'
+      AND NOT EXISTS (SELECT 1 FROM applicant_resumes r WHERE r.inbox_id=i.id) AND ${inboxScope(viewer, 'i').sql}`, ...inboxScope(viewer, 'i').args).catch(() => ({ n: 0 }))).n;
+  if (noResume) notices.push(`<div class="notice info">${icon('info')}<div>연락처만 있고 <b>이력서 내용이 저장되지 않은 지원자가 ${noResume}명</b> 있어요(예전에 가져온 사람).
+    <form method="post" action="/applicants/inbox/resume-all" class="inline" data-busy="이력서 다시 읽기 요청 중" style="margin-left:6px"><button class="small secondary">이력서 내용 가져오기</button></form></div></div>`);
 
   const needPhone = all_.filter((r) => !r.phone).length;
   const stalledN = idle ? all_.filter((r) => !r.phone && r.fetch_state === 'requested').length : 0;
@@ -129,6 +136,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
         </form></details>
         <div class="foot">
           ${r.resume_url ? `<a class="lk" href="${esc(r.resume_url)}" target="_blank" rel="noopener noreferrer">이력서 열기</a>` : ''}
+          ${r.has_resume ? `<a class="lk" href="/applicants/inbox/${r.id}/resume">저장된 이력서</a>` : ''}
           ${fetchBtn}
           <form method="post" action="/applicants/inbox/${r.id}/ignore" class="inline"><button class="lk quiet">무시</button></form>
           <span class="grow"></span>
@@ -302,7 +310,7 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
       <section class="cstep"><h2>알바몬 로그인 유지</h2>
         <p class="muted" style="font-size:15px">확장 프로그램이 있는 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 두세요(문자 인증 포함). 새 지원에서 <b>연락처 가져오기</b>를 누르면 30초 안에 이력서를 열어 연락처를 채워요. 로그인이 풀리면 확장이 "로그인이 필요해요"라고 알리고 멈춰요. 그 크롬에서 다시 로그인하면 이어서 해요.</p></section>
     </div>
-    ${isSuper ? `<section class="section"><div class="shead"><h2>관리자 설정</h2></div>
+    ${isSuper ? `<section class="section"><div class="shead"><h2>관리자 설정</h2><a href="/applicants/resume-fields">이력서 항목 분석 →</a></div>
       ${autoCard}
       ${MULTI_ACCOUNT_ENABLED ? await albamonAccountsCard(db) : ''}
       ${linkSettingsPanel(await getLinkSettings(db), true)}
@@ -529,6 +537,27 @@ export async function handleInbox(c, deps) {
     return redirect('/applicants/inbox');
   }
 
+  if (path === '/applicants/inbox/resume-all' && method === 'POST') {
+    const sc = inboxScope(viewer, 'i');
+    const r = await run(db, `UPDATE applicant_inbox SET resume_only=1, fetch_state='requested', fetch_at=NULL, fetch_note='', fetch_req_at=?
+        WHERE id IN (SELECT i.id FROM applicant_inbox i WHERE i.resume_url != '' AND i.phone != '' AND i.fetch_state != 'requested'
+          AND NOT EXISTS (SELECT 1 FROM applicant_resumes x WHERE x.inbox_id=i.id) AND ${sc.sql})`, Date.now(), ...sc.args);
+    const n = r.meta.changes || 0;
+    await opFor(request)(`${n}명의 이력서 다시 읽기를 요청했어요`);
+    await audit(db, user, 'applicant.inbox_resume_all', `n=${n}`);
+    return redirect(`/applicants/inbox?ok=resumeall&n=${n}`);
+  }
+  const rv = path.match(/^\/applicants\/inbox\/(\d+)\/resume$/);
+  if (rv && method === 'GET') {
+    const sc = inboxScope(viewer, 'i');
+    const it = await first(db, `SELECT i.* FROM applicant_inbox i WHERE i.id=? AND ${sc.sql}`, Number(rv[1]), ...sc.args);
+    const res = it ? await resumeOfInbox(db, it.id) : null;
+    if (!it || !res) return html(pg('없음', '<p>저장된 이력서가 없어요.</p><p><a href="/applicants/inbox">새 지원으로</a></p>', 'applicants'), 404);
+    await audit(db, user, 'applicant.resume_view', `inbox=${it.id}`);
+    let mf = null; try { mf = it.mail_fields ? JSON.parse(it.mail_fields) : null; } catch { mf = null; }
+    return html(pg('저장된 이력서', `${RESUME_CSS}<a class="back" href="${it.applicant_id ? `/applicants/${it.applicant_id}` : '/applicants/inbox'}" style="display:inline-block;font-size:14px;margin-bottom:10px">← ${it.applicant_id ? '지원자' : '새 지원'}</a>
+      <header class="phead"><div><h1>${esc(it.name)}</h1><p class="muted">${esc(it.company || '')} · ${esc(it.job_title || '')}</p></div></header>${resumePanel(res, { mailFields: mf })}`, 'applicants'));
+  }
   if (path === '/applicants/inbox/fetch-all' && method === 'POST') {
     const n = await requestFetch(db, null, viewer);
     await audit(db, user, 'applicant.inbox_fetch_all', `n=${n}`);

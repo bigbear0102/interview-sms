@@ -5,6 +5,7 @@ import { setRating, ratingsOf, ratingPanel, starBadge, RATING_CSS } from './appl
 import { interpret, searchApplicants, renderAsk } from './applicant-ask.js';
 import { aiEnabled } from './ai.js';
 import { opFor } from './oplog.js';
+import { resumeOfApplicant, resumePanel, RESUME_CSS, deleteResumesOf, resumeFieldStats, KNOWN_LABEL } from './resume.js';
 import { all, first, run, stmt } from './d1.js';
 import { esc, icon, fmtTime } from './views.js';
 import { fmtPhone, pageHeader, tableWrap, emptyState, fmtWhen } from './ui.js';
@@ -453,7 +454,8 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
 
   const stage = (await latestStages(db, [a.phone], user).catch(() => new Map())).get(a.phone);
   const rates = await ratingsOf(db, a.id).catch(() => []);
-  return `${RATING_CSS}<a class="back" href="/applicants" style="display:inline-block;font-size:14px;margin-bottom:10px">← 지원자</a>
+  const resume = await resumeOfApplicant(db, a.id, a.phone).catch(() => null);
+  return `${RATING_CSS}${RESUME_CSS}<a class="back" href="/applicants" style="display:inline-block;font-size:14px;margin-bottom:10px">← 지원자</a>
     ${notice}
     <header class="pd-hero">
       <div class="avatar" aria-hidden="true">${esc(String(a.name).trim().slice(0, 1) || '?')}</div>
@@ -464,6 +466,7 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
     </header>
     <div class="pd">
       <div class="pd-main">
+        ${resumePanel(resume)}
         <section class="panel"><div class="shead" style="margin-bottom:6px"><h2 style="margin:0">지원 이력</h2><button type="button" class="tertiary small" data-dialog="dlg-app">${icon('plus', 16)}지원 건 추가</button></div>${appsPanel}</section>
         ${hist ? `<section class="panel"><h2>면접 안내 이력 <small class="muted" style="font-weight:400">문자 시스템 연결</small></h2>${historyHtml(hist)}</section>` : ''}
         ${a.memo ? `<section class="panel"><h2>메모</h2><p>${esc(a.memo)}</p></section>` : ''}
@@ -908,6 +911,19 @@ export async function handleApplicants(c) {
     if (r) return r;
   }
 
+  // 이력서 항목 분석(관리자): 저장된 이력서·메일에서 어떤 항목을 가져올 수 있는지
+  if (path === '/applicants/resume-fields' && method === 'GET') {
+    if (user.role !== 'super') return html(pg('접근 불가', '<p>관리자만 볼 수 있어요.</p>', 'applicants'), 403);
+    const st = await resumeFieldStats(db);
+    const list = (rows, total) => rows.length ? `<table class="cards"><thead><tr><th>항목</th><th>들어 있는 이력서</th></tr></thead><tbody>${rows.map(([k, n]) => `<tr><td>${esc(k)}</td><td>${n}${total ? ` <small class="muted">(${Math.round((n / total) * 100)}%)</small>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">아직 없어요.</p>';
+    return page('이력서 항목 분석', `${pageHeader({ title: '이력서 항목 분석', desc: '저장된 알바몬 이력서와 지원 메일에서 어떤 항목을 가져왔는지 보여 줘요. 확장 v1.9 이후 가져온 이력서부터 쌓여요.' })}
+      <div class="notice info">${icon('info')}<div>새 지원 ${st.inbox.n || 0}건 · 연락처 있음 ${st.inbox.phone || 0}건 · <b>이력서 저장 ${st.resumes}건</b> · 메일 항목 저장 ${st.mails}건</div></div>
+      <section class="section"><h2>정리된 항목</h2>${list(st.known.map(([k, n]) => [KNOWN_LABEL[k] || k, n]), st.resumes)}</section>
+      <section class="section"><h2>이력서 화면의 항목 이름</h2>${list(st.labels, st.resumes)}</section>
+      <section class="section"><h2>이력서 화면의 제목(구역)</h2>${list(st.sections, st.resumes)}</section>
+      <section class="section"><h2>지원 메일의 항목</h2>${list(st.mailLabels, st.mails)}</section>`);
+  }
+
   // AI로 지원자 찾기(문장 → 조건, 순서는 담당자 별점)
   if (path === '/applicants/ask' && method === 'GET') {
     const q = String(url.searchParams.get('q') || '').trim().slice(0, 200);
@@ -1020,6 +1036,8 @@ export async function handleApplicants(c) {
         stmts.push(stmt(db, `DELETE FROM applicant_events WHERE applicant_id=?`, id));
         stmts.push(stmt(db, `DELETE FROM blacklist WHERE applicant_id=?`, id));
         stmts.push(stmt(db, `DELETE FROM applicant_applications WHERE applicant_id=?`, id));
+        stmts.push(stmt(db, `DELETE FROM applicant_resumes WHERE inbox_id IN (SELECT id FROM applicant_inbox WHERE applicant_id=?)`, id));
+        stmts.push(stmt(db, `DELETE FROM applicant_ratings WHERE applicant_id=?`, id));
         stmts.push(stmt(db, `DELETE FROM applicants WHERE id=?`, id));
       }
     } else {
@@ -1214,6 +1232,8 @@ export async function handleApplicants(c) {
     await run(db, `DELETE FROM applicant_events WHERE applicant_id=?`, id);
     await run(db, `DELETE FROM blacklist WHERE applicant_id=?`, id);
     await run(db, `DELETE FROM applicant_applications WHERE applicant_id=?`, id);
+    await deleteResumesOf(db, id);
+    await run(db, `DELETE FROM applicant_ratings WHERE applicant_id=?`, id);
     await run(db, `DELETE FROM applicants WHERE id=?`, id);
     await audit(db, user, 'applicant.delete', `id=${id}`);
     return redirect(withParam('/applicants', 'ok', 'deleted'));

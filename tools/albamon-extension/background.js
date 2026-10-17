@@ -1,7 +1,8 @@
-// 문자 관리 시스템 - 연락처 가져오기 (크롬 확장, v1.8)
+// 문자 관리 시스템 - 연락처·이력서 가져오기 (크롬 확장, v1.9)
 //  - 새 지원에서 [연락처 가져오기]를 누른 건만, 이 크롬에 로그인된 알바몬으로 이력서를 열어 연락처를 채운다.
 //  - 알바몬 아이디·비밀번호는 읽지도 저장하지도 않는다(이 크롬의 로그인 상태를 쓴다).
 //  - 이용권 차감·결제 확인 창이 보이면 누르지 않고 멈춘다.
+//  - (v1.9) 연락처와 함께 이력서 화면 전체(글·항목·구역 제목)를 시스템에 저장한다. 이미 연락처가 있는 사람은 '이력서만 다시 읽기'(연락처 보기 버튼은 누르지 않음).
 //  - (v1.8) 그룹웨어 메일 가져오기는 시스템이 직접(POP3) 하므로 이 확장에서 뺐다. 예전에 저장한 그룹웨어 계정·비밀번호는 지운다.
 const ALARM = 'albamon-poll';
 const MAX_PER_RUN = 5;
@@ -84,6 +85,32 @@ async function pageRead(item, dry) {
   const dialogs = () => [...document.querySelectorAll('dialog[open],[role=dialog],[role=alertdialog],.modal,.popup,.layer,[class*=modal],[class*=popup],[class*=layer]')].filter(visible);
   const loginNow = () => { const pw = document.querySelector('input[type=password]'); return (pw && visible(pw)) || /user-account\/login|\/login/i.test(location.href); };
 
+  // 이력서 화면 전체를 읽는다(v1.9): 글 전체, 항목·값 쌍(표·정의 목록·제목+옆 값), 구역 제목. 화면 구조를 몰라도 빠짐없이 남기기 위해 원본 위주로.
+  const clean = (s) => String(s || '').replace(/[ \t\u00a0]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{2,}/g, '\n').trim();
+  const expand = async () => {
+    // 접힌 내용(더보기·펼치기)만 연다. 결제·연락처·지원 관련 버튼은 누르지 않는다.
+    const SAFE = /^(더보기|더 보기|펼치기|전체보기|전체 보기|내용 더보기|자세히 보기|자세히보기|\+ ?더보기)$/;
+    const btns = [...document.querySelectorAll('button,a,[role=button]')].filter((e) => visible(e) && SAFE.test((e.innerText || '').trim()) && !e.closest('dialog,[role=dialog]')).slice(0, 12);
+    for (const b of btns) { try { if (b.tagName === 'A' && b.getAttribute('href') && !/^#|^javascript/i.test(b.getAttribute('href'))) continue; b.click(); } catch (e) { /* 무시 */ } }
+    if (btns.length) await sleepP(500);
+  };
+  const grab = () => {
+    const pairs = [];
+    const push = (k, v) => {
+      k = clean(k).replace(/\n/g, ' ').slice(0, 40); v = clean(v).slice(0, 1000);
+      if (k && v && k !== v && k.length <= 40 && pairs.length < 300 && !pairs.some((p) => p[0] === k && p[1] === v)) pairs.push([k, v]);
+    };
+    for (const dt of document.querySelectorAll('dt')) { const dd = dt.nextElementSibling; if (dd && dd.tagName === 'DD') push(dt.innerText, dd.innerText); }
+    for (const tr of document.querySelectorAll('tr')) { const th = tr.querySelector('th'); const tds = [...tr.querySelectorAll('td')]; if (th && tds.length) push(th.innerText, tds.map((t) => t.innerText).join(' / ')); }
+    for (const e of document.querySelectorAll('[class*=tit],[class*=label],[class*=key],[class*=head]')) {
+      const t = clean(e.innerText); const sib = e.nextElementSibling;
+      if (t && t.length <= 20 && !t.includes('\n') && sib && sib.innerText && sib.innerText.length <= 1000) push(t, sib.innerText);
+    }
+    const sections = [...new Set([...document.querySelectorAll('h1,h2,h3,h4,h5,[class*=section] [class*=tit],[class*=area] [class*=tit]')].filter(visible)
+      .map((e) => clean(e.innerText).replace(/\n/g, ' ').slice(0, 40)).filter((t) => t && t.length <= 40))].slice(0, 80);
+    return { text: clean(text()).slice(0, 60000), pairs, sections, url: location.href.slice(0, 500), title: (document.title || '').slice(0, 200) };
+  };
+
   // 1) 화면이 준비될 때까지(최대 15초): 로그인 화면 / 번호가 이미 보임 / 연락처 보기 버튼 / 이력서 없음 안내
   const start = Date.now();
   let phone = '', el = null;
@@ -94,6 +121,8 @@ async function pageRead(item, dry) {
     if (phone) break;
     el = findReveal();
     if (el) break;
+    // 이력서만 다시 읽기(연락처는 이미 있음): 이름이 보이고 글이 충분하면 준비된 것으로 본다
+    if (item.resume_only && Date.now() - start > 1500 && t.length > 400 && nameMatches(t, item.name)) break;
     if (Date.now() - start > 3000 && GONE.test(t)) return { state: 'gone' };
     if (Date.now() - start > 10000) return { state: 'nobutton', labels: labels() };
     await sleepP(150);
@@ -102,6 +131,12 @@ async function pageRead(item, dry) {
   const urlOk = location.href.includes(item.apply_no);
   const nameOk = nameMatches(before, item.name);
 
+  // 이력서만 다시 읽기: 연락처 보기 버튼은 누르지 않고 화면 내용만 읽는다
+  if (item.resume_only) {
+    if (!urlOk && !nameOk) return { state: 'mismatch' };
+    await expand();
+    return { state: 'ok', phone, resume: grab() };
+  }
   // 2) 번호가 이미 보이면 누르지 않는다. 아니면 눌러서 번호가 보일 때까지(최대 12초) 기다린다.
   if (!phone) {
     if (dry) return { state: 'dry' };
@@ -127,7 +162,8 @@ async function pageRead(item, dry) {
     }
   }
   if (!urlOk && !nameOk && !nameMatches(text(), item.name)) return { state: 'mismatch' };
-  return { state: 'ok', phone };
+  await expand();
+  return { state: 'ok', phone, resume: grab() };
 }
 
 const NOTES = {
@@ -148,7 +184,7 @@ async function readItem(cfg, item) {
     const started = Date.now();
     for (;;) {
       try {
-        const [res] = await withTimeout(chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pageRead, args: [{ name: item.name, apply_no: item.apply_no }, !!cfg.dry] }), Math.max(ITEM_TIMEOUT - (Date.now() - started), 1000), 'timeout');
+        const [res] = await withTimeout(chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pageRead, args: [{ name: item.name, apply_no: item.apply_no, resume_only: !!item.resume_only }, !!cfg.dry] }), Math.max(ITEM_TIMEOUT - (Date.now() - started), 1000), 'timeout');
         return (res && res.result) || { state: 'nobutton' };
       } catch (e) {
         if (e.message === 'timeout' || Date.now() - started > ITEM_TIMEOUT - 5000) throw e;
@@ -165,7 +201,7 @@ async function readItem(cfg, item) {
 // 결과를 시스템에 보낸다. acct: 어느 알바몬 계정으로 열었는지(여러 계정일 때, 공고→계정 학습용)
 async function reportItem(cfg, item, r, acct = null, prefix = '') {
   if (r.state === 'ok') {
-    await api(cfg, `/api/agent/inbox/${item.id}/result`, { method: 'POST', body: JSON.stringify({ ok: true, phone: r.phone, note: '', account_id: acct ? acct.id : undefined }) });
+    await api(cfg, `/api/agent/inbox/${item.id}/result`, { method: 'POST', body: JSON.stringify({ ok: true, phone: r.phone || '', note: '', resume: r.resume || undefined, account_id: acct ? acct.id : undefined }) });
     return { ok: true };
   }
   const hint = r.labels && r.labels.length ? ` (화면 버튼: ${r.labels.join(', ')})` : '';

@@ -1,6 +1,7 @@
 // 메일 수신(Cloudflare 이메일 Worker) → 알바몬 지원 알림 해석 → 지원자 수신함에 저장
 //  - 메일에는 이름·공고·이력서 링크만 있고 연락처는 없다. 연락처는 담당자가 이력서 페이지에서 확인해 등록한다.
 //  - 메일 원문은 저장하지 않고 해석한 항목만 저장한다.
+import { saveResume } from './resume.js';
 import { first, run, all } from './d1.js';
 
 export const MAX_MAIL_BYTES = 2 * 1024 * 1024;
@@ -195,7 +196,8 @@ export function parseAlbamonApply(html) {
     address: fields['주소'] || '',
     education: fields['학력'] || '',
     career: fields['총 경력'] || fields['경력'] || '',
-    resumeUrl
+    resumeUrl,
+    fields   // 메일의 모든 항목(저장: mail_fields)
   };
 }
 
@@ -216,10 +218,11 @@ export async function saveParsed(db, p, now = Date.now(), ownerId = null, mailAc
   // 같은 공고에 이미 정해 둔 원가중심점이 있으면 자동으로 붙인다
   const rule = p.recruitNo ? await first(db, `SELECT cost_center, job FROM inbox_cost_rules WHERE recruit_no=?`, clip(p.recruitNo, 30)) : null;
   const r = await run(db,
-    `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at, cost_center, owner_user_id, job, mail_account, fetch_state, fetch_req_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at, cost_center, owner_user_id, job, mail_account, fetch_state, fetch_req_at, mail_fields)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     p.source, p.applyNo, clip(p.recruitNo, 30), clip(p.company, 100), clip(p.jobTitle, 200), clip(p.name, 50), clip(p.gender, 4),
-    p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), safeResumeUrl(p.resumeUrl).slice(0, 500), now, rule ? rule.cost_center : '', ownerId, rule ? rule.job : '', clip(mailAccount, 60), rule && rule.cost_center && safeResumeUrl(p.resumeUrl) ? 'requested' : '', rule && rule.cost_center && safeResumeUrl(p.resumeUrl) ? now : null);
+    p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), safeResumeUrl(p.resumeUrl).slice(0, 500), now, rule ? rule.cost_center : '', ownerId, rule ? rule.job : '', clip(mailAccount, 60), rule && rule.cost_center && safeResumeUrl(p.resumeUrl) ? 'requested' : '', rule && rule.cost_center && safeResumeUrl(p.resumeUrl) ? now : null,
+    p.fields && typeof p.fields === 'object' ? JSON.stringify(Object.fromEntries(Object.entries(p.fields).slice(0, 60).map(([k, v]) => [clip(k, 40), clip(v, 500)]))) : '');
   return { ok: true, id: Number(r.meta.last_row_id) };
 }
 
@@ -263,7 +266,7 @@ export async function inboxBreakdown(db, viewer = null) {
 export async function listInbox(db, status = 'pending', limit = 200, viewer = null) {
   const where = status === 'done' ? `status IN ('registered','ignored')` : `status='pending'`;
   const sc = inboxScope(viewer);
-  return all(db, `SELECT i.*, (SELECT name FROM users WHERE id=i.owner_user_id) owner_name FROM applicant_inbox i WHERE ${where.replace(/status/g, 'i.status')} AND ${inboxScope(viewer, 'i').sql} ORDER BY received_at DESC, i.id DESC LIMIT ${Number(limit) || 200}`, ...inboxScope(viewer, 'i').args);
+  return all(db, `SELECT i.*, (SELECT name FROM users WHERE id=i.owner_user_id) owner_name, EXISTS (SELECT 1 FROM applicant_resumes r WHERE r.inbox_id=i.id) has_resume FROM applicant_inbox i WHERE ${where.replace(/status/g, 'i.status')} AND ${inboxScope(viewer, 'i').sql} ORDER BY received_at DESC, i.id DESC LIMIT ${Number(limit) || 200}`, ...inboxScope(viewer, 'i').args);
 }
 
 // ---------------- 연락처 가져오기 요청 · 에이전트 ----------------
@@ -351,29 +354,38 @@ export async function agentQueue(db, limit = 5, userId = null, { all: everyone =
   const own = userId == null || everyone ? '1=1' : '(i.owner_user_id = ? OR i.owner_user_id IS NULL)';
   const args = userId == null || everyone ? [] : [userId];
   const n = Math.min(Math.max(Number(limit) || 5, 1), 20);
+  // 새 지원(연락처 가져오기) + 이미 가져온 사람의 이력서만 다시 읽기(resume_only)
   const cand = await all(db,
     `SELECT i.id FROM applicant_inbox i
-      WHERE i.status='pending' AND i.fetch_state='requested' AND i.resume_url != '' AND (i.fetch_at IS NULL OR i.fetch_at < ?) AND ${own}
+      WHERE (i.status='pending' OR i.resume_only=1) AND i.fetch_state='requested' AND i.resume_url != '' AND (i.fetch_at IS NULL OR i.fetch_at < ?) AND ${own}
       ORDER BY i.id LIMIT ${n}`, now - CLAIM_MS, ...args);
   if (!cand.length) return [];
   const claim = now + Math.floor(Math.random() * 997);   // 이번에 가져간 건을 구분하는 표시
   const ph = cand.map(() => '?').join(',');
   await run(db, `UPDATE applicant_inbox SET fetch_at=? WHERE id IN (${ph}) AND fetch_state='requested' AND (fetch_at IS NULL OR fetch_at < ?)`, claim, ...cand.map((r) => r.id), now - CLAIM_MS);
   return all(db,
-    `SELECT i.id, i.apply_no, i.name, i.resume_url, i.recruit_no, r.account_id
+    `SELECT i.id, i.apply_no, i.name, i.resume_url, i.recruit_no, i.resume_only, r.account_id
        FROM applicant_inbox i LEFT JOIN recruit_accounts r ON r.recruit_no=i.recruit_no AND i.recruit_no != ''
       WHERE i.id IN (${ph}) AND i.fetch_at=? AND i.fetch_state='requested' ORDER BY i.id`, ...cand.map((r) => r.id), claim);
 }
 
 // 에이전트 결과 저장. 반환: { ok, phone? }
-export async function saveFetchResult(db, id, { ok, phone = '', note = '' }, now = Date.now(), userId = null) {
-  const row = await first(db, `SELECT id, status, owner_user_id FROM applicant_inbox WHERE id=?`, id);
-  if (!row || row.status !== 'pending') return { ok: false, reason: 'gone' };
+export async function saveFetchResult(db, id, { ok, phone = '', note = '', resume = null }, now = Date.now(), userId = null) {
+  const row = await first(db, `SELECT id, status, owner_user_id, apply_no, phone, resume_only FROM applicant_inbox WHERE id=?`, id);
+  if (!row || (row.status !== 'pending' && !row.resume_only)) return { ok: false, reason: 'gone' };
   if (userId != null && row.owner_user_id != null && row.owner_user_id !== userId) return { ok: false, reason: 'gone' };
   const p = String(phone || '').replace(/\D/g, '');
+  // 이력서 화면 전체(있으면 함께 저장)
+  const savedResume = ok && resume ? await saveResume(db, id, row.apply_no, resume, now).catch(() => false) : false;
+  if (row.resume_only) {
+    // 이력서만 다시 읽기: 연락처는 비어 있을 때만 채우고, 상태는 원래대로(done)
+    await run(db, `UPDATE applicant_inbox SET resume_only=0, fetch_state='done', fetch_done_at=?, fetch_note=?${!row.phone && /^01[016789]\d{7,8}$/.test(p) ? ', phone=?' : ''} WHERE id=?`,
+      now, savedResume ? '' : String(note || '이력서를 읽지 못했어요').slice(0, 200), ...(!row.phone && /^01[016789]\d{7,8}$/.test(p) ? [p] : []), id);
+    return { ok: savedResume, phone: row.phone || p, resume: savedResume, resumeOnly: true };
+  }
   if (ok && /^01[016789]\d{7,8}$/.test(p)) {
     await run(db, `UPDATE applicant_inbox SET phone=?, fetch_state='done', fetch_note='', fetch_done_at=? WHERE id=?`, p, now, id);
-    return { ok: true, phone: p };
+    return { ok: true, phone: p, resume: savedResume };
   }
   await run(db, `UPDATE applicant_inbox SET fetch_state='failed', fetch_note=?, fetch_done_at=? WHERE id=?`,
     String(note || '연락처를 찾지 못했어요').slice(0, 200), now, id);
