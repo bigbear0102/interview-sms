@@ -786,7 +786,7 @@ export async function renderApplicantSheet(db, opts = {}) {
           <button class="small secondary" formaction="/applicants/batch/${esc(b.id)}/undo" formnovalidate data-confirm="이 업로드를 되돌릴까요?">되돌리기</button></li>`).join('')}</ul></details>` : ''}
       <div class="dlg-actions"><button type="button" class="secondary" data-close>취소</button><button class="btn">등록하기</button></div></form></dialog>`;
 
-  return `${SHEET_CSS}${pageHeader({ title: '지원자', desc: '등록된 지원자를 찾고, 블랙리스트를 관리해요. 문자 발송과는 별개로 동작해요.',
+  return `${SHEET_CSS}${pageHeader({ title: '지원자', desc: '등록된 지원자를 찾고, 골라서 면접 안내를 만들고, 블랙리스트를 관리해요.',
     actions: `<button type="button" class="btn" data-dialog="dlg-add">${icon('plus', 18)}지원자 추가</button><button type="button" class="btn secondary" data-dialog="dlg-import">엑셀로 올리기</button><a class="btn tertiary" href="/applicants/export.csv">${icon('download', 18)}엑셀로 저장</a>` })}
     ${peopleTabs('list', inboxPending, needClass)}
     ${notices.filter((x) => !/공고별로 한꺼번에/.test(x)).join('')}

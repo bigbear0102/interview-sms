@@ -366,9 +366,9 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate, slotTempl
         ${whenChoice({ firstValue: 'manual', firstLabel: '올린 다음에 제가 직접 보낼게요' })}
         <fieldset style="margin-top:16px;display:grid;gap:12px">
           <legend><b>자동으로 보내는 문자</b> <small>면접일시를 "10/20 14:00"처럼 날짜와 시간으로 적어야 시각을 맞출 수 있어요</small></legend>
-          <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="remind_prev" value="1" checked style="margin-top:4px"><span><b>면접 전날 오후 5시에 알려 주기</b><br><small>"참석"이라고 답한 사람에게 한 번. 노쇼를 줄이는 데 가장 효과가 커요.</small></span></label>
-          <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="auto_remind" value="1" checked style="margin-top:4px"><span><b>면접 당일 아침 8시에 알려 주기</b><br><small>"참석"이라고 답한 사람에게 한 번.</small></span></label>
-          <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="auto_followup" value="1" checked style="margin-top:4px"><span><b>답이 없으면 하루 뒤 한 번 더 보내기</b><br><small>같은 안내를 한 번만 더 보내요. 면접이 가까우면 면접 3시간 전에 보내요. 밤(21시~9시)에는 보내지 않아요.</small></span></label>
+          <label class="check"><input type="checkbox" name="remind_prev" value="1" checked> <span><b>면접 전날 오후 5시에 알려 주기</b><br><small>"참석"이라고 답한 사람에게 한 번. 노쇼를 줄이는 데 가장 효과가 커요.</small></span></label>
+          <label class="check"><input type="checkbox" name="auto_remind" value="1" checked> <span><b>면접 당일 아침 8시에 알려 주기</b><br><small>"참석"이라고 답한 사람에게 한 번.</small></span></label>
+          <label class="check"><input type="checkbox" name="auto_followup" value="1" checked> <span><b>답이 없으면 하루 뒤 한 번 더 보내기</b><br><small>같은 안내를 한 번만 더 보내요. 면접이 가까우면 면접 3시간 전에 보내요. 밤(21시~9시)에는 보내지 않아요.</small></span></label>
         </fieldset>
         <details style="margin-top:12px"><summary>더 설정하기</summary>
           <label style="margin-top:8px">개인정보 보관 기간(일) <small>지나면 이름과 전화번호가 저절로 지워져요</small>
@@ -458,7 +458,8 @@ export function renderCampaignDetail(d) {
         <form method="post" action="/campaigns/${camp.id}/set" class="inline">${hid}<button name="status" value="absent">불참</button></form>`
       : `<form method="post" action="/campaigns/${camp.id}/set" class="inline">${hid}
           <button name="status" value="attending">참석</button> <button name="status" value="absent">불참</button></form>`;
-    const resch = ['sent', 'attending', 'absent', 'unclear', 'failed'].includes(c.status) && camp.status !== 'draft' && camp.status !== 'scheduled'
+    // 다시 안내는 답장을 보낸 사람(변경 요청·불참·확인 필요·참석)에게만. 답 없는 사람은 "답 없는 사람에게 다시 보내기"를 쓴다.
+    const resch = (c.reply_kind === 'reschedule' || ['attending', 'absent', 'unclear'].includes(c.status)) && camp.status !== 'draft' && camp.status !== 'scheduled'
       ? `<details class="resch"${c.reply_kind === 'reschedule' ? ' open' : ''}><summary>새 일정으로 다시 안내</summary>
           <form method="post" action="/campaigns/${camp.id}/reschedule" data-confirm="이 사람에게 새 일정으로 안내 문자를 보낼까요?">${hid}
             <input name="when" required placeholder="10/24 14:00" aria-label="새 면접일시" autocomplete="off"><button class="small">보내기</button></form></details>` : '';
@@ -529,7 +530,7 @@ export function renderCampaignDetail(d) {
         `<a href="${esc(qs(key))}"${(statusFilter || '') === key ? ' aria-current="page"' : ''}>${label} <span class="n">${n}</span></a>`).join('')}</div>
       ${tableWrap(`<table class="cards cand"><thead><tr><th>사업장</th><th>이름</th><th>전화번호</th><th>면접일시</th><th>상태</th><th>받은 답장</th><th>면접 결과</th><th></th></tr></thead><tbody>
         ${cands.length ? cands.map((c) => `<tr>
-          <td class="c-site">${esc(c.site)}</td><td class="c-name">${esc(c.name)}</td><td class="c-phone nowrap">${esc(fmtPhone(c.phone))}</td>
+          <td class="c-site">${esc(c.site)}</td><td class="c-name nowrap">${esc(c.name)}</td><td class="c-phone nowrap">${esc(fmtPhone(c.phone))}</td>
           <td class="c-when nowrap">${esc(c.interview_at)}</td>
           <td class="c-status">${c.status === 'sent' && c.delivery === 'queued' ? phoneWaitBadge(c.sent_at) : badge(c.status, slots.length && c.status === 'attending' && !c.template_override ? '일정 정함' : '')}${c.reply_kind === 'reschedule' ? ' <span class="badge review">일정 변경 요청</span>' : ''}${c.followed_at ? ' <small title="답이 없어 자동으로 한 번 더 보냈어요">(한 번 더 보냄)</small>' : ''}${d.flagged && d.flagged.has(c.phone) ? ' <span class="badge no" title="지원자 관리: 블랙리스트 (참고용, 발송은 막지 않아요)">블랙리스트</span>' : ''}${c.manual ? ' <small>(직접)</small>' : ''}${c.delivery === 'delivered' ? ' <small title="상대 휴대폰에 전달됨">✓ 전달</small>' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
           <td class="c-reply msg">${esc(c.reply_text)}</td>

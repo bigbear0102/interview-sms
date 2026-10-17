@@ -106,7 +106,7 @@ export async function flaggedInCampaign(db, campaignId) {
 const STAGE_BY_OUTCOME = { hired: ['ok', '입사'], passed: ['ok', '합격'], rejected: ['mute', '불합격'], noshow: ['no', '노쇼'], showed: ['info', '출석'] };
 const STAGE_BY_STATUS = {
   attending: ['ok', '참석 예정'], absent: ['no', '불참'], unclear: ['review', '확인 필요'], sent: ['wait', '답 없음'],
-  pending: ['mute', '안내 대기'], sending: ['mute', '안내 대기'], failed: ['fail', '못 보냄']
+  pending: ['mute', '보낼 예정'], sending: ['mute', '보낼 예정'], failed: ['fail', '못 보냄']
 };
 export function stageOf(c) {
   if (!c) return null;

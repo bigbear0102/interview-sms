@@ -52,7 +52,7 @@ await setOutcome(db, ids[0], 'passed'); await setOutcome(db, ids[1], 'showed'); 
 const camp3 = await createCampaign(db, { departmentId: 1, gatewayId: 1, name: '면접 일정 고르기 10/21~23', candidates: cands.slice(6, 12), userId: 1,
   slots: ['10/21(화) 14:00', '10/22(수) 10:00', '10/23(목) 15:00'], remindPrev: true, autoRemind: true, autoFollowup: true });
 await db.prepare(`UPDATE campaigns SET status='done', scheduled_at=? WHERE id=?`).bind(Date.now() - 7200000, camp3.campaignId).run();
-await db.prepare(`UPDATE candidates SET status='sent', sent_at=? WHERE campaign_id=?`).bind(Date.now() - 7000000, camp3.campaignId).run();
+await db.prepare(`UPDATE candidates SET status='sent', sent_at=? WHERE campaign_id=?`).bind(Date.now() - 1800000, camp3.campaignId).run();
 for (const [msg, i] of [['2번이요', 6], ['1', 7], ['다음주로 미룰 수 있을까요?', 8], ['불참합니다', 9]]) await handleInbound(db, 1, { sender: cands[i].phone, message: msg });
 // 지원자 관리
 const appIds = [];
