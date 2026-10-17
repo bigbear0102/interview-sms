@@ -36,6 +36,15 @@ export async function aiSuggestPostings(env, { now = Date.now(), limit = 2 } = {
   const jobs = (await all(db, `SELECT job FROM applicant_applications WHERE job != '' GROUP BY job ORDER BY COUNT(*) DESC LIMIT 30`)).map((r) => r.job);
   let n = 0;
   for (const g of todo) {
+    // 같은 제목의 공고를 담당자가 이미 정한 적이 있으면 그것을 추천한다(AI 보다 정확하다)
+    const prev = await first(db, `SELECT applied_to cc, MAX(job) job, COUNT(*) n FROM applicant_applications
+        WHERE posting_title=? AND posting_title != '' AND applied_to != '' GROUP BY applied_to ORDER BY n DESC LIMIT 1`, g.title);
+    if (prev && set.has(prev.cc)) {
+      await run(db, `INSERT OR REPLACE INTO ai_postings (recruit_no, cost_center, job, note, at) VALUES (?,?,?,?,?)`,
+        g.recruit_no, prev.cc, clip(prev.job, 20), '같은 제목 공고에 담당자가 정한 곳', now);
+      n++;
+      continue;
+    }
     const j = await askJson(env, { system: POSTING_SYSTEM, maxTokens: 2000,
       user: `공고 제목: ${clip(g.title, 200)}\n회사명: ${clip(g.company, 100)}\n자주 쓰는 직무: ${jobs.join(', ') || '없음'}\n원가중심점 목록:\n${names.join('\n')}` });
     if (!j || j.error) break;   // 실패하면 다음 주기에 다시

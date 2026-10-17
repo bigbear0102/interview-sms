@@ -8,7 +8,8 @@ export function peopleTabs(active, pending = 0, todo = 0) {
     `<a href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}${cnt ? `<span class="cnt${warn ? ' warn' : ''}" aria-label="${cnt}건">${cnt}</span>` : ''}</a>`;
   return `<nav class="wstabs" aria-label="지원자 관리 메뉴">${t('inbox', '/applicants/inbox', '새 지원', pending)}${
     t('list', '/applicants', '지원자')}${
-    t('postings', '/applicants/postings', '공고 정리', todo, true)}<a class="push" href="/applicants/inbox/connect"${active === 'connect' ? ' aria-current="page"' : ''}>${icon('settings', 16)}연결 설정</a></nav>`;
+    t('postings', '/applicants/postings', '공고 정리', todo, true)}${
+    t('ask', '/applicants/ask', 'AI 찾기')}<a class="push" href="/applicants/inbox/connect"${active === 'connect' ? ' aria-current="page"' : ''}>${icon('settings', 16)}연결 설정</a></nav>`;
 }
 
 // 자동 수집 연결 상태(서버가 아는 것만): 내 확장이 최근에 시스템에 접속했는지

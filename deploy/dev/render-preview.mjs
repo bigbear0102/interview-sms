@@ -19,7 +19,9 @@ const db = openSqliteD1(':memory:', fileURLToPath(new URL('../../migrations', im
 const env = {
   DB: db, ENCRYPTION_KEY: 'preview-key', PUBLIC_BASE_URL: 'https://interview.example',
   GATEWAY_URL: 'https://api.sms-gate.app/3rdparty/v1', GATEWAY_PRIVATE_TOKEN: '',
-  NVIDIA_API_KEY: 'preview', NO_REAL_NETWORK: true   // AI 버튼·표시를 보이게(실제 AI 접속은 하지 않음)
+  NVIDIA_API_KEY: 'preview', NO_REAL_NETWORK: true,  // AI 버튼·표시를 보이게(실제 AI 접속은 하지 않음)
+  // 가짜 AI: "AI로 지원자 찾기" 조건만 돌려준다
+  AI_FETCH: async () => Response.json({ choices: [{ message: { content: JSON.stringify({ areas: ['아마노'], jobs: ['주차관리'], keywords: [], minStars: null, includeBlacklist: false, limit: null, ignored: ['20대'] }) } }] })
 };
 const ctx = { waitUntil() {} };
 
@@ -64,6 +66,10 @@ const appIds = [];
 for (const [i, site] of [[0, '아마노코리아(현장HR)'], [1, '아마노코리아(현장HR)'], [4, '아마노코리아(파견)'], [6, ''], [10, '']]) {
   appIds.push((await saveApplicant(db, { name: names[i], phone: cands[i].phone, applied_to: site, job: site ? '주차관리' : '' }, 1, 'manual')).id);
 }
+// 별점(담당자 2명): 미리보기에서 목록·상세·AI 찾기 순서 확인용
+const u2 = await db.prepare(`INSERT INTO users (username,pass_hash,role,email_verified_at,name,email) VALUES ('lee','x','staff',1,'이담당','lee@willvi.co.kr')`).run();
+await db.prepare(`INSERT INTO applicant_ratings (applicant_id,user_id,stars,updated_at) VALUES (?,1,4,?),(?,?,5,?),(?,1,5,?),(?,1,2,?)`)
+  .bind(appIds[0], Date.now(), appIds[0], Number(u2.meta.last_row_id), Date.now(), appIds[1], Date.now(), appIds[2], Date.now()).run();
 
 // 새 지원(알바몬 메일): 연락처 있음 1, PC 꺼져 요청 대기 3, 분류 필요 2
 const inb = (no, name, phone, state, cc) => db.prepare(`INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, received_at, status, phone, fetch_state, cost_center, resume_url, owner_user_id)
@@ -107,6 +113,7 @@ const pages = {
   today: ['/interviews/today', true],
   inbox_connect: ['/applicants/inbox/connect', true],
   postings: ['/applicants/postings', true],
+  applicant_ask: ['/applicants/ask?q=' + encodeURIComponent('아마노 주차관리 20대 추천해줘'), true],
   applicant_detail: [`/applicants/${appIds[0]}`, true],
   admin: ['/admin', true],
   password: ['/password', true],

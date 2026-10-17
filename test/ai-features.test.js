@@ -124,11 +124,12 @@ test('일반 문자(면접 안내와 연결 안 됨): 종류·요약을 문자�
 });
 
 test('공고 원가중심점 추천: 목록에 있는 이름만, 확정은 사람이', async () => {
-  const { db, env, call } = await setup((sys, user) => sys.includes('원가중심점(현장 이름)')
+  const { db, env, call, AI_FETCH } = await setup((sys, user) => sys.includes('원가중심점(현장 이름)')
     ? (user.includes('공고 제목: [아마노') ? { costCenter: '아마노코리아(현장HR)', job: '상담', confidence: 0.9, reason: '제목의 고객사' }
       : user.includes('공고 제목: [평택') ? { costCenter: '효성안양공장(도급)', job: '물류', confidence: 0.9, reason: '지역' }   // 목록엔 있지만 제목에 회사 이름이 없음
       : { costCenter: '없는현장', job: 'x', confidence: 0.99, reason: '' })
     : undefined);
+  const AI_CALLS = () => AI_FETCH.sent.length;
   for (const n of ['아마노코리아(현장HR)', '효성안양공장(도급)']) await db.prepare(`INSERT INTO cost_centers (name, created_at) VALUES (?, ?)`).bind(n, Date.now()).run();
   const ins = `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, received_at, status) VALUES ('albamon',?,?,?,?,?,?,'pending')`;
   await db.prepare(ins).bind('1', '111', '윌앤비전', '[아마노코리아(주)] 상담 직원 모집', '가', Date.now()).run();
@@ -140,6 +141,14 @@ test('공고 원가중심점 추천: 목록에 있는 이름만, 확정은 사�
   assert.equal(rows[1].cost_center, '');                       // 목록에 없는 이름은 버림
   assert.equal(rows[2].cost_center, '');                       // 제목에 회사 이름이 없으면 버림
   assert.equal(await aiSuggestPostings(env), 0);                // 한 번 본 공고는 다시 묻지 않음
+  // 같은 제목 공고를 담당자가 정한 적이 있으면 AI 대신 그것
+  await db.prepare(`INSERT INTO applicants (name, phone, created_at, updated_at) VALUES ('라','01077770000',1,1)`).run();
+  await db.prepare(`INSERT INTO applicant_applications (applicant_id, applied_to, job, recruit_no, posting_title, created_at) VALUES (1,'효성안양공장(도급)','연구보조','100','효성화학 연구보조',1)`).run();
+  await db.prepare(ins).bind('4', '444', '윌앤비전', '효성화학 연구보조', '마', Date.now()).run();
+  const before = AI_CALLS();
+  assert.equal(await aiSuggestPostings(env), 1);
+  assert.equal(AI_CALLS(), before);
+  assert.deepEqual({ ...(await db.prepare(`SELECT cost_center, job, note FROM ai_postings WHERE recruit_no='444'`).first()) }, { cost_center: '효성안양공장(도급)', job: '연구보조', note: '같은 제목 공고에 담당자가 정한 곳' });
   const page = await (await call('/applicants/postings')).text();
   assert.match(page, /AI 추천: <button[^>]*data-fill="아마노코리아\(현장HR\)" data-fill-job="상담"/);
   assert.equal((await db.prepare(`SELECT cost_center FROM applicant_inbox WHERE recruit_no='111'`).first()).cost_center, '');   // 자동 적용 안 함

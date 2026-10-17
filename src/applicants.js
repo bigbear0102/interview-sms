@@ -1,6 +1,9 @@
 // 지원자·블랙리스트 관리 모듈: 문자 관리 시스템과 별개의 데이터(applicants, blacklist ...)
 // 지금은 로그인한 모두가 사용할 수 있다. 권한을 좁힐 때는 canUseApplicants() 한 곳만 바꾼다.
 // 데이터는 자동으로 지우지 않는다(오래 쓰지 않은 지원자도 계속 보관). 삭제는 관리자가 직접 한다.
+import { setRating, ratingsOf, ratingPanel, starBadge, RATING_CSS } from './applicant-ratings.js';
+import { interpret, searchApplicants, renderAsk } from './applicant-ask.js';
+import { aiEnabled } from './ai.js';
 import { all, first, run, stmt } from './d1.js';
 import { esc, icon, fmtTime } from './views.js';
 import { fmtPhone, pageHeader, tableWrap, emptyState, fmtWhen } from './ui.js';
@@ -29,7 +32,7 @@ export const reasonLabel = (code, text = '') =>
 
 const ACTION_LABEL = {
   create: '등록', edit: '정보 수정', apply: '지원 건 추가',
-  blacklist: '블랙리스트 등록', release: '블랙리스트 해제', blacklist_edit: '블랙리스트 사유 수정', merge: '지원자 병합'
+  blacklist: '블랙리스트 등록', release: '블랙리스트 해제', blacklist_edit: '블랙리스트 사유 수정', merge: '지원자 병합', rate: '별점'
 };
 const MAX_PASTE = 200;
 const PAGE_SIZE = 50;
@@ -298,6 +301,9 @@ export async function mergeApplicants(db, targetId, sourceId, userId) {
   stmts.push(stmt(db, `UPDATE blacklist SET applicant_id=? WHERE applicant_id=?`, targetId, sourceId));
   stmts.push(stmt(db, `UPDATE applicant_applications SET applicant_id=? WHERE applicant_id=?`, targetId, sourceId));
   stmts.push(stmt(db, `UPDATE applicant_events SET applicant_id=? WHERE applicant_id=?`, targetId, sourceId));
+  // 별점: 같은 담당자가 두 사람 모두에 줬으면 이 지원자(target) 쪽을 남긴다
+  stmts.push(stmt(db, `INSERT OR IGNORE INTO applicant_ratings (applicant_id, user_id, stars, updated_at) SELECT ?, user_id, stars, updated_at FROM applicant_ratings WHERE applicant_id=?`, targetId, sourceId));
+  stmts.push(stmt(db, `DELETE FROM applicant_ratings WHERE applicant_id=?`, sourceId));
   stmts.push(stmt(db,
     `DELETE FROM applicant_applications WHERE applicant_id=? AND id NOT IN
        (SELECT MIN(id) FROM applicant_applications WHERE applicant_id=? GROUP BY applied_to, job)`, targetId, targetId));
@@ -445,7 +451,8 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
   ].join('');
 
   const stage = (await latestStages(db, [a.phone], user).catch(() => new Map())).get(a.phone);
-  return `<a class="back" href="/applicants" style="display:inline-block;font-size:14px;margin-bottom:10px">← 지원자</a>
+  const rates = await ratingsOf(db, a.id).catch(() => []);
+  return `${RATING_CSS}<a class="back" href="/applicants" style="display:inline-block;font-size:14px;margin-bottom:10px">← 지원자</a>
     ${notice}
     <header class="pd-hero">
       <div class="avatar" aria-hidden="true">${esc(String(a.name).trim().slice(0, 1) || '?')}</div>
@@ -467,6 +474,7 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
       </div>
       <aside class="pd-side">
         ${statusPanel}
+        <div id="rating">${ratingPanel(a.id, rates, user ? user.id : 0)}</div>
       </aside>
       <aside class="pd-manage">
         <section class="panel"><h2>관리</h2>
@@ -522,7 +530,7 @@ export function safeBack(b) {
 }
 export const withParam = (url, key, val) => `${url}${url.includes('?') ? '&' : '?'}${key}=${encodeURIComponent(val)}`;
 
-const SORTS = [['updated', '최근 변경순'], ['created', '등록일 최신순'], ['name', '이름순']];
+const SORTS = [['updated', '최근 변경순'], ['created', '등록일 최신순'], ['name', '이름순'], ['stars', '별점 높은순']];
 const FILTER_KEYS = ['q', 'status', 'applied', 'job', 'reason', 'from', 'to', 'sort'];
 
 // 목록 주소 만들기(필터·정렬·쪽을 유지)
@@ -676,14 +684,17 @@ export async function renderApplicantSheet(db, opts = {}) {
   const total = (await first(db, `SELECT COUNT(*) n ${base} ${W}`, ...args)).n;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageNo = Math.min(params.page, pages);
-  const order = params.sort === 'name' ? 'a.name COLLATE NOCASE ASC, a.id ASC'
+  const order = params.sort === 'stars' ? 'COALESCE(avg_stars, 0) DESC, n_stars DESC, a.updated_at DESC, a.id DESC'
+    : params.sort === 'name' ? 'a.name COLLATE NOCASE ASC, a.id ASC'
     : params.sort === 'created' ? 'a.created_at DESC, a.id DESC' : 'a.updated_at DESC, a.id DESC';
   const rows = await all(db,
     `SELECT a.id, a.name, a.phone, a.created_at, b.id bl_id, b.reason_code, b.reason_text,
         (SELECT applied_to FROM applicant_applications WHERE applicant_id=a.id ORDER BY id DESC LIMIT 1) applied_to,
         (SELECT job FROM applicant_applications WHERE applicant_id=a.id ORDER BY id DESC LIMIT 1) job,
         EXISTS (SELECT 1 FROM applicant_applications WHERE applicant_id=a.id AND applied_to='' AND recruit_no != '') unclassified,
-        (SELECT COUNT(*) FROM applicant_applications WHERE applicant_id=a.id) apps
+        (SELECT COUNT(*) FROM applicant_applications WHERE applicant_id=a.id) apps,
+        (SELECT ROUND(AVG(stars), 1) FROM applicant_ratings WHERE applicant_id=a.id) avg_stars,
+        (SELECT COUNT(*) FROM applicant_ratings WHERE applicant_id=a.id) n_stars
        ${base} ${W} ORDER BY ${order} LIMIT ${PAGE_SIZE} OFFSET ${(pageNo - 1) * PAGE_SIZE}`, ...args);
   const stages = await latestStages(db, rows.map((r) => r.phone), user || { role: isSuper ? 'super' : '', departments: [] }).catch(() => new Map());
   const c = await first(db,
@@ -759,7 +770,7 @@ export async function renderApplicantSheet(db, opts = {}) {
   const table = rows.length ? `<div class="plistwrap"><table class="plist"><thead><tr><th class="sel"><input type="checkbox" id="chkall" aria-label="이 화면 전체 선택"></th><th scope="col">이름</th><th scope="col">원가중심점 · 직무</th><th scope="col">진행</th><th scope="col">상태</th><th scope="col">등록</th><th class="go"></th></tr></thead><tbody>
     ${rows.map((r) => `<tr data-href="/applicants/${r.id}">
       <td class="sel"><input type="checkbox" class="rowchk" name="ids" value="${r.id}" form="bulkform" aria-label="${esc(r.name)} 선택"></td>
-      <td class="who"><a class="pname" href="/applicants/${r.id}">${esc(r.name)}</a><span class="sub">${esc(fmtPhone(r.phone))}</span></td>
+      <td class="who"><a class="pname" href="/applicants/${r.id}">${esc(r.name)}</a><span class="sub">${esc(fmtPhone(r.phone))}${r.n_stars ? ` · ${starBadge(r.avg_stars, r.n_stars)}` : ''}</span></td>
       <td class="what">${r.applied_to ? `<span class="cc">${esc(r.applied_to)}</span>` : (r.unclassified ? '<span class="badge wait">정리 필요</span>' : '<span class="muted">-</span>')}${r.job ? `<span class="sub">${esc(r.job)}</span>` : ''}${r.apps > 1 ? `<span class="sub">지원 ${r.apps}건</span>` : ''}</td>
       <td class="stage">${stageCell(stages.get(r.phone))}</td>
       <td class="st">${r.bl_id ? statusBadge(r.bl_id) : ''}${r.bl_id ? `<span class="sub">${esc(reasonLabel(r.reason_code, r.reason_text))}</span>` : ''}</td>
@@ -793,7 +804,7 @@ export async function renderApplicantSheet(db, opts = {}) {
           <button class="small secondary" formaction="/applicants/batch/${esc(b.id)}/undo" formnovalidate data-confirm="이 업로드를 되돌릴까요?">되돌리기</button></li>`).join('')}</ul></details>` : ''}
       <div class="dlg-actions"><button type="button" class="secondary" data-close>취소</button><button class="btn">등록하기</button></div></form></dialog>`;
 
-  return `${SHEET_CSS}${pageHeader({ title: '지원자', desc: '등록된 지원자를 찾고, 골라서 면접 안내를 만들고, 블랙리스트를 관리해요.',
+  return `${SHEET_CSS}${RATING_CSS}${pageHeader({ title: '지원자', desc: '등록된 지원자를 찾고, 골라서 면접 안내를 만들고, 블랙리스트를 관리해요.',
     actions: `<button type="button" class="btn" data-dialog="dlg-add">${icon('plus', 18)}지원자 추가</button><button type="button" class="btn secondary" data-dialog="dlg-import">엑셀로 올리기</button><a class="btn tertiary" href="/applicants/export.csv">${icon('download', 18)}엑셀로 저장</a>` })}
     ${peopleTabs('list', inboxPending, needClass)}
     ${notices.filter((x) => !/공고별로 한꺼번에/.test(x)).join('')}
@@ -894,6 +905,20 @@ export async function handleApplicants(c) {
   if (path.startsWith('/applicants/inbox')) {
     const r = await handleInbox({ ...c, env: env || {} }, { saveApplicant, addEvent, safeBack, withParam });
     if (r) return r;
+  }
+
+  // AI로 지원자 찾기(문장 → 조건, 순서는 담당자 별점)
+  if (path === '/applicants/ask' && method === 'GET') {
+    const q = String(url.searchParams.get('q') || '').trim().slice(0, 200);
+    const viewer = { id: user.id, isSuper: user.role === 'super' };
+    const [pending, todo] = await Promise.all([pendingInboxCount(db, viewer).catch(() => 0), unclassifiedPostings(db).catch(() => 0)]);
+    let f = null, result = null;
+    if (q) {
+      f = await interpret(env || {}, q);
+      result = await searchApplicants(db, f);
+      await audit(db, user, 'applicant.ask', `by=${f.by} found=${result.total}`);   // 검색 문장은 남기지 않는다(이름이 들어갈 수 있음)
+    }
+    return page('AI로 지원자 찾기', renderAsk({ q, f, result, pending, todo, ai: aiEnabled(env || {}) }));
   }
 
   if (path === '/applicants' && method === 'GET') {
@@ -1046,7 +1071,7 @@ export async function handleApplicants(c) {
     return redirect(`${withParam(withParam(withParam(back, 'ok', 'undone'), 'n', r.removed), 'k', r.kept)}`);
   }
 
-  const m = path.match(/^\/applicants\/(\d+)(?:\/(blacklist|release|reason|edit|apply|delete|merge|panel))?$/);
+  const m = path.match(/^\/applicants\/(\d+)(?:\/(blacklist|release|reason|edit|apply|delete|merge|panel|rate))?$/);
   if (!m) return null;
   const id = Number(m[1]);
   const action = m[2];
@@ -1081,6 +1106,11 @@ export async function handleApplicants(c) {
     return html(pg('지원자 상세', body, 'applicants'), 400);
   };
 
+  if (action === 'rate') {
+    const changed = await setRating(db, id, user.id, Number(f.stars), now);
+    if (changed) await audit(db, user, 'applicant.rate', `id=${id} stars=${Number(f.stars)}`);
+    return redirect(back ? withParam(back, 'ok', 'rated') : `/applicants/${id}#rating`);
+  }
   if (action === 'blacklist') {
     const code = String(f.reason_code || '');
     const text = clip(f.reason_text, 300);
