@@ -710,6 +710,9 @@ export async function handleRequest(request, env, ctx) {
 // 메일 수신(Cloudflare Email Routing → Worker): 알바몬 지원 알림을 지원자 수신함에 쌓는다.
 // 수신 주소는 비밀 토큰이 들어간 apply-<토큰>@도메인 한 개만 받고, 나머지는 거절한다.
 export async function handleEmail(message, env) {
+  // 쓰지 않음(2026-10-17): 메일 수신 주소(공용·담당자별 apply-…@)는 사용자 Cloudflare 메일 수신에 기대는데 켜진 적이 없었고,
+  // 지원 메일은 이제 그룹웨어 POP3 로 직접 가져온다. 혹시 들어오는 메일은 모두 거절한다.
+  if (!env.MAIL_INTAKE_ENABLED) { message.setReject('Address not found'); return { ok: false, reason: 'disabled' }; }
   try {
     const token = await getIntakeToken(env.DB);
     const local = String(message.to || '').toLowerCase().split('@')[0];

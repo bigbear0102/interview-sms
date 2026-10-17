@@ -191,3 +191,7 @@
 - 대신 **POP3(mail.willvi.co.kr:110)** 로 읽는다(`src/pop3.js`, Workers `cloudflare:sockets`/Node `node:net`). **서버가 STLS 등 암호화를 지원하지 않아 비밀번호가 평문으로 오간다 — 사용자가 위험을 알고 승인("암호화없이 해").** UIDL 로 새 메일만, TOP 으로 알바몬 발신만 골라 RETR, 메일은 지우지 않음. 아이디 형식은 전체 주소→아이디만 순서(틀린 시도 최대 2번), 성공 형식 기억(`pop3_user`). 처음 연결은 최근 100통만.
 - 사고 기록: POP3 를 기본으로 바꾼 직후 기존 시험(웹 방식 가짜 서버용)이 **실제 메일 서버에 가짜 비밀번호로 최대 2번 로그인 시도**했다. 시험이 실제 서버에 닿지 않도록 `NO_REAL_NETWORK`·`NODE_TEST_CONTEXT` 이중 안전장치를 넣었다.
 
+## 메일 수신 주소 없앰 (2026-10-17, 사용자 결정)
+- 공용 수신 주소(apply-<비밀값>@bigbears.me)와 담당자별 자동 전달 주소(apply-<이름>@)는 사용자 Cloudflare 의 메일 수신(Email Routing)에 기대는데, 확인해 보니 **Email Routing 은 켜진 적이 없어 실제로 메일을 받은 적이 없다**. 지원 메일은 이제 그룹웨어 POP3 로 직접 가져온다.
+- 화면(연결 설정)에서 주소·자동 전달 안내·주소 이름 바꾸기·공용 주소 다시 만들기를 없애고, `handleEmail` 은 모든 메일을 거절한다(`MAIL_INTAKE_ENABLED` 를 켜면 예전처럼). 공용 주소 비밀값(applicant_settings `mail_intake_token`)도 지웠다. "연락처를 가져오면 바로 지원자로 등록" 설정은 관리자 카드로 옮겼다.
+

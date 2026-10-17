@@ -228,8 +228,6 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
   if (ERR[err]) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div>${esc(ERR[err])}</div></div>`);
 
-  const myName = viewer ? await getUserMailName(db, viewer.id) : '';
-  const myAddr = myName ? intakeAddress(myName, env) : '';
   // 1단계: 서버가 그룹웨어에 직접 접속해 1분마다 알바몬 지원 메일을 가져온다(PC 불필요)
   const gwList = viewer ? await listGwAccounts(db, isSuper ? null : viewer.id) : [];
   const gwRow = (g) => `<li class="amrow"><div><b>${esc(g.login_id)}</b>${isSuper && g.owner ? ` <span class="muted">· ${esc(g.owner)} 담당</span>` : ''}
@@ -250,37 +248,10 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
           <p class="muted" style="font-size:13px;margin:0">비밀번호가 틀리면 계정이 잠기지 않게 다시 저장할 때까지 쉬어요. 확장 프로그램의 그룹웨어 계정과 같이 써도 같은 지원은 한 번만 들어와요.</p>
           <p class="muted" style="font-size:13px;margin:0">참고: 회사 메일 서버(POP3)가 암호화를 지원하지 않아 <b>비밀번호가 암호화 없이 전송</b>돼요(관리자 승인, 2026-10). 메일은 읽기만 하고 지우지 않아요.</p>
         </div></section>`;
-  let sharedCard = '';
-  if (isSuper) {
-    const token = await ensureIntakeToken(db);
-    const addr = intakeAddress(token, env);
-    sharedCard = `<div class="card"><b>공용 수신 주소 (담당자 없음)</b> <small class="muted">관리자만 보여요 · 보통은 쓰지 않아요. 담당자마다 위 1단계 주소를 쓰세요</small>
-      <div class="stack" style="margin-top:10px">
-        <div class="copybox"><div class="copylabel">담당자가 정해지지 않은 건이 들어오는 주소</div><div class="copyvalue">${esc(addr)}</div>
-          <button type="button" class="btn secondary small" data-copy="${esc(addr)}">복사</button></div>
-        <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
-          <li>Cloudflare 대시보드 → <b>${esc(intakeDomain(env) || '도메인')}</b> → <b>Email → Email Routing</b>을 켜요.</li>
-          <li><b>Routing rules → Catch-all address</b>를 켜고 동작을 <b>Send to a Worker</b> → <b>interview-sms</b>로 골라요. (사람마다 바꾸는 주소를 모두 받으려면 catch-all이 필요해요. 알 수 없는 주소는 시스템이 거절해요.)</li>
-          <li>알바몬 알림을 받는 메일함에서 <b>이 주소로 자동 전달</b>(전달 규칙)을 걸어요.</li>
-        </ol>
-        <form method="post" action="/applicants/inbox/token" class="inline" data-confirm="수신 주소를 새로 만들까요? 지금 주소로 오는 메일은 더 이상 받지 않아요.">
-          <button class="btn secondary small">공용 주소 다시 만들기</button></form>
-        <form method="post" action="/applicants/inbox/auto" class="inline"><input type="hidden" name="on" value="${autoOn ? 0 : 1}">
-          <button class="btn secondary small">연락처를 가져오면 바로 지원자로 등록: <b>${autoOn ? '켜짐 (끄기)' : '꺼짐 (켜기)'}</b></button></form>
-      </div></div>`;
-  }
-
-  const myAddrCard = myAddr ? `<div class="card"><b>자동 전달 주소 이름 바꾸기</b> <small class="muted">바꾸면 그룹웨어 전달 규칙도 새 주소로 고쳐야 해요</small>
-      <div class="stack" style="margin-top:10px">
-        <p class="muted" style="font-size:14px">위 1단계의 내 자동 전달 주소(<b>${esc(myAddr)}</b>)에서 <b>apply-</b> 뒤 이름을 바꿔요. 이 주소로 온 알바몬 지원 메일은 <b>내 새 지원</b>에 들어와요.</p>
-        <form method="post" action="/applicants/inbox/my-address" style="display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));align-items:end">
-          <label style="display:grid;gap:4px"><span style="font-size:13px">주소 이름 바꾸기 <small class="muted">(영문 소문자·숫자·- , 3~30자)</small></span>
-            <input name="name" value="${esc(myName)}" maxlength="30" autocomplete="off" pattern="[a-z0-9][a-z0-9\\-]{2,29}" aria-label="주소 이름"></label>
-          <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn small">바꾸기</button>
-            <button class="btn secondary small" name="random" value="1" formnovalidate>무작위로 다시 만들기</button></div>
-        </form>
-      </div></div>` : '';
-
+  // 관리자: 연락처를 가져오면 바로 지원자로 등록(예전에는 공용 수신 주소 카드 안에 있었다)
+  const autoCard = isSuper ? `<div class="card" style="margin-top:12px"><b>자동 등록</b> <small class="muted">관리자</small>
+      <div style="margin-top:8px"><form method="post" action="/applicants/inbox/auto" class="inline"><input type="hidden" name="on" value="${autoOn ? 0 : 1}">
+        <button class="btn secondary small">연락처를 가져오면 바로 지원자로 등록: <b>${autoOn ? '켜짐 (끄기)' : '꺼짐 (켜기)'}</b></button></form></div></div>` : '';
   const keyCard = `<div class="card"><b>연결 키</b> <small class="muted">${tokenSet ? '있음' : '없음'} · 보통은 자동으로 연결돼서 만질 일이 없어요</small>
       <div class="stack" style="margin-top:10px">
         ${agentToken ? `<div class="copybox"><div class="copylabel">내 연결 키 (지금만 보여요)</div><div class="copyvalue">${esc(agentToken)}</div>
@@ -315,22 +286,11 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
       <section class="cstep"><h2>알바몬 로그인 유지</h2>
         <p class="muted" style="font-size:15px">같은 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 두세요. 새 지원 화면에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 이력서를 열어 연락처를 채워 줘요.</p></section>
     </div>
+    ${autoCard}
     ${isSuper && MULTI_ACCOUNT_ENABLED ? await albamonAccountsCard(db) : ''}
     ${isSuper ? linkSettingsPanel(await getLinkSettings(db), true) : ''}
     <details class="advanced"><summary>고급 설정 · 다른 방법</summary>
-      <section class="card" style="margin-top:12px"><h2 style="font-size:18px">다른 방법: 그룹웨어 자동 전달 <small class="muted" style="font-weight:400">비밀번호를 저장하고 싶지 않을 때</small></h2>
-        <p class="muted" style="font-size:15px">알바몬 지원 알림 메일이 오면 그룹웨어가 아래 주소로 <b>자동 전달</b>하게 규칙을 한 번 만들어요. 전달된 메일은 <b>내 새 지원</b>에 바로 들어와요. 비밀번호를 저장할 필요가 없어요.</p>
-        <div class="stack">
-          ${myAddr ? `<div class="copybox"><div class="copylabel">자동 전달할 주소 (내 메일 주소가 아니에요)</div><div class="copyvalue">${esc(myAddr)}</div>
-            <button type="button" class="btn secondary small" data-copy="${esc(myAddr)}">복사</button></div>` : ''}
-          <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
-            <li>그룹웨어 메일 → <b>환경설정</b> → <b>메일 자동 분류(규칙)</b> 또는 <b>자동 전달</b>을 열어요.</li>
-            <li>조건: <b>보낸 사람</b>이 <code>mailmaster@albamon.com</code> 인 메일.</li>
-            <li>동작: <b>전달</b> → 위 주소를 붙여 넣고 저장해요. (원본은 내 메일함에도 남겨 두세요)</li>
-            <li>시험: 알바몬에서 지원 알림이 오면 몇 분 안에 <a href="/applicants/inbox">새 지원</a>에 보여요.</li>
-          </ol>
-        </div></section>
-      ${myAddrCard}${keyCard}${sharedCard}
+      ${keyCard}
       <section class="card" style="margin-top:12px"><h2 style="font-size:18px">다른 방법: 그룹웨어 계정으로 가져오기 <small class="muted" style="font-weight:400">자동 전달을 쓸 수 없을 때만</small></h2>
         <p class="muted" style="font-size:15px">메일 주소(또는 아이디)와 비밀번호를 넣으면 그 메일함에서 알바몬 지원 메일을 5분마다 가져와요. 비밀번호는 <b>이 PC 크롬의 확장에만</b> 저장되고 시스템(서버)으로는 보내지 않아요. 계정은 <b>최대 5개</b>까지 등록할 수 있어요.</p>
         <div class="stack">
@@ -508,6 +468,7 @@ export async function handleInbox(c, deps) {
     return page('이력서에서 가져온 연락처', await renderCapture(db, viewer));
   }
   if (path === '/applicants/inbox/my-address' && method === 'POST') {
+    return redirect('/applicants/inbox/connect');   // 메일 수신 주소(Cloudflare Email Routing)는 쓰지 않는다(2026-10-17)
     const f = await readForm(request);
     const r = await setUserMailName(db, user.id, f.random === '1' ? '' : f.name);
     if (!r.ok) return redirect(`/applicants/inbox/connect?err=addr_${r.error}`);
@@ -515,6 +476,7 @@ export async function handleInbox(c, deps) {
     return redirect('/applicants/inbox/connect?ok=addr');
   }
   if (path === '/applicants/inbox/token' && method === 'POST') {
+    return redirect('/applicants/inbox/connect');   // 메일 수신 주소(Cloudflare Email Routing)는 쓰지 않는다(2026-10-17)
     if (user.role !== 'super') return html(pg('접근 불가', '<p>관리자만 할 수 있어요.</p>', 'applicants'), 403);
     await ensureIntakeToken(db, { rotate: true });
     await audit(db, user, 'applicant.inbox_token', '');

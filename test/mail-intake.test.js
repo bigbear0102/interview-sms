@@ -101,7 +101,7 @@ test('수신 처리: 저장, 같은 지원 번호는 한 번만, 알바몬이 �
   assert.ok(!JSON.stringify(row).includes('<html'));
 });
 
-test('이메일 Worker: 비밀 주소만 받고 나머지는 거절', async () => {
+test('이메일 Worker: 메일 수신 주소는 쓰지 않아(2026-10-17) 비밀 주소로 와도 모두 거절', async () => {
   const { db, env } = await setup();
   const token = await ensureIntakeToken(db);
   const mk = (to, raw) => {
@@ -118,12 +118,15 @@ test('이메일 Worker: 비밀 주소만 받고 나머지는 거절', async () =
   assert.equal(await pendingInboxCount(db), 0);
   const good = mk(`apply-${token}@bigbears.me`, raw);
   const r = await handleEmail(good, env);
-  assert.equal(good.out.rejected, '');
-  assert.equal(r.ok, true);
-  assert.equal(await pendingInboxCount(db), 1);
+  assert.equal(good.out.rejected, 'Address not found');
+  assert.equal(r.ok, false);
+  assert.equal(await pendingInboxCount(db), 0);
+  // (다시 쓰려면 MAIL_INTAKE_ENABLED 를 켠다)
+  const again = mk(`apply-${token}@bigbears.me`, raw);
+  assert.equal((await handleEmail(again, { ...env, MAIL_INTAKE_ENABLED: '1' })).ok, true);
 });
 
-test('수신함 화면: 수신 주소(관리자), 대기 목록, 등록(연락처 필수)·무시·되돌리기', async () => {
+test('수신함 화면: 대기 목록, 등록(연락처 필수)·무시·되돌리기', async () => {
   const { db, call, post } = await setup();
   await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('홍길동(여, 32세)', '900000001'))), Date.now());
   await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('박민수(남, 30세)', '900000002'))), Date.now());
@@ -133,8 +136,7 @@ test('수신함 화면: 수신 주소(관리자), 대기 목록, 등록(연락�
   assert.ok(text.includes('㈜테스트-회사'));
   assert.match(page, /target="_blank" rel="noopener noreferrer"/);
   const connPage = await (await call('/applicants/inbox/connect')).text();
-  const token = await getIntakeToken(db);
-  assert.ok(connPage.includes(`apply-${token}@bigbears.me`) || connPage.includes(`apply-${token}@`));
+  assert.doesNotMatch(connPage, /apply-[0-9a-z-]+@/);                // 메일 수신 주소는 보이지 않는다(쓰지 않음)
   assert.match(connPage, /javascript:\(function\(\)/);
   // 연락처 없이/잘못된 연락처 → 거절
   const id1 = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='홍길동'`).first()).id;
@@ -172,13 +174,12 @@ test('수신함 화면: 수신 주소(관리자), 대기 목록, 등록(연락�
   assert.ok(cap.includes('박민수'));
 });
 
-test('수신 주소 다시 만들기는 관리자만, 새 주소가 만들어진다', async () => {
+test('공용 수신 주소 다시 만들기는 없어졌다(바뀌지 않음)', async () => {
   const { db, post } = await setup();
   const t1 = await ensureIntakeToken(db);
   const r = await post('/applicants/inbox/token', {});
-  assert.equal(r.headers.get('location'), '/applicants/inbox/connect?ok=token');
-  const t2 = await getIntakeToken(db);
-  assert.notEqual(t1, t2);
+  assert.equal(r.headers.get('location'), '/applicants/inbox/connect');
+  assert.equal(await getIntakeToken(db), t1);
 });
 
 import { createAgentToken, verifyAgentToken, requestFetch, getAutoRegister, saveParsed, safeResumeUrl, hasAgentToken } from '../src/mail-intake.js';
@@ -482,55 +483,24 @@ test('마이그레이션 정리 규칙: 예전에 "지원한 곳=근무회사명
 
 import { getUserMailName, setUserMailName, ownerForMailName } from '../src/mail-intake.js';
 
-test('내 메일 수신 주소: 사람마다 따로, 이름 바꾸기(중복·형식 검사), 그 주소로 온 메일은 내 수신함으로', async () => {
+test('메일 수신 주소(담당자별)도 쓰지 않는다: 화면에 없고, 이름 바꾸기 없음, 그 주소로 온 메일 거절', async () => {
   const { db, env, call, post } = await setup();   // 관리자
-  const mk = async (name) => {
-    const u = await db.prepare(`INSERT INTO users (username,pass_hash,role,email_verified_at,name,email) VALUES (?,?,'member',1,?,?)`).bind(name, await hashPassword('x'), name, name + '@willvi.co.kr').run();
-    const id = Number(u.meta.last_row_id);
-    const sid = await createSession(db, id);
-    const c = (p, init = {}) => handleRequest(new Request('https://interview.example.test' + p, { ...init, headers: { cookie: `sid=${sid}`, origin: 'https://interview.example.test', ...(init.headers || {}) } }), env, { waitUntil() {} });
-    return { id, call: c, post: (p, f) => c(p, { method: 'POST', body: new URLSearchParams(f).toString(), headers: { 'content-type': 'application/x-www-form-urlencoded' } }) };
-  };
-  const a = await mk('에이'), b = await mk('비');
-  // 일반 사용자에게도 내 주소가 보인다
-  const n1 = await getUserMailName(db, a.id);
-  assert.match(n1, /^[0-9a-f]{12}$/);
-  assert.equal(await getUserMailName(db, a.id), n1);   // 그대로 유지
-  let page = await (await a.call('/applicants/inbox/connect')).text();
-  assert.ok(page.includes(`apply-${n1}@bigbears.me`) || page.includes(`apply-${n1}@`));
-  // 1단계는 서버가 그룹웨어에 직접 연결(1분마다), 자동 전달·확장 계정 등록은 "다른 방법"
+  const page = await (await call('/applicants/inbox/connect')).text();
+  assert.doesNotMatch(page, /apply-[0-9a-z-]+@/);
   assert.ok(visible(page).includes('지원 메일 받기: 그룹웨어 직접 연결'));
-  assert.ok(visible(page).includes('다른 방법: 그룹웨어 자동 전달'));
+  assert.ok(!visible(page).includes('그룹웨어 자동 전달'));
+  assert.ok(!visible(page).includes('공용 수신 주소'));
   assert.ok(visible(page).includes('다른 방법: 그룹웨어 계정으로 가져오기'));
+  assert.ok(visible(page).includes('연락처를 가져오면 바로 지원자로 등록'));   // 자동 등록 설정은 관리자 카드로 남음
   assert.ok(visible(page).indexOf('그룹웨어 직접 연결') < visible(page).indexOf('크롬 확장 프로그램 설치'));
-  // 이름 바꾸기
-  let r = await a.post('/applicants/inbox/my-address', { name: 'Hong-Gildong' });
-  assert.equal(r.headers.get('location'), '/applicants/inbox/connect?ok=addr');
-  assert.equal(await getUserMailName(db, a.id), 'hong-gildong');   // 소문자로
-  assert.equal((await b.post('/applicants/inbox/my-address', { name: 'hong-gildong' })).headers.get('location'), '/applicants/inbox/connect?err=addr_taken');
-  for (const bad of ['ab', '한글이름', 'has space', '-start', 'x'.repeat(31)]) {
-    assert.equal((await setUserMailName(db, b.id, bad)).error, 'invalid', bad);
-  }
-  // 무작위로 다시 만들기
-  r = await a.post('/applicants/inbox/my-address', { random: '1', name: 'whatever' });
-  assert.equal(r.headers.get('location'), '/applicants/inbox/connect?ok=addr');
-  assert.match(await getUserMailName(db, a.id), /^[0-9a-f]{12}$/);
-  await a.post('/applicants/inbox/my-address', { name: 'hong-gildong' });
-  assert.equal(await ownerForMailName(db, 'HONG-GILDONG'), a.id);
-
-  // 그 주소로 온 메일 → A 의 수신함(owner = A), 모르는 주소는 거절
+  const before = await getUserMailName(db, 1);
+  const r = await post('/applicants/inbox/my-address', { name: 'hong-gildong' });
+  assert.equal(r.headers.get('location'), '/applicants/inbox/connect');
+  assert.equal(await getUserMailName(db, 1), before);
   const mkMsg = (to, raw) => { const out = { rejected: '' }; return { to, rawSize: raw.length, raw: new Response(raw).body, setReject(w) { out.rejected = w; }, out }; };
-  const raw = new Uint8Array(mailQP(bodyHtml('김영희(여, 28세)', '900000071')));
-  const good = mkMsg('apply-hong-gildong@bigbears.me', raw);
-  assert.equal((await handleEmail(good, env)).ok, true);
-  assert.equal(good.out.rejected, '');
-  const row = await db.prepare(`SELECT owner_user_id FROM applicant_inbox WHERE apply_no='900000071'`).first();
-  assert.equal(row.owner_user_id, a.id);
-  const bad = mkMsg('apply-nobody-here@bigbears.me', raw);
-  await handleEmail(bad, env);
-  assert.equal(bad.out.rejected, 'Address not found');
-  // B 에게는 A 의 메일이 보이지 않는다
-  assert.ok(!visible(await (await b.call('/applicants/inbox')).text()).includes('김영희'));
+  const m = mkMsg(`apply-${before}@bigbears.me`, new Uint8Array(mailQP(bodyHtml('김영희(여, 28세)', '900000071'))));
+  await handleEmail(m, env);
+  assert.equal(m.out.rejected, 'Address not found');
 });
 
 test('처리됨 → 다시 대기로: 무시한 건도, 등록한 건도 돌아오고 안내가 나온다(중복 등록 없음)', async () => {
