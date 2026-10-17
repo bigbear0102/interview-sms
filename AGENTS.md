@@ -51,6 +51,8 @@ npm start                # Node 서버 (회사 서버 이전용, .env 필요)
 9. **화면은 `docs/UX.md`(IA·용어·패턴·접근성)와 `DESIGN.md`(Apple 스타일 토큰)를 따른다.** 새 화면은 `src/ui.js` 의 뱃지/숫자 카드/머리말을 쓰고, 전화번호·시각은 `fmtPhone`/`fmtWhen` 으로 표시한다. 색은 `src/views.js` 의 CSS 변수만 쓴다. 화면을 바꾸면 `node deploy/dev/render-preview.mjs`로 데스크톱·모바일(390px)을 직접 확인한다.
 10. **운영 감시 코드**(`src/monitor.js`)를 바꾸면 `test/monitor.test.js` 와 `docs/OPERATIONS.md`(판정 기준/알림 주기)를 함께 고친다. 새 Cron 작업은 `runScheduled` 안에서 `rateLimit` 으로 주기를 제한하고, 실패는 `recordError` 로 남긴다.
 11. 변경 후 `docs/DECISIONS.md`의 결정/로드맵을 최신으로 유지한다.
+12. `tools/albamon-extension/` 의 파일(README 포함)을 고치면 **`node scripts/build-extension.mjs` 를 실행해 `src/extension-bundle.js` 까지 함께 커밋**한다(배포는 묶음을 다시 만들지만 레포가 어긋나면 CI 가 실패한다). 확장 동작을 바꾸면 CI "Extension test"(실제 크롬 + 가짜 알바몬)를 확인한다.
+13. D1 은 **쿼리당 값(?) 100개, 요청당 내부 호출 1,000번** 제한이 있다. IN 목록은 `d1.js` 의 `chunks` 로 나누고, 건마다 여러 번 조회하는 일괄 처리는 한 번에 처리할 수를 제한한다. 시험용 DB 어댑터도 100개 제한을 지킨다.
 
 ## 알려진 사항
 - 게이트웨이 API 경로(`/messages`, `/webhooks`)와 웹훅 payload 는 공식 문서 기준이며 **실제 폰으로 종단 시험 전**이다.
