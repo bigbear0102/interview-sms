@@ -182,7 +182,7 @@ table.cand td.actions{width:168px}
 table.cand td.actions select{width:100%;max-width:168px;min-height:38px}
 table.cand td.c-outcome select{width:auto;min-width:96px}
 @media (min-width:721px){table.cand td.c-reply{max-width:170px}table.cand td.c-site{white-space:nowrap}}
-.resch>summary{cursor:pointer;color:var(--blue);font-size:14px;margin-top:6px}
+.resch>summary{cursor:pointer;color:var(--blue);font-size:14px;margin-top:4px;min-height:36px;display:flex;align-items:center}
 .resch form{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .resch input{width:110px;min-width:0;min-height:36px;padding:6px 10px}
 .slotsum{display:grid;gap:8px;margin:0;padding:0;list-style:none}
@@ -255,6 +255,7 @@ table.sample th,table.sample td{white-space:nowrap}
 
 /* ---------- 칩/탭 ---------- */
 .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+@media (max-width:720px){.tabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-left:-16px;margin-right:-16px;padding:0 16px}.tabs::-webkit-scrollbar{display:none}.tabs a{flex:none;white-space:nowrap}}
 .tabs a{padding:8px 16px;border-radius:999px;background:var(--chip);color:var(--ink);font-size:15px;font-weight:500;display:inline-flex;gap:6px;min-height:40px;align-items:center}
 .tabs a:hover{text-decoration:none;background:var(--line)}
 .tabs a.on,.tabs a[aria-current=page]{background:var(--ink);color:var(--bg)}
