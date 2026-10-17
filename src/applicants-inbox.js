@@ -6,6 +6,7 @@ import { EXT_BRIDGE_JS } from './ext-bridge-page.js';
 import { esc, icon, fmtTime } from './views.js';
 import { fmtPhone, fmtWhen, pageHeader, tableWrap, emptyState } from './ui.js';
 import { getLinkSettings, linkSettingsPanel } from './applicants-link.js';
+import { listAccounts, saveAccount, setAccountActive, deleteAccount } from './albamon-accounts.js';
 import { peopleTabs, connState, unclassifiedPostings, suggestForTitles, agentIdle, stalledText } from './workspace.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import {
@@ -163,6 +164,35 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
 
 export const BULK_REGISTER_MAX = 100;
 
+// 알바몬 계정 여러 개(관리자): 등록하면 관리자 PC 의 확장이 계정을 바꿔 가며 모든 담당자의 연락처 요청을 처리한다
+async function albamonAccountsCard(db) {
+  const list = await listAccounts(db);
+  const row = (a) => `<li class="amrow">
+      <div><b>${esc(a.label)}</b> <span class="muted">${esc(a.login_id)}</span>${a.active ? '' : ' <span class="badge mute">꺼짐</span>'}
+        <div class="muted" style="font-size:13px">${a.last_error ? `<span style="color:var(--red-t)">${esc(a.last_error)}</span> · ` : ''}${a.last_ok_at ? `마지막 성공 ${esc(fmtWhen(a.last_ok_at))}` : '아직 쓰지 않았어요'} · 연결된 공고 ${a.postings}개</div></div>
+      <div class="amacts">
+        <details><summary class="lk">수정</summary>
+          <form method="post" action="/applicants/inbox/albamon-account" class="amform"><input type="hidden" name="id" value="${a.id}">
+            <input name="label" value="${esc(a.label)}" maxlength="40" required aria-label="계정 이름">
+            <input name="login_id" value="${esc(a.login_id)}" maxlength="60" required autocomplete="off" aria-label="아이디">
+            <input name="pw" type="password" autocomplete="new-password" placeholder="새 비밀번호(바꿀 때만)" aria-label="새 비밀번호">
+            <button class="small">저장</button></form></details>
+        <form method="post" action="/applicants/inbox/albamon-account/${a.id}/toggle" class="inline"><input type="hidden" name="on" value="${a.active ? 0 : 1}"><button class="lk">${a.active ? '끄기' : '켜기'}</button></form>
+        <form method="post" action="/applicants/inbox/albamon-account/${a.id}/delete" class="inline" data-confirm="이 알바몬 계정을 지울까요? 이 계정 공고의 연락처는 더 가져오지 못해요."><button class="lk" style="color:var(--red-t)">지우기</button></form>
+      </div></li>`;
+  return `<style>.amlist{list-style:none;margin:8px 0 12px;padding:0}.amrow{display:flex;gap:12px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;padding:12px 0;border-top:1px solid var(--line-soft)}.amrow:first-child{border-top:0}.amacts{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.amform{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));margin-top:8px}</style>
+    <section class="card" style="margin-top:12px"><h2 style="font-size:18px;margin:0">알바몬 계정 <small class="muted" style="font-weight:400">관리자 · ${list.length}개</small></h2>
+      <p class="muted" style="font-size:14px;margin:6px 0 0">공고가 여러 알바몬 기업회원 계정에 나뉘어 있으면 모두 등록하세요. <b>관리자 PC의 확장</b>이 계정을 바꿔 가며 <b>모든 담당자의 연락처 요청</b>을 처리해요. 처음 보는 공고는 계정을 차례로 시도해 열리는 계정을 기억하고, 다음부터는 그 계정으로 바로 열어요. 처리하는 동안 그 크롬의 알바몬 로그인이 잠깐 바뀌었다가 원래대로 돌아와요.</p>
+      <p class="muted" style="font-size:13px;margin:6px 0 0">비밀번호는 암호화해 저장하고 화면에 다시 보여 주지 않아요. 관리자에게 연결된 확장 프로그램만 받아요.</p>
+      ${list.length ? `<ul class="amlist">${list.map(row).join('')}</ul>` : '<p class="muted" style="margin:12px 0">아직 등록한 계정이 없어요. 없으면 각 PC 크롬에 로그인된 알바몬 계정으로 가져와요.</p>'}
+      <form method="post" action="/applicants/inbox/albamon-account" class="amform" autocomplete="off">
+        <input name="label" maxlength="40" required placeholder="계정 이름 (예: 아마노 현장HR)" aria-label="새 계정 이름">
+        <input name="login_id" maxlength="60" required placeholder="알바몬 아이디" autocomplete="off" aria-label="새 계정 아이디">
+        <input name="pw" type="password" required placeholder="비밀번호" autocomplete="new-password" aria-label="새 계정 비밀번호">
+        <button class="btn small">계정 추가</button></form>
+    </section>`;
+}
+
 // 선택한 건 수에 따라 아래쪽 처리 막대를 보여 준다
 const INBOX_JS = String.raw`
 (function () {
@@ -191,8 +221,8 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
   const autoOn = isSuper ? await getAutoRegister(db) : false;
   const pending = await pendingInboxCount(db, viewer);
   const todo = await unclassifiedPostings(db).catch(() => 0);
-  const FLASH = { auto: '자동 등록 설정을 저장했어요.', addr: '내 수신 주소를 바꿨어요. 메일 전달 규칙을 걸어 두셨다면 새 주소로 바꿔 주세요.', token: '공용 수신 주소를 새로 만들었어요. 메일 전달 설정도 새 주소로 바꿔 주세요.' };
-  const ERR = { addr_invalid: '주소 이름은 영문 소문자·숫자·-만 쓸 수 있고 3~30자예요.', addr_taken: '이미 다른 사람이 쓰고 있는 이름이에요. 다른 이름을 써 주세요.' };
+  const FLASH = { am_saved: '알바몬 계정을 저장했어요. 관리자 PC의 확장이 다음 확인 때(1분 안) 새 계정을 받아요.', am_deleted: '알바몬 계정을 지웠어요.', am_toggled: '알바몬 계정 사용 여부를 바꿨어요.', auto: '자동 등록 설정을 저장했어요.', addr: '내 수신 주소를 바꿨어요. 메일 전달 규칙을 걸어 두셨다면 새 주소로 바꿔 주세요.', token: '공용 수신 주소를 새로 만들었어요. 메일 전달 설정도 새 주소로 바꿔 주세요.' };
+  const ERR = { am_need: '알바몬 계정 이름과 아이디를 적어 주세요.', am_pw: '알바몬 비밀번호를 적어 주세요.', am_gone: '알바몬 계정을 찾을 수 없어요.', am_dup: '이미 등록된 알바몬 아이디예요.', addr_invalid: '주소 이름은 영문 소문자·숫자·-만 쓸 수 있고 3~30자예요.', addr_taken: '이미 다른 사람이 쓰고 있는 이름이에요. 다른 이름을 써 주세요.' };
   const notices = [];
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
   if (ERR[err]) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div>${esc(ERR[err])}</div></div>`);
@@ -275,6 +305,7 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
       <section class="cstep"><h2>알바몬 로그인 유지</h2>
         <p class="muted" style="font-size:15px">같은 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 두세요. 새 지원 화면에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 이력서를 열어 연락처를 채워 줘요.</p></section>
     </div>
+    ${isSuper ? await albamonAccountsCard(db) : ''}
     ${isSuper ? linkSettingsPanel(await getLinkSettings(db), true) : ''}
     <details class="advanced"><summary>고급 설정 · 다른 방법</summary>
       ${myAddrCard}${keyCard}${sharedCard}
@@ -529,6 +560,20 @@ export async function handleInbox(c, deps) {
     await audit(db, user, 'applicant.agent_token', 'auto');
     return new Response(JSON.stringify({ token }), { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
   }
+  // 알바몬 계정(관리자)
+  if (path.startsWith('/applicants/inbox/albamon-account') && method === 'POST') {
+    if (user.role !== 'super') return html(pg('접근 불가', '<p>관리자만 바꿀 수 있어요.</p>'), 403);
+    const f = Object.fromEntries(new URLSearchParams(await request.text()));
+    const m = path.match(/^\/applicants\/inbox\/albamon-account\/(\d+)\/(toggle|delete)$/);
+    if (m && m[2] === 'toggle') { await setAccountActive(db, m[1], f.on === '1'); await audit(db, user, 'albamon.toggle', `id=${m[1]} on=${f.on}`); return redirect('/applicants/inbox/connect?ok=am_toggled'); }
+    if (m && m[2] === 'delete') { await deleteAccount(db, m[1]); await audit(db, user, 'albamon.delete', `id=${m[1]}`); return redirect('/applicants/inbox/connect?ok=am_deleted'); }
+    if (path !== '/applicants/inbox/albamon-account') return redirect('/applicants/inbox/connect');
+    const r = await saveAccount(db, env, { id: f.id ? Number(f.id) : null, label: f.label, login_id: f.login_id, pw: f.pw });
+    if (r.error) return redirect(`/applicants/inbox/connect?err=${r.error}`);
+    await audit(db, user, 'albamon.save', `id=${f.id || 'new'}`);
+    return redirect('/applicants/inbox/connect?ok=am_saved');
+  }
+
   if (path === '/applicants/inbox/agent-token' && method === 'POST') {
     const token = await createAgentToken(db, user.id);
     await audit(db, user, 'applicant.agent_token', '');

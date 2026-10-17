@@ -322,7 +322,7 @@ export async function setAutoRegister(db, on) {
 // 가져오기 요청: 아직 연락처가 없고 대기 중인 건만. ids 가 없으면 대기 전체. 반환: 요청한 건수
 export async function requestFetch(db, ids = null, viewer = null) {
   const sc = inboxScope(viewer);
-  let sql = `UPDATE applicant_inbox SET fetch_state='requested', fetch_note='' WHERE status='pending' AND phone='' AND fetch_state != 'requested' AND ${sc.sql}`;
+  let sql = `UPDATE applicant_inbox SET fetch_state='requested', fetch_note='', fetch_at=NULL WHERE status='pending' AND phone='' AND fetch_state != 'requested' AND ${sc.sql}`;
   const args = [...sc.args];
   if (Array.isArray(ids)) {
     if (!ids.length) return 0;
@@ -337,18 +337,32 @@ export async function requestFetch(db, ids = null, viewer = null) {
 export async function requestFetchByPosting(db, recruitNo) {
   const r = String(recruitNo || '');
   if (!r) return 0;
-  const x = await run(db, `UPDATE applicant_inbox SET fetch_state='requested', fetch_note='' WHERE recruit_no=? AND status='pending' AND phone='' AND fetch_state != 'requested' AND resume_url != ''`, r);
+  const x = await run(db, `UPDATE applicant_inbox SET fetch_state='requested', fetch_note='', fetch_at=NULL WHERE recruit_no=? AND status='pending' AND phone='' AND fetch_state != 'requested' AND resume_url != ''`, r);
   return x.meta.changes || 0;
 }
 
 // 에이전트가 처리할 요청 목록(한 번에 적게)
 // userId: 내 건 + 담당자 없는 공용 건만(예전 공용 키는 전체)
-export async function agentQueue(db, limit = 5, userId = null) {
-  const own = userId == null ? '1=1' : '(owner_user_id = ? OR owner_user_id IS NULL)';
+// 확장이 처리할 요청을 가져가며 "가져감" 표시(fetch_at)를 남긴다. 다른 확장은 3분 동안 같은 건을 가져가지 않는다
+// (관리자 PC 가 여러 알바몬 계정으로 모두 처리하고, 담당자 PC 도 자기 건을 처리할 때 같은 이력서를 두 번 열지 않게).
+// all=true 면 담당자 구분 없이 모든 요청(알바몬 계정이 등록된 관리자 확장).
+export const CLAIM_MS = 3 * 60 * 1000;
+export async function agentQueue(db, limit = 5, userId = null, { all: everyone = false, now = Date.now() } = {}) {
+  const own = userId == null || everyone ? '1=1' : '(i.owner_user_id = ? OR i.owner_user_id IS NULL)';
+  const args = userId == null || everyone ? [] : [userId];
+  const n = Math.min(Math.max(Number(limit) || 5, 1), 20);
+  const cand = await all(db,
+    `SELECT i.id FROM applicant_inbox i
+      WHERE i.status='pending' AND i.fetch_state='requested' AND i.resume_url != '' AND (i.fetch_at IS NULL OR i.fetch_at < ?) AND ${own}
+      ORDER BY i.id LIMIT ${n}`, now - CLAIM_MS, ...args);
+  if (!cand.length) return [];
+  const claim = now + Math.floor(Math.random() * 997);   // 이번에 가져간 건을 구분하는 표시
+  const ph = cand.map(() => '?').join(',');
+  await run(db, `UPDATE applicant_inbox SET fetch_at=? WHERE id IN (${ph}) AND fetch_state='requested' AND (fetch_at IS NULL OR fetch_at < ?)`, claim, ...cand.map((r) => r.id), now - CLAIM_MS);
   return all(db,
-    `SELECT id, apply_no, name, resume_url FROM applicant_inbox
-      WHERE status='pending' AND fetch_state='requested' AND resume_url != '' AND ${own}
-      ORDER BY id LIMIT ${Math.min(Math.max(Number(limit) || 5, 1), 20)}`, ...(userId == null ? [] : [userId]));
+    `SELECT i.id, i.apply_no, i.name, i.resume_url, i.recruit_no, r.account_id
+       FROM applicant_inbox i LEFT JOIN recruit_accounts r ON r.recruit_no=i.recruit_no AND i.recruit_no != ''
+      WHERE i.id IN (${ph}) AND i.fetch_at=? AND i.fetch_state='requested' ORDER BY i.id`, ...cand.map((r) => r.id), claim);
 }
 
 // 에이전트 결과 저장. 반환: { ok, phone? }

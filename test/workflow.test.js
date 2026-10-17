@@ -455,3 +455,53 @@ test('QC: 발송 처리 중(sending)에 온 아주 빠른 답장도 반영되고
   assert.equal(c.status, 'attending');
   assert.equal(c.gw_msg_id, 'g1');
 });
+
+test('알바몬 계정 여러 개: 관리자 등록(암호화), 관리자 확장만 비밀번호 받음, 요청 중복 방지, 공고→계정 학습', async () => {
+  const { db, env, call, post } = await setup();
+  const { createAgentToken } = await import('../src/mail-intake.js');
+  // 관리자 화면에서 계정 2개 등록
+  assert.match((await post('/applicants/inbox/albamon-account', { label: '현장HR', login_id: 'corpA', pw: 'pwA!1' })).headers.get('location'), /ok=am_saved/);
+  await post('/applicants/inbox/albamon-account', { label: '파견', login_id: 'corpB', pw: 'pwB!2' });
+  assert.match((await post('/applicants/inbox/albamon-account', { label: '중복', login_id: 'corpA', pw: 'x' })).headers.get('location'), /err=am_dup/);
+  const raw = await db.prepare(`SELECT pw_enc FROM albamon_accounts WHERE login_id='corpA'`).first();
+  assert.match(raw.pw_enc, /^enc\$/);                                       // 평문 저장 금지
+  const page = visible(await (await call('/applicants/inbox/connect')).text());
+  assert.match(page, /알바몬 계정 관리자 · 2개/);
+  assert.doesNotMatch(await (await call('/applicants/inbox/connect')).text(), /pwA!1/);   // 화면에 비밀번호 없음
+
+  // 일반 사용자 + 그 사람의 확장
+  await db.prepare(`INSERT INTO users (username,pass_hash,role,email_verified_at,name,email) VALUES ('staff','x','admin',1,'담당','s@willvi.co.kr')`).run();
+  const adminKey = await createAgentToken(db, 1);
+  const staffKey = await createAgentToken(db, 2);
+  const agent = (key, path, init = {}) => handleRequest(new Request('https://example.test' + path, { ...init, headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' } }), env, { waitUntil() {} });
+  const a1 = await (await agent(adminKey, '/api/agent/albamon-accounts')).json();
+  assert.equal(a1.allowed, true);
+  assert.deepEqual(a1.accounts.map((x) => [x.login_id, x.pw]), [['corpA', 'pwA!1'], ['corpB', 'pwB!2']]);
+  const s1 = await (await agent(staffKey, '/api/agent/albamon-accounts')).json();
+  assert.equal(s1.allowed, false);
+  assert.equal(s1.accounts.length, 0);                                          // 일반 담당자 확장은 비밀번호를 못 받음
+
+  // 담당자(2) 건 3개, 같은 공고 2개
+  for (const [no, rn] of [['1', 'R1'], ['2', 'R1'], ['3', 'R2']]) {
+    await db.prepare(`INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, received_at, status, fetch_state, resume_url, owner_user_id)
+      VALUES ('albamon',?,?,'회사','공고',?,?,'pending','requested','https://www.albamon.com/x',2)`).bind(no, rn, '사람' + no, Date.now()).run();
+  }
+  // 관리자 확장은 all=1 로 모든 담당자 건을 가져가고, 가져간 건은 3분 동안 다른 확장이 못 가져감
+  const q1 = await (await agent(adminKey, '/api/agent/inbox?limit=2&all=1')).json();
+  assert.deepEqual(q1.items.map((x) => x.apply_no), ['1', '2']);
+  const q2 = await (await agent(staffKey, '/api/agent/inbox?limit=5')).json();
+  assert.deepEqual(q2.items.map((x) => x.apply_no), ['3']);
+  const q3 = await (await agent(staffKey, '/api/agent/inbox?limit=5')).json();
+  assert.equal(q3.items.length, 0);
+  // 결과: corpB(id 2)로 열림 → 공고 R1 은 계정 2 로 학습, 다음 요청에 힌트로 붙음
+  await agent(adminKey, `/api/agent/inbox/${q1.items[0].id}/result`, { method: 'POST', body: JSON.stringify({ ok: true, phone: '01012345678', account_id: 2 }) });
+  const learned = await db.prepare(`SELECT account_id FROM recruit_accounts WHERE recruit_no='R1'`).first();
+  assert.equal(learned.account_id, 2);
+  await db.prepare(`UPDATE applicant_inbox SET fetch_at=NULL WHERE apply_no='2'`).run();
+  const q4 = await (await agent(adminKey, '/api/agent/inbox?limit=5&all=1')).json();
+  assert.equal(q4.items.find((x) => x.apply_no === '2').account_id, 2);
+  assert.match(visible(await (await call('/applicants/inbox/connect')).text()), /파견 corpB[\s\S]*마지막 성공[\s\S]*연결된 공고 1개/);
+  // 로그인 실패 기록
+  await agent(adminKey, '/api/agent/albamon-status', { method: 'POST', body: JSON.stringify({ account_id: 1, error: '알바몬 로그인 실패(아이디·비밀번호 확인)' }) });
+  assert.match(visible(await (await call('/applicants/inbox/connect')).text()), /현장HR corpA 알바몬 로그인 실패/);
+});
