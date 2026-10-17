@@ -299,3 +299,27 @@ test('되돌아온 문자(폰 자기 번호로 보낸 문자)는 답장으로 �
   assert.equal((await handleInbound(db, 1, { sender: '01011110001', message: '참석' })).result, 'attending');
   assert.equal((await db.prepare(`SELECT result FROM inbound ORDER BY id LIMIT 1`).first()).result, 'echo');
 });
+
+test('새 지원: PC 크롬(확장)이 꺼져 연락처 요청이 멈추면 홈·새 지원에 할 일로 알린다', async () => {
+  const { db, call } = await setup();
+  const ins = (no, name, phone, state) => db.prepare(`INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, received_at, status, phone, fetch_state, resume_url, owner_user_id)
+    VALUES ('albamon',?, '1','회사','공고',?,?,'pending',?,?,'https://www.albamon.com/x',1)`).bind(no, name, Date.now(), phone, state).run();
+  await ins('1', '가', '', 'requested'); await ins('2', '나', '', 'requested'); await ins('3', '다', '01011112222', 'done'); await ins('4', '라', '', '');
+  // 확장이 2시간 전에 마지막으로 접속
+  await db.prepare(`INSERT INTO agent_tokens (user_id, token_hash, created_at, last_used_at) VALUES (1,'h',1,?)`).bind(Date.now() - 2 * 3600e3).run();
+  let home = visible(await (await call('/')).text());
+  assert.match(home, /1 등록할 수 있는 새 지원/);
+  assert.match(home, /2 연락처를 기다리는 새 지원 확장 프로그램이 깔린 PC 크롬이 꺼져 있어요\(마지막 연결 2시간 전\)/);
+  assert.match(home, /1 그 밖의 새 지원/);
+  let inbox = visible(await (await call('/applicants/inbox')).text());
+  assert.match(inbox, /연락처 요청 2건이 기다리고 있어요/);
+  assert.match(inbox, /PC 크롬을 기다려요/);
+  // 방금 접속했으면 멈춘 게 아니다
+  await db.prepare(`UPDATE agent_tokens SET last_used_at=?`).bind(Date.now()).run();
+  home = visible(await (await call('/')).text());
+  assert.doesNotMatch(home, /연락처를 기다리는 새 지원/);
+  assert.match(home, /3 그 밖의 새 지원/);
+  inbox = visible(await (await call('/applicants/inbox')).text());
+  assert.doesNotMatch(inbox, /기다리고 있어요/);
+  assert.match(inbox, /가져오는 중…/);
+});

@@ -9,6 +9,8 @@ const [src, out] = process.argv.slice(2);
 mkdirSync(out, { recursive: true });
 // [파일, 찍기 전 동작(선택), 결과 이름 꼬리표]
 const SHOTS = [
+  ['home'],
+  ['inbox'],
   ['applicants'],
   ['applicants', async (p) => { await p.check('.rowchk >> nth=0'); await p.check('.rowchk >> nth=1'); }, 'selected'],
   ['applicant_detail'],

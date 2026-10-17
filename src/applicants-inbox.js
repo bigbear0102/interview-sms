@@ -5,7 +5,7 @@ import { EXTENSION_FILES, EXTENSION_VERSION } from './extension-bundle.js';
 import { EXT_BRIDGE_JS } from './ext-bridge-page.js';
 import { esc, icon, fmtTime } from './views.js';
 import { fmtPhone, fmtWhen, pageHeader, tableWrap, emptyState } from './ui.js';
-import { peopleTabs, connState, unclassifiedPostings, suggestForTitles } from './workspace.js';
+import { peopleTabs, connState, unclassifiedPostings, suggestForTitles, agentIdle, stalledText } from './workspace.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import {
   getUserMailName, setUserMailName, inboxScope, ensureIntakeToken, intakeAddress, intakeDomain, listInbox, pendingInboxCount,
@@ -62,6 +62,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   const doneCount = (await first(db, `SELECT COUNT(*) n FROM applicant_inbox WHERE status != 'pending' AND ${dsc.sql}`, ...dsc.args)).n;
   const agent = await agentStatus(db, viewer ? viewer.id : null);
   const cs = connState(agent);
+  const idle = agentIdle(agent);
 
   const FLASH = {
     fetch: '연락처 가져오기를 요청했어요. 확장 프로그램이 켜져 있으면 1분 안에 채워져요.',
@@ -77,6 +78,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   if (ERR[err]) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div>${esc(ERR[err])}</div></div>`);
 
   const needPhone = all_.filter((r) => !r.phone).length;
+  const stalledN = idle ? all_.filter((r) => !r.phone && r.fetch_state === 'requested').length : 0;
   const needClass = all_.filter((r) => !r.cost_center).length;
   const ready = all_.filter((r) => r.phone).length;
   const same = {};
@@ -90,7 +92,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
 
   const contactState = (r) => {
     if (r.phone) return '<span class="badge ok">연락처 있음</span>';
-    if (r.fetch_state === 'requested') return '<span class="badge wait">가져오는 중…</span>';
+    if (r.fetch_state === 'requested') return idle ? '<span class="badge wait" title="확장 프로그램이 깔린 PC 크롬이 켜지면 채워져요">PC 크롬을 기다려요</span>' : '<span class="badge wait">가져오는 중…</span>';
     if (r.fetch_state === 'failed') return `<span class="badge fail" title="${esc(r.fetch_note)}">가져오기 실패</span>`;
     return '<span class="badge">연락처 없음</span>';
   };
@@ -150,6 +152,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
     actions: `<a class="conn ${cs.cls}" href="/applicants/inbox/connect" title="${esc(cs.hint)}"><i></i>${esc(cs.text)} · ${esc(cs.hint)}</a>` })}
     ${peopleTabs('inbox', pending, todo)}
     ${notices.join('')}
+    ${stalledN && status === 'pending' ? `<div class="notice warn" role="status">${icon('alert')}<div><b>연락처 요청 ${stalledN}건이 기다리고 있어요.</b><br>${esc(stalledText(agent))} <a href="/applicants/inbox/connect">연결 설정 →</a></div></div>` : ''}
     ${todo ? `<div class="notice info">${icon('info')}<div>원가중심점이 정해지지 않은 공고가 <b>${todo}개</b> 있어요. <a href="/applicants/postings"><b>공고 정리에서 한 번에 정하기 →</b></a></div></div>` : ''}
     ${status === 'pending' ? `<div class="stats tight">${stat('', pending, '대기 중')}${stat('phone', needPhone, '연락처 필요', 'wait')}${stat('class', needClass, '분류 필요', 'review')}${stat('ready', ready, '등록할 수 있어요', 'yes')}</div>` : ''}
     ${dock}${list}
