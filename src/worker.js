@@ -31,7 +31,7 @@ import { getIntakeToken, ingestRaw, ownerForMailName, MAX_MAIL_BYTES } from './m
 import { getLinkSettings, flaggedInCampaign } from './applicants-link.js';
 import { renderLanding } from './landing.js';
 import { interviewsOn, renderToday, saveTodayOutcome } from './today.js';
-import { runGroupwareScan } from './groupware.js';
+import { runGroupwareScan, runProbe } from './groupware.js';
 import { OUTCOMES, setOutcome, queueAutoReminders, queueFollowups, queueResultMessages, RESULT_TEMPLATES, parseInterviewAt } from './reminders.js';
 import { phoneApiUrl, isPublicCloud } from './admin.js';
 import { monitorPhones, recordError } from './monitor.js';
@@ -650,6 +650,7 @@ async function handle(request, env, ctx) {
 export const GW_CRON = '*/1 * * * *';
 export async function runGroupwareCron(env, whenMs = Date.now()) {
   try {
+    if (await runProbe(env).catch(() => false)) return;   // 진단 요청이 있으면 그것만
     if (await rateLimit(env.DB, 'gw:scan', 1, 50000)) await runGroupwareScan(env, { now: whenMs });
   } catch (e) {
     await recordError(env, 'cron', e, 'groupwareScan');

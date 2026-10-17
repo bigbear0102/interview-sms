@@ -231,3 +231,29 @@ export async function runGroupwareScan(env, { now = Date.now(), maxAccounts = 1,
   }
   return added;
 }
+
+// 진단(관리자가 applicant_settings 'gw_probe'=1 로 켜면 다음 주기에 한 번): 이 서버가 밖으로 보내는 요청에
+// 어떤 머리말·IP 가 실리는지(httpbin), 없는 아이디로 로그인했을 때 그룹웨어 응답이 어떤지 기록한다. 실제 계정은 쓰지 않는다.
+export async function runProbe(env) {
+  const db = env.DB;
+  const flag = await first(db, `SELECT value FROM applicant_settings WHERE key='gw_probe'`);
+  if (!flag || flag.value !== '1') return false;
+  await run(db, `UPDATE applicant_settings SET value='0' WHERE key='gw_probe'`);
+  const out = [];
+  try {
+    const h = await (await fetch('https://httpbin.org/headers', { headers: { 'User-Agent': BROWSER_UA } })).json();
+    out.push('밖으로 나가는 머리말: ' + JSON.stringify(h.headers));
+    const ip = await (await fetch('https://httpbin.org/ip')).json();
+    out.push('밖에서 보이는 IP: ' + JSON.stringify(ip));
+  } catch (e) { out.push('httpbin 실패: ' + e.message); }
+  try {
+    const jar = new CookieJar();
+    const diag = [];
+    const r = await gwLogin(jar, 'zzprobe' + String(Date.now()).slice(-6), 'not-a-real-password', diag);
+    out.push('없는 아이디 로그인: ' + JSON.stringify(r));
+    out.push(...diag);
+  } catch (e) { out.push('없는 아이디 로그인 실패: ' + e.message); }
+  await run(db, `INSERT INTO applicant_settings (key, value) VALUES ('gw_probe_result', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, out.join('\n').slice(0, 4000));
+  return true;
+}
+
