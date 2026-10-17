@@ -37,6 +37,11 @@
 ## 알바몬 계정 여러 개 배포 (2026-10-17)
 - 마이그레이션 0024, 확장 v1.7.0. **이후 꺼 둠**(문자 2차 인증, `MULTI_ACCOUNT_ENABLED=false`). 지금 연락처는 PC 크롬 + 확장 + 그 크롬의 알바몬 로그인(사람이 문자 인증)으로만. 다시 켜려면 인증 도우미부터.
 
+## 그룹웨어 메일 서버 직접 가져오기 — 동작 중 (2026-10-17 22시)
+- POP3(mail.willvi.co.kr:110, 평문 — 사용자 승인)로 1분마다(Cron `*/1 * * * *`) bigbear 메일함을 읽는다. 첫 연결 성공(전체 주소 형식), 최근 100통 처리 중(1분에 27통씩), 새 지원 1건(Hiro). 웹 로그인 방식은 그룹웨어 500 으로 불가(DECISIONS 참고).
+- 연결 설정 → 그룹웨어 직접 연결에서 상태·진단 기록 확인. 비밀번호를 바꾸면 거기서 다시 저장해야 함(틀리면 쉼).
+- 연락처는 여전히 PC 크롬 확장.
+
 ## 작업 방법 메모
 - 배포는 `npm run deploy`(테스트→마이그레이션→배포→/healthz). 이 환경(Termux PRoot)에서도 wrangler 로그인·배포·D1 원격 조회가 된다.
 - 라이브 코드 비교: `GET /accounts/{id}/workers/scripts/interview-sms/content/v2` 결과의 worker.js ↔ `npx wrangler deploy --dry-run --outdir <dir>`.
