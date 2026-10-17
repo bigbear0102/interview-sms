@@ -6,7 +6,7 @@ import { EXT_BRIDGE_JS } from './ext-bridge-page.js';
 import { esc, icon, fmtTime } from './views.js';
 import { fmtPhone, fmtWhen, pageHeader, tableWrap, emptyState } from './ui.js';
 import { getLinkSettings, linkSettingsPanel } from './applicants-link.js';
-import { listAccounts, saveAccount, setAccountActive, deleteAccount } from './albamon-accounts.js';
+import { listAccounts, saveAccount, setAccountActive, deleteAccount, MULTI_ACCOUNT_ENABLED } from './albamon-accounts.js';
 import { peopleTabs, connState, unclassifiedPostings, suggestForTitles, agentIdle, stalledText } from './workspace.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import {
@@ -305,7 +305,7 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
       <section class="cstep"><h2>알바몬 로그인 유지</h2>
         <p class="muted" style="font-size:15px">같은 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 두세요. 새 지원 화면에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 이력서를 열어 연락처를 채워 줘요.</p></section>
     </div>
-    ${isSuper ? await albamonAccountsCard(db) : ''}
+    ${isSuper && MULTI_ACCOUNT_ENABLED ? await albamonAccountsCard(db) : ''}
     ${isSuper ? linkSettingsPanel(await getLinkSettings(db), true) : ''}
     <details class="advanced"><summary>고급 설정 · 다른 방법</summary>
       ${myAddrCard}${keyCard}${sharedCard}
@@ -562,6 +562,7 @@ export async function handleInbox(c, deps) {
   }
   // 알바몬 계정(관리자)
   if (path.startsWith('/applicants/inbox/albamon-account') && method === 'POST') {
+    if (!MULTI_ACCOUNT_ENABLED) return redirect('/applicants/inbox/connect');
     if (user.role !== 'super') return html(pg('접근 불가', '<p>관리자만 바꿀 수 있어요.</p>'), 403);
     const f = Object.fromEntries(new URLSearchParams(await request.text()));
     const m = path.match(/^\/applicants\/inbox\/albamon-account\/(\d+)\/(toggle|delete)$/);
