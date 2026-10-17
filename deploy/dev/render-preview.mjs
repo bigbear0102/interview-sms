@@ -18,7 +18,8 @@ mkdirSync(out, { recursive: true });
 const db = openSqliteD1(':memory:', fileURLToPath(new URL('../../migrations', import.meta.url)));
 const env = {
   DB: db, ENCRYPTION_KEY: 'preview-key', PUBLIC_BASE_URL: 'https://interview.example',
-  GATEWAY_URL: 'https://api.sms-gate.app/3rdparty/v1', GATEWAY_PRIVATE_TOKEN: ''
+  GATEWAY_URL: 'https://api.sms-gate.app/3rdparty/v1', GATEWAY_PRIVATE_TOKEN: '',
+  NVIDIA_API_KEY: 'preview', NO_REAL_NETWORK: true   // AI 버튼·표시를 보이게(실제 AI 접속은 하지 않음)
 };
 const ctx = { waitUntil() {} };
 
@@ -36,6 +37,10 @@ await db.prepare(`UPDATE campaigns SET status='done', scheduled_at=? WHERE id=?`
 await db.prepare(`UPDATE candidates SET status='sent', sent_at=? WHERE campaign_id=?`).bind(Date.now() - 3500000, camp.campaignId).run();
 const replies = [['참석합니다', 0], ['참석', 1], ['불참합니다', 2], ['네 갈게요', 4], ['시간 변경 가능한가요?', 5], ['불참', 7], ['참석 가능합니다', 8], ['ㅇㅇ', 9]];
 for (const [msg, i] of replies) await handleInbound(db, 1, { sender: cands[i].phone, message: msg });
+// AI 표시(미리보기용): 일정 변경 희망 일시, 질문 답장 초안
+await db.prepare(`UPDATE candidates SET reply_kind='reschedule', ai_wanted='10/21(수) 15:00', ai_note='AI: 일정 변경 요청(10/21(수) 15:00 희망) · 수요일 오후로 변경 요청' WHERE phone=?`).bind('01020001005').run();
+await handleInbound(db, 1, { sender: cands[3].phone, message: '준비물 따로 있나요?' });
+await db.prepare(`UPDATE candidates SET ai_note='AI: 질문 · 준비물 문의', ai_draft='신분증만 챙겨 오시면 됩니다. 감사합니다.' WHERE phone=?`).bind('01020001003').run();
 const camp2 = await createCampaign(db, { departmentId: 1, gatewayId: 1, name: '면접 안내 10/27', candidates: cands.slice(0, 5), userId: 1 });
 await scheduleCampaign(db, camp2.campaignId, Date.now() + 5 * 86400000);
 await db.prepare(`INSERT INTO messages (gateway_id,phone,text,status,at,scheduled_at) VALUES
@@ -43,7 +48,7 @@ await db.prepare(`INSERT INTO messages (gateway_id,phone,text,status,at,schedule
   (1,'01033334444','교육 일정 안내드립니다.\n10/22(수) 14:00 본관 3층','sent',?,NULL),
   (1,'01055556666','월말 정산 자료 제출 부탁드립니다.','scheduled',?,?)`)
   .bind(Date.now() - 600000, Date.now() - 1200000, Date.now(), Date.now() + 86400000).run();
-await db.prepare(`INSERT INTO inbound (gateway_id,sender,message,received_at,result) VALUES (1,'01099998888','확인했습니다. 감사합니다.',?, 'unmatched')`).bind(Date.now() - 300000).run();
+await db.prepare(`INSERT INTO inbound (gateway_id,sender,message,received_at,result,ai_note) VALUES (1,'01099998888','주말 알바 아직 뽑나요?',?, 'unmatched','AI: 지원 문의 · 주말 근무 채용 여부 문의')`).bind(Date.now() - 300000).run();
 
 // 면접 결과·결과 안내 대기
 const ids = (await db.prepare(`SELECT id FROM candidates WHERE campaign_id=? ORDER BY id`).bind(camp.campaignId).all()).results.map((r) => r.id);
@@ -66,6 +71,7 @@ const inb = (no, name, phone, state, cc) => db.prepare(`INSERT INTO applicant_in
 await inb('1', '김하늘', '01030001111', 'done', '아마노코리아(현장HR)');
 for (const [no, nm] of [['2', '박서준'], ['3', '이도현'], ['4', '최유나']]) await inb(no, nm, '', 'requested', '아마노코리아(현장HR)');
 await inb('5', '정민재', '', '', ''); await inb('6', '한소희', '', '', '');
+await db.prepare(`INSERT INTO ai_postings (recruit_no, cost_center, job, note, at) VALUES ('901','아마노코리아(현장HR)','주차관리','제목의 고객사 이름',?)`).bind(Date.now()).run();
 await db.prepare(`INSERT INTO agent_tokens (user_id, token_hash, created_at, last_used_at) VALUES (1,'h',1,?)`).bind(Date.now() - 3 * 3600e3).run();
 
 // 오늘 면접: 오늘 날짜 면접일시로 참석 3명(1명 출석 기록), 무응답 1명
