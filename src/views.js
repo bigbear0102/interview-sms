@@ -184,7 +184,11 @@ table.cand td.c-outcome select{width:auto;min-width:96px}
 @media (min-width:721px){table.cand td.c-reply{max-width:170px}table.cand td.c-site{white-space:nowrap}}
 .resch>summary{cursor:pointer;color:var(--blue);font-size:14px;margin-top:4px;min-height:36px;display:flex;align-items:center}
 .resch form{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
-.resch input{width:110px;min-width:0;min-height:36px;padding:6px 10px}
+.resch input{width:150px;min-width:0;min-height:36px;padding:6px 10px}
+.aidraft>summary{cursor:pointer;color:var(--blue);font-size:13px;margin-top:6px}
+.aidraft form{display:grid;gap:6px;margin-top:6px}
+.aidraft textarea{width:100%;min-height:0;font-size:14px;padding:8px 10px}
+.aidraft button{justify-self:start}
 .slotsum{display:grid;gap:8px;margin:0;padding:0;list-style:none}
 .slotsum li{display:flex;justify-content:space-between;gap:12px;padding:10px 14px;background:var(--surface-2);border-radius:var(--r-s)}
 .tgl-row{display:flex;gap:12px;align-items:flex-start;margin-top:14px}
