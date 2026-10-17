@@ -3,6 +3,7 @@
 //  2) 제출하면 버튼을 잠그고 "처리 중…"을 보여 줘서 두 번 눌러도 한 번만 보낸다
 //  3) 저장 완료 안내는 잠시 뒤 사라지고, 결과용 주소 조각은 주소에서 지운다
 //  4) 더보기(모바일 하단 메뉴) 열고 닫기
+//  5) 진행 카드: 기다리는 동안 걸린 시간과 서버 처리 단계를 보여 준다
 // String.raw 를 써서 안의 역슬래시가 그대로 브라우저로 전달된다. (이 안에는 백틱과 달러 중괄호를 쓰지 않는다)
 export const APP_JS = String.raw`
 (function () {
@@ -82,7 +83,7 @@ export const APP_JS = String.raw`
   // 결과용 주소 조각은 주소에서 지운다
   try {
     var u = new URL(location.href), ch = false;
-    ['ok', 'err', 'n', 'k'].forEach(function (k) { if (u.searchParams.has(k)) { u.searchParams.delete(k); ch = true; } });
+    ['ok', 'err', 'n', 'k', '_op'].forEach(function (k) { if (u.searchParams.has(k)) { u.searchParams.delete(k); ch = true; } });
     if (ch) history.replaceState(null, '', u.pathname + u.search + u.hash);
   } catch (err) { /* 무시 */ }
 
@@ -102,6 +103,103 @@ export const APP_JS = String.raw`
       if (e.key === 'Escape' && !s.hidden) { s.hidden = true; b.setAttribute('aria-expanded', 'false'); b.focus(); }
     });
   }
+})();
+// 진행 카드: 버튼을 누르고 기다리는 동안 화면 아래에 걸린 시간과 서버의 실제 처리 단계를 보여 준다(멈춘 것처럼 보이지 않게).
+//  - 0.6초 안에 끝나는 일에는 나타나지 않는다. 서버 단계는 /ops/<작업 번호> 에서 1초마다 읽는다(src/oplog.js).
+//  - 15초가 넘으면 "기다려 주세요", 60초가 넘으면 새로고침 안내.
+(function () {
+  var cur = null;
+  function fmt(ms) {
+    var s = ms / 1000;
+    if (s < 10) return s.toFixed(1) + '초';
+    if (s < 60) return Math.floor(s) + '초';
+    return Math.floor(s / 60) + '분 ' + Math.floor(s % 60) + '초';
+  }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function newId() { var a = 'abcdefghijklmnopqrstuvwxyz0123456789', r = ''; for (var i = 0; i < 16; i++) r += a.charAt(Math.floor(Math.random() * a.length)); return r; }
+
+  function start(title, opId) {
+    if (cur) cur.stop();
+    var t0 = Date.now(), lines = [], seen = 0, firstAt = 0, shown = false, polls = 0;
+    var box = el('div', 'opdock'); box.setAttribute('role', 'status'); box.setAttribute('aria-live', 'polite');
+    var head = el('div', 'op-head'), spin = el('span', 'op-spin'), ttl = el('b', 'op-title', title), tm = el('span', 'op-time', '0.0초');
+    spin.setAttribute('aria-hidden', 'true');
+    head.appendChild(spin); head.appendChild(ttl); head.appendChild(tm);
+    var list = el('ol', 'op-log'), hint = el('p', 'op-hint'); hint.hidden = true;
+    box.appendChild(head); box.appendChild(list); box.appendChild(hint);
+    function add(ms, msg) {
+      lines.push(msg);
+      var li = el('li'); li.appendChild(el('span', 't', fmt(ms))); li.appendChild(el('span', 'm', msg));
+      list.appendChild(li);
+      while (list.children.length > 6) list.removeChild(list.firstChild);   // 최근 6줄만
+    }
+    add(0, '요청을 보냈어요');
+    var showT = setTimeout(function () { shown = true; document.body.appendChild(box); }, 600);
+    var tick = setInterval(function () {
+      var ms = Date.now() - t0;
+      tm.textContent = fmt(ms);
+      if (ms > 2500 && seen === 0 && lines.length === 1) add(ms, '서버 응답을 기다리는 중…');
+      if (ms > 15000 && hint.hidden) { hint.hidden = false; hint.textContent = '평소보다 오래 걸리고 있어요. 창을 닫지 말고 기다려 주세요.'; }
+      if (ms > 60000 && !hint.__late) {
+        hint.__late = true; hint.textContent = '응답이 너무 늦어요. 새로고침해서 결과를 확인해 주세요. (이미 처리됐을 수 있어요)';
+        var rb = el('button', 'small secondary', '새로고침'); rb.type = 'button'; rb.style.marginLeft = '8px';
+        rb.addEventListener('click', function () { location.reload(); });
+        hint.appendChild(rb);
+      }
+    }, 200);
+    var poll = opId ? setInterval(function () {
+      if (++polls > 300) return;
+      fetch('/ops/' + opId, { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+        if (!j || !j.lines || !cur || cur.id !== opId) return;
+        for (var i = seen; i < j.lines.length; i++) {
+          if (!firstAt) firstAt = j.lines[i].at;
+          add(Math.max(0, j.lines[i].at - firstAt) + 100, j.lines[i].msg);
+          if (/마쳤어요/.test(j.lines[i].msg)) spin.className = 'op-spin done';
+          if (/문제가 생겨/.test(j.lines[i].msg)) box.className = 'opdock bad';
+        }
+        seen = j.lines.length;
+      }).catch(function () {});
+    }, 1000) : null;
+    var h = {
+      id: opId,
+      log: function (msg) { add(Date.now() - t0, msg); },
+      stop: function () { clearTimeout(showT); clearInterval(tick); if (poll) clearInterval(poll); if (shown && box.parentNode) box.parentNode.removeChild(box); if (cur === h) cur = null; }
+    };
+    cur = h;
+    return h;
+  }
+  // 화면 안에서 처리하는 기능(fetch)용: var b = window.opBusy('AI 점검'); b.log('…'); b.stop();
+  window.opBusy = function (title) { return start(title, null); };
+
+  function skip(f) {
+    var a = (f.getAttribute('action') || '');
+    return f.hasAttribute('data-nolock') || f.hasAttribute('data-nobusy') || f.getAttribute('target') || /\.csv(\?|$)/.test(a);
+  }
+  // 양식 제출(확인 창을 거친 뒤의 실제 제출만): 작업 번호를 붙이고 진행 카드를 연다
+  document.addEventListener('submit', function (e) {
+    var f = e.target;
+    if (e.defaultPrevented || !f || !f.getAttribute || f.getAttribute('method') === 'dialog' || skip(f)) return;
+    var id = newId(), sub = e.submitter || null;
+    var title = f.getAttribute('data-busy') || (sub && sub.textContent.replace(/\s+/g, ' ').trim()) || '처리';
+    if ((f.getAttribute('method') || 'get').toLowerCase() === 'post') {
+      var act = f.getAttribute('action') || location.pathname + location.search;
+      f.setAttribute('action', act + (act.indexOf('?') >= 0 ? '&' : '?') + '_op=' + id);
+    } else {
+      var old = f.querySelector('input[name=_op]'); if (old) old.parentNode.removeChild(old);
+      var hid = el('input'); hid.type = 'hidden'; hid.name = '_op'; hid.value = id; f.appendChild(hid);
+    }
+    start(title.slice(0, 40), id);
+  });
+  // 오래 걸리는 링크(data-busy): 예) AI 찾기 예시
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('a[data-busy]');
+    if (!a || e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    var id = newId(), href = a.getAttribute('href');
+    start(a.getAttribute('data-busy'), id);
+    location.href = href + (href.indexOf('?') >= 0 ? '&' : '?') + '_op=' + id;
+  });
+  window.addEventListener('pageshow', function (e) { if (e.persisted && cur) cur.stop(); });
 })();
 // 원가중심점 찾기: 입력하면 목록에서 걸러 보여 주고, 눌러서 고른다. (띄어쓰기로 여러 글자를 함께 찾는다)
 (function () {

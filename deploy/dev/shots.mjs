@@ -17,7 +17,13 @@ const SHOTS = [
   ['campaign_new_prefill'],
   ['campaign_new', async (p) => { await p.check('input[name=kind][value=slots]'); await p.fill('#slots', '10/21(화) 14:00\n10/22(수) 10:00'); }, 'slots'],
   ['campaign_detail'],
-  ['campaign_slots']
+  ['campaign_slots'],
+  // 진행 카드(기다리는 동안 걸린 시간·단계): 화면 아래 고정이라 보이는 화면만 찍는다
+  ['campaign_new', async (p) => {
+    await p.evaluate(() => { const b = window.opBusy('면접 안내 만드는 중'); b.log('서버가 요청을 받았어요'); b.log('명단 12줄을 읽었어요'); b.log('면접일시 2개를 AI가 형식에 맞추는 중…'); });
+    await p.waitForTimeout(2300);
+    return 'viewport';
+  }, 'busy']
 ];
 // SHOTS_ALL=1 이면 미리보기의 모든 화면을 찍는다(전체 검토용)
 if (process.env.SHOTS_ALL === '1') {
@@ -30,12 +36,12 @@ for (const [w, tag] of [[1280, 'pc'], [390, 'm']]) {
   for (const [name, act, suffix] of SHOTS) {
     await page.goto('file://' + resolve(src, name + '.html'));
     await page.waitForTimeout(300);
-    if (act) await act(page);
+    const how = act ? await act(page) : null;
     // 가로 넘침 검사: 화면 폭보다 넓으면 실패로 남긴다
     const sw = await page.evaluate(() => document.documentElement.scrollWidth);
     if (sw > w) { overflow.push(`${tag}-${name}${suffix ? '-' + suffix : ''}: ${sw}px > ${w}px`); }
     const file = `${out}/${tag}-${name}${suffix ? '-' + suffix : ''}.png`;
-    await page.screenshot({ path: file, fullPage: true });
+    await page.screenshot({ path: file, fullPage: how !== 'viewport' });
     console.log(file);
   }
   await page.close();

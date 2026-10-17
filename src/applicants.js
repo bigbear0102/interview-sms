@@ -4,6 +4,7 @@
 import { setRating, ratingsOf, ratingPanel, starBadge, RATING_CSS } from './applicant-ratings.js';
 import { interpret, searchApplicants, renderAsk } from './applicant-ask.js';
 import { aiEnabled } from './ai.js';
+import { opFor } from './oplog.js';
 import { all, first, run, stmt } from './d1.js';
 import { esc, icon, fmtTime } from './views.js';
 import { fmtPhone, pageHeader, tableWrap, emptyState, fmtWhen } from './ui.js';
@@ -914,8 +915,12 @@ export async function handleApplicants(c) {
     const [pending, todo] = await Promise.all([pendingInboxCount(db, viewer).catch(() => 0), unclassifiedPostings(db).catch(() => 0)]);
     let f = null, result = null;
     if (q) {
+      const log = opFor(request);
+      await log('AI가 찾는 조건을 읽는 중…');
       f = await interpret(env || {}, q);
+      await log(f.by === 'ai' ? 'AI가 조건을 정했어요 · 지원자를 찾는 중…' : 'AI 대신 낱말로 찾는 중…');
       result = await searchApplicants(db, f);
+      await log(`${result.total}명을 찾았어요`);
       await audit(db, user, 'applicant.ask', `by=${f.by} found=${result.total}`);   // 검색 문장은 남기지 않는다(이름이 들어갈 수 있음)
     }
     return page('AI로 지원자 찾기', renderAsk({ q, f, result, pending, todo, ai: aiEnabled(env || {}) }));

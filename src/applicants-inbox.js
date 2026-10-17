@@ -8,6 +8,7 @@ import { fmtPhone, fmtWhen, pageHeader, tableWrap, emptyState } from './ui.js';
 import { getLinkSettings, linkSettingsPanel } from './applicants-link.js';
 import { listAccounts, saveAccount, setAccountActive, deleteAccount, MULTI_ACCOUNT_ENABLED } from './albamon-accounts.js';
 import { listGwAccounts, saveGwAccount, deleteGwAccount, scanGwAccount } from './groupware.js';
+import { opFor } from './oplog.js';
 import { peopleTabs, connState, unclassifiedPostings, suggestForTitles, agentIdle, stalledText } from './workspace.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import {
@@ -95,7 +96,12 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
 
   const contactState = (r) => {
     if (r.phone) return '<span class="badge ok">연락처 있음</span>';
-    if (r.fetch_state === 'requested') return idle ? '<span class="badge wait" title="확장 프로그램이 깔린 PC 크롬이 켜지면 채워져요">PC 크롬을 기다려요</span>' : '<span class="badge wait">가져오는 중…</span>';
+    if (r.fetch_state === 'requested') {
+      // 기다리는 동안 멈춘 건지 알 수 있게: 요청한 지 얼마나 됐는지, 확장이 가져갔는지
+      const ago = (t) => { const m = Math.max(0, Math.round((Date.now() - t) / 60000)); return m < 1 ? '방금' : m < 60 ? `${m}분 전` : `${Math.round(m / 60)}시간 전`; };
+      const when = [r.fetch_req_at ? `요청 ${ago(r.fetch_req_at)}` : '', r.fetch_at ? `확장이 여는 중(${ago(r.fetch_at)})` : '확장 차례 기다림'].filter(Boolean).join(' · ');
+      return (idle ? '<span class="badge wait" title="확장 프로그램이 깔린 PC 크롬이 켜지면 채워져요">PC 크롬을 기다려요</span>' : '<span class="badge wait">가져오는 중…</span>') + `<small class="muted fetchwhen">${esc(when)}</small>`;
+    }
     if (r.fetch_state === 'failed') return `<span class="badge fail" title="${esc(r.fetch_note)}">가져오기 실패</span>`;
     return '<span class="badge">연락처 없음</span>';
   };
@@ -234,14 +240,14 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
       ${g.blocked ? ' <span class="badge no">쉬는 중</span>' : g.last_ok_at ? ' <span class="badge ok">연결됨</span>' : ' <span class="badge wait">확인 전</span>'}
       <div class="muted" style="font-size:13px">${g.last_error ? `<span style="color:var(--red-t)">${esc(g.last_error)}</span>` : g.last_ok_at ? `마지막 확인 ${esc(fmtWhen(g.last_check_at))} · 방금 새 지원 ${g.last_added}건` : '아직 확인하지 않았어요. [지금 확인]을 눌러 보세요.'}</div>
       ${isSuper && g.diag ? `<details style="margin-top:4px"><summary class="lk" style="font-size:13px">진단 기록</summary><pre style="white-space:pre-wrap;font-size:12px;margin:6px 0 0">${esc(g.diag)}</pre></details>` : ''}</div>
-    <div class="amacts"><form method="post" action="/applicants/inbox/gw/${g.id}/check" class="inline"><button class="small">지금 확인</button></form>
+    <div class="amacts"><form method="post" action="/applicants/inbox/gw/${g.id}/check" class="inline" data-busy="그룹웨어 메일 확인 중"><button class="small">지금 확인</button></form>
       <form method="post" action="/applicants/inbox/gw/${g.id}/delete" class="inline" data-confirm="이 그룹웨어 연결을 지울까요? 저장한 비밀번호도 지워져요."><button class="lk" style="color:var(--red-t)">지우기</button></form></div></li>`;
   const gwCard = `<style>.amlist{list-style:none;margin:8px 0 12px;padding:0}.amrow{display:flex;gap:12px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;padding:12px 0;border-top:1px solid var(--line-soft)}.amrow:first-child{border-top:0}.amacts{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.amform{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));margin-top:8px}</style>
       <section class="cstep${gwList.some((g) => g.last_ok_at && !g.blocked) ? ' done' : ''}"><h2>지원 메일 받기: 그룹웨어 직접 연결</h2>
         <p class="muted" style="font-size:15px">그룹웨어 아이디·비밀번호를 넣으면 <b>시스템이 1분마다</b> 그 메일함에서 알바몬 지원 메일을 가져와 <b>내 새 지원</b>에 넣어요. <b>PC가 꺼져 있어도</b> 들어와요. 비밀번호는 암호화해 저장하고 다시 보여 주지 않아요.</p>
         <div class="stack">
           ${gwList.length ? `<ul class="amlist">${gwList.map(gwRow).join('')}</ul>` : ''}
-          <form method="post" action="/applicants/inbox/gw" class="amform" autocomplete="off">
+          <form method="post" action="/applicants/inbox/gw" class="amform" autocomplete="off" data-busy="그룹웨어 연결 확인 중">
             <input name="login_id" maxlength="80" required placeholder="그룹웨어 아이디 (예: bigbear)" autocomplete="off" aria-label="그룹웨어 아이디">
             <input name="pw" type="password" maxlength="100" required placeholder="그룹웨어 비밀번호" autocomplete="new-password" aria-label="그룹웨어 비밀번호">
             <button class="btn small">${gwList.length ? '추가·비밀번호 바꾸기' : '연결하기'}</button></form>
@@ -504,6 +510,8 @@ export async function handleInbox(c, deps) {
       const withPhone = rows.filter((r) => r.phone && isValidMobile(r.phone));
       const later = Math.max(0, withPhone.length - BULK_REGISTER_MAX);
       const allowed = new Set(withPhone.slice(0, BULK_REGISTER_MAX).map((r) => r.id));
+      const log = opFor(request);
+      await log(`${allowed.size}명을 지원자로 등록하는 중…`);
       for (const r of rows) {
         if (r.phone && isValidMobile(r.phone) && !allowed.has(r.id)) continue;
         if (!r.phone || !isValidMobile(r.phone)) { skip++; continue; }
@@ -512,7 +520,9 @@ export async function handleInbox(c, deps) {
         await run(db, `UPDATE applicant_inbox SET status='registered', applicant_id=?, handled_by=?, handled_at=? WHERE id=?`, x.id, user.id, now, r.id);
         await deps.addEvent(db, x.id, 'apply', `${r.source === 'albamon' ? '알바몬' : '메일'} 지원 메일에서 등록(일괄)`, user.id, now);
         done++;
+        if (done % 20 === 0) await log(`${done}/${allowed.size}명 등록했어요`);
       }
+      await log(`${done}명 등록 완료`);
       await audit(db, user, 'applicant.inbox_register_bulk', `n=${done}`);
       return redirect(`/applicants/inbox?ok=bulkreg&n=${done}&s=${skip + (ids.length - rows.length)}${later ? `&later=${later}` : ''}`);
     }
@@ -545,17 +555,18 @@ export async function handleInbox(c, deps) {
       const a = await first(db, `SELECT * FROM gw_accounts WHERE id=?`, Number(m[1]));
       if (!a || (user.role !== 'super' && a.user_id !== user.id)) return redirect('/applicants/inbox/connect');
       if (m[2] === 'delete') { await deleteGwAccount(db, a.id, user.id, user.role === 'super'); await audit(db, user, 'gw.delete', `id=${a.id}`); return redirect('/applicants/inbox/connect?ok=gw_deleted'); }
-      await scanGwAccount(env, a);
+      await scanGwAccount(env, a, { onStep: opFor(request) });
       await audit(db, user, 'gw.check', `id=${a.id}`);
       return redirect('/applicants/inbox/connect?ok=gw_checked');
     }
     if (path !== '/applicants/inbox/gw') return redirect('/applicants/inbox/connect');
     const r = await saveGwAccount(db, env, user.id, f.login_id, f.pw);
     if (r.error) return redirect(`/applicants/inbox/connect?err=${r.error}`);
+    await opFor(request)('그룹웨어 계정을 저장했어요(비밀번호는 암호화)');
     await audit(db, user, 'gw.save', `id=${r.id}`);
     // 저장하자마자 한 번 확인해서 결과를 바로 보여 준다
     const a = await first(db, `SELECT * FROM gw_accounts WHERE id=?`, r.id);
-    await scanGwAccount(env, a);
+    await scanGwAccount(env, a, { onStep: opFor(request) });
     return redirect('/applicants/inbox/connect?ok=gw_saved');
   }
 

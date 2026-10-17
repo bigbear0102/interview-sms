@@ -467,6 +467,25 @@ details.pop summary{list-style:none}details.pop summary::-webkit-details-marker{
   table.cards td.actions{justify-content:flex-start}
   .step{padding:16px}
 }
+.fetchwhen{margin-left:6px;font-size:12px;white-space:nowrap}
+/* 진행 카드(오래 걸리는 작업): 아래에 작게, 걸린 시간과 서버 단계 */
+.opdock{position:fixed;right:24px;bottom:24px;z-index:60;width:min(380px,calc(100vw - 32px));background:var(--surface);color:var(--ink);
+  border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 32px rgba(0,0,0,.16);padding:14px 16px;animation:opin .18s ease-out}
+.opdock.bad{border-color:var(--red-t)}
+.op-head{display:flex;align-items:center;gap:10px}
+.op-title{flex:1;min-width:0;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.op-time{font-variant-numeric:tabular-nums;color:var(--muted);font-size:14px}
+.op-spin{width:16px;height:16px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--blue);animation:opspin .8s linear infinite;flex:none}
+.op-spin.done{animation:none;border-color:var(--blue)}
+.op-log{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:3px;font-size:13px;color:var(--muted)}
+.op-log li{display:flex;gap:10px}
+.op-log li:last-child{color:var(--ink)}
+.op-log .t{flex:none;width:52px;text-align:right;font-variant-numeric:tabular-nums;opacity:.8}
+.op-log .m{min-width:0;overflow-wrap:anywhere}
+.op-hint{margin:10px 0 0;font-size:13px;color:var(--ink);background:var(--surface-2);border-radius:10px;padding:8px 10px}
+@keyframes opspin{to{transform:rotate(360deg)}}
+@keyframes opin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (max-width:720px){.opdock{left:16px;right:16px;width:auto;bottom:calc(var(--tab-h) + 12px + env(safe-area-inset-bottom))}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 `;
 

@@ -47,7 +47,9 @@ const AI_TEMPLATE_JS = '<script>' + String.raw`
   function el(tag, text) { var e = document.createElement(tag); if (text) e.textContent = text; return e; }
   b.addEventListener('click', function () {
     var k = document.querySelector('input[name=kind]:checked');
-    b.disabled = true; b.textContent = 'AI가 점검하는 중… (몇 초)';
+    b.disabled = true; b.textContent = 'AI가 점검하는 중…';
+    var busy = window.opBusy ? window.opBusy('AI가 문구를 점검하는 중') : null;
+    if (busy) busy.log('AI에 문구를 보냈어요(이름·번호 자리는 그대로)');
     var body = new URLSearchParams(); body.set('template', t.value); body.set('kind', k ? k.value : 'fixed');
     fetch('/campaigns/ai-template', { method: 'POST', credentials: 'same-origin', body: body })
       .then(function (r) { return r.json(); })
@@ -64,7 +66,7 @@ const AI_TEMPLATE_JS = '<script>' + String.raw`
         box.appendChild(use); out.appendChild(box);
       })
       .catch(function () { out.hidden = false; out.className = 'notice warn'; out.textContent = 'AI 점검을 하지 못했어요. 잠시 뒤 다시 눌러 주세요.'; })
-      .then(function () { b.disabled = false; b.textContent = 'AI로 문구 점검하기'; });
+      .then(function () { if (busy) busy.stop(); b.disabled = false; b.textContent = 'AI로 문구 점검하기'; });
   });
 })();
 ` + '</script>';
@@ -291,7 +293,7 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate, slotTempl
   return `${pageHeader({ title: '면접 안내 만들기', back: { href: prefill ? '/applicants' : '/campaigns', label: prefill ? '지원자' : '면접 안내' },
     desc: '명단을 올리면 안내 문자가 준비돼요. <b>올린 뒤에 보내기를 눌러야</b> 문자가 나가니 안심하세요.' })}
     ${prefillNotice}
-    <form method="post" class="col">
+    <form method="post" class="col" data-busy="면접 안내 만드는 중">
       <input type="hidden" name="name" value="면접 안내 ${esc(today)}">
 
       <div class="step"><div class="num">1</div><div class="body">
@@ -477,7 +479,7 @@ export function renderCampaignDetail(d) {
   const sendCard = canSend ? `
     <div class="card" style="margin-bottom:20px">
       <h3 style="margin-bottom:12px">언제 보낼까요?</h3>
-      <form method="post" action="/campaigns/${camp.id}/send" data-confirm="${totals.total || 0}명에게 지금 문자를 보낼까요?"><button class="btn go">${icon('send', 20)}지금 바로 보내기 (${totals.total || 0}명)</button></form>
+      <form method="post" action="/campaigns/${camp.id}/send" data-busy="문자 보내는 중" data-confirm="${totals.total || 0}명에게 지금 문자를 보낼까요?"><button class="btn go">${icon('send', 20)}지금 바로 보내기 (${totals.total || 0}명)</button></form>
       <p class="muted" style="text-align:center;margin:14px 0 10px">또는</p>
       <form method="post" action="/campaigns/${camp.id}/send" class="stack">
         <b>${camp.status === 'scheduled' ? '예약 시간 바꾸기' : '예약해서 보내기'}</b>

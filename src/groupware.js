@@ -186,7 +186,8 @@ export async function deleteGwAccount(db, id, userId, isSuper) {
 
 // ---------------- POP3 로 한 계정 확인 ----------------
 // 새 메일(UIDL 기준)만 머리(TOP)를 보고 알바몬 발신이면 본문(RETR)을 받아 새 지원으로. 메일은 지우지 않는다.
-export async function scanPop3(env, acct, { host = POP3_HOST, port = POP3_PORT, topBudget = 60, retrBudget = 20, now = Date.now(), firstWindow = 100 } = {}) {
+export async function scanPop3(env, acct, { host = POP3_HOST, port = POP3_PORT, topBudget = 60, retrBudget = 20, now = Date.now(), firstWindow = 100, onStep = null } = {}) {
+  const step = (m) => (onStep ? onStep(m) : null);   // 화면 진행 카드용(개인정보 없음)
   const db = env.DB;
   // 안전장치: 시험 중(env.NO_REAL_NETWORK)에는 실제 회사 메일 서버에 절대 접속하지 않는다(가짜 서버 주소를 꼭 넘겨야 함)
   if ((env.NO_REAL_NETWORK || underTest()) && host === POP3_HOST) return { ok: false, error: '시험 중에는 실제 메일 서버에 접속하지 않아요' };
@@ -199,6 +200,7 @@ export async function scanPop3(env, acct, { host = POP3_HOST, port = POP3_PORT, 
   const markSeen = (uid) => run(db, `INSERT OR IGNORE INTO gw_seen (account_id, mail_id, at) VALUES (?,?,?)`, acct.id, uid, now);
   let pop = null;
   try {
+    await step('회사 메일 서버에 접속하는 중…');
     pop = new Pop3(await openTcp(host, port));
     const g = await pop.greet();
     diag.push(`POP3 ${host}:${port} 연결 → ${g.ok ? '+OK' : clean(g.line)}`);
@@ -215,6 +217,7 @@ export async function scanPop3(env, acct, { host = POP3_HOST, port = POP3_PORT, 
       last = r.line;
       if (i + 1 < tries.length) { await pop.quit(); pop = new Pop3(await openTcp(host, port)); await pop.greet(); }   // 실패한 세션은 닫고 새로
     }
+    await step(user ? '메일 서버 로그인 성공' : '메일 서버 로그인 실패');
     if (!user) {
       await done({ blocked: 1, last_error: `그룹웨어 메일(POP3) 로그인이 안 돼요(${clean(last)}). 아이디·비밀번호를 확인해 다시 저장해 주세요. 계정 잠김을 막으려고 그때까지 쉬어요.` });
       return { ok: false, error: 'login' };
@@ -234,6 +237,7 @@ export async function scanPop3(env, acct, { host = POP3_HOST, port = POP3_PORT, 
       for (let i = 0; i < st.length; i += 40) await db.batch(st.slice(i, i + 40));
       diag.push(`처음 연결: 오래된 메일 ${old.length}통은 건너뜀`);
     }
+    await step(`새 메일 ${fresh.length}통을 확인하는 중…`);
     let topped = 0, retrd = 0, added = 0, albamon = 0;
     for (const m of fresh) {
       if (topped >= topBudget || retrd >= retrBudget) break;
@@ -250,6 +254,7 @@ export async function scanPop3(env, acct, { host = POP3_HOST, port = POP3_PORT, 
       await markSeen(m.uid);
     }
     await pop.quit();
+    await step(`알바몬 메일 ${albamon}통 확인 · 새 지원 ${added}건`);
     diag.push(`메일 ${list.length}통 중 새 메일 ${fresh.length}통 확인(${topped}), 알바몬 ${albamon}통, 새 지원 ${added}건${fresh.length > topped ? ` (남은 ${fresh.length - topped}통은 다음에)` : ''}`);
     await done({ pop3_user: user, last_ok_at: now, last_error: '', last_added: added });
     return { ok: true, added };
@@ -264,7 +269,7 @@ export async function scanPop3(env, acct, { host = POP3_HOST, port = POP3_PORT, 
 // ---------------- 한 계정 확인 ----------------
 // 방식에 따라 POP3(기본) 또는 웹 로그인. 반환: { ok, added, error? }
 export async function scanGwAccount(env, acct, opts = {}) {
-  if ((acct.mode || 'pop3') === 'pop3') return scanPop3(env, acct, opts.pop3 || {});
+  if ((acct.mode || 'pop3') === 'pop3') return scanPop3(env, acct, { ...(opts.pop3 || {}), onStep: opts.onStep || null });
   return scanGwWeb(env, acct, opts);
 }
 

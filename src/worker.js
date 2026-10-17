@@ -37,6 +37,7 @@ import { phoneApiUrl, isPublicCloud } from './admin.js';
 import { monitorPhones, recordError } from './monitor.js';
 import { aiReviewReply, aiReviewUnmatched, needsAi } from './reply-ai.js';
 import { aiEnabled } from './ai.js';
+import { startOp, opFor, readOp, purgeOpLogs, opIdOf } from './oplog.js';
 import { aiSuggestPostings, aiMapColumns, aiNormalizeWhens, aiCheckTemplate } from './ai-features.js';
 import { applyDeliveryEvent, pollDelivery, notifyNewReply, unreadCount, markAllRead } from './delivery.js';
 import { rateLimit } from './accounts.js';
@@ -258,6 +259,12 @@ async function handle(request, env, ctx) {
   // 소개 페이지: 로그인 전 첫 화면(누구나), 로그인 후에는 /intro 로 다시 볼 수 있다
   if (method === 'GET' && ((path === '/' && !user) || path === '/intro')) return html(renderLanding({ loggedIn: !!user }));
   if (!user) return redirect('/login');
+  // 진행 기록: 화면이 작업 번호(_op)를 붙여 보낸 요청이면 "받았어요"부터 남긴다
+  if (await opLogStart(request, db, url, user)) { /* 기록 시작됨 */ }
+  if (method === 'GET' && (m = path.match(/^\/ops\/([a-z0-9]{8,24})$/))) {
+    const lines = await readOp(db, m[1], user.id);
+    return new Response(JSON.stringify({ lines }), { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
+  }
   let unread = 0;
   if (method === 'GET' && path !== '/logout') unread = await unreadCount(db, user).catch(() => 0);
   const pg = (title, body, nav) => page(user, title, body, nav || navFor(path), { inbox: unread });
@@ -326,10 +333,14 @@ async function handle(request, env, ctx) {
       ? { errors: [], candidates: [{ site: defaultSite, name: String(f.one_name || '').trim(), phone: f.one_phone || '', interview_at: String(f.one_when || '').trim() }] }
       : candidatesFromCsv(f.csv || '', { requireSite: !defaultSite });
     const aiNotes = [];
+    const opLog = opFor(request);
+    await opLog(one ? '한 명 안내를 만드는 중…' : `명단 ${parsed.candidates.length}줄을 읽었어요`);
     // 규칙으로 열을 못 찾았거나 순서로 짐작했으면(inferred) AI 가 제목 줄과 값의 모양(가림)만 보고 맞춘다. AI 가 실패하면 규칙 결과 그대로
     if (!one && (parsed.errors.length || parsed.inferred) && aiEnabled(env)) {
       const rows = parseCsv(f.csv || '');
+      await opLog('명단 칸 이름이 달라 AI가 맞추는 중…');
       const mc = await aiMapColumns(env, rows).catch(() => null);
+      await opLog(mc ? 'AI가 명단 칸을 맞췄어요' : 'AI가 칸을 맞추지 못해 원래 방식으로 읽어요');
       if (mc && (mc.idx.site >= 0 || defaultSite)) {
         parsed = { errors: [], candidates: candidatesFromRows(rows, mc.idx, mc.hasHeader) };
         const head = mc.hasHeader ? rows[0] : null;
@@ -348,7 +359,9 @@ async function handle(request, env, ctx) {
     if (aiEnabled(env)) {
       const bad = (slots.length ? slots : parsed.candidates.map((c) => c.interview_at)).filter((v) => v && !Number.isFinite(parseInterviewAt(v)));
       if (bad.length) {
+        await opLog(`면접일시 ${new Set(bad).size}개를 AI가 형식에 맞추는 중…`);
         const map = await aiNormalizeWhens(env, bad).catch(() => new Map());
+        await opLog(`면접일시 ${map.size}개를 바꿨어요`);
         if (map.size) {
           for (let i = 0; i < slots.length; i++) if (map.has(slots[i])) slots[i] = map.get(slots[i]);
           for (const c of parsed.candidates) if (map.has(c.interview_at)) c.interview_at = map.get(c.interview_at);
@@ -362,6 +375,7 @@ async function handle(request, env, ctx) {
       autoRemind: f.auto_remind === '1', remindPrev: f.remind_prev === '1', autoFollowup: f.auto_followup === '1', slots
     });
     await audit(db, user, 'campaign.create', `campaign=${r.campaignId} accepted=${r.accepted} rejected=${r.rejected.length}`);
+    await opLog(`${r.accepted}명을 저장했어요${r.rejected.length ? ` · ${r.rejected.length}명은 올리지 못함` : ''}`);
     // 지원자 관리 연결(설정이 켜져 있을 때만). 실패해도 면접 안내 만들기는 계속한다.
     let linkNotice = '';
     try {
@@ -427,6 +441,7 @@ async function handle(request, env, ctx) {
         const at = f.when ? parseKstLocal(f.when) : Date.now();
         if (!Number.isFinite(at)) return html(pg('오류', '<p>시각 형식 오류</p>'), 400);
         await scheduleCampaign(db, camp.id, at);
+        await opFor(request)(at <= Date.now() ? '문자를 보내기 시작했어요 · 폰이 차례로 보내요' : '보낼 시각을 예약했어요');
         await audit(db, user, 'campaign.send', `campaign=${camp.id} at=${new Date(at).toISOString()}`);
         if (at <= Date.now()) ctx.waitUntil(processQueue(env).catch(console.error));
       } else if (action === 'unschedule') {
@@ -750,6 +765,7 @@ export async function runScheduled(env, whenMs = Date.now()) {
   if (new Date(whenMs).getUTCMinutes() === 0) {
     await run(env.DB, `DELETE FROM sessions WHERE expires_at<?`, Date.now());
     await run(env.DB, `DELETE FROM login_fail WHERE until<?`, Date.now());
+    await purgeOpLogs(env.DB).catch(() => {});
     const n = await purgeExpired(env.DB);
     if (n) console.log(`보관기간 만료 캠페인 ${n}건 파기`);
   }
@@ -757,8 +773,12 @@ export async function runScheduled(env, whenMs = Date.now()) {
 
 export async function handleRequest(request, env, ctx) {
   try {
-    return await handle(request, env, ctx);
+    const res = await handle(request, env, ctx);
+    if (res && res.status >= 400) await opFor(request)('문제가 생겨 처리하지 못했어요');
+    else await opFor(request)('처리를 마쳤어요 · 화면을 여는 중');
+    return res;
   } catch (e) {
+    await opFor(request)('문제가 생겨 처리하지 못했어요');
     let p = '';
     try { p = new URL(request.url).pathname; } catch { /* ignore */ }
     await recordError(env, 'request', e, p);
@@ -767,6 +787,13 @@ export async function handleRequest(request, env, ctx) {
       <p class="muted" style="margin:12px 0 20px">방금 한 일이 처리되지 않았을 수 있어요. 잠시 뒤 <b>다시 시도</b>해 주세요. 계속되면 관리자에게 알려 주세요(오류는 자동으로 기록돼 관리자에게 알림이 가요).</p>
       <p style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="javascript:history.back()">돌아가기</a><a class="btn secondary" href="/">홈으로</a></p>`), 500);
   }
+}
+
+async function opLogStart(request, db, url, user) {
+  if (!opIdOf(url)) return false;
+  const log = startOp(request, db, url, user);
+  await log('서버가 요청을 받았어요');
+  return true;
 }
 
 // 메일 수신(Cloudflare Email Routing → Worker): 알바몬 지원 알림을 지원자 수신함에 쌓는다.

@@ -202,10 +202,10 @@ export function renderAsk({ q = '', f = null, result = null, pending = 0, todo =
 </style>
   ${pageHeader({ title: 'AI로 지원자 찾기', desc: '찾는 조건을 말하듯 적으면, 맞는 지원자를 담당자 별점 높은 순으로 보여 줘요.' })}
   ${peopleTabs('ask', pending, todo)}
-  <form method="get" action="/applicants/ask" class="askbox" role="search">
+  <form method="get" action="/applicants/ask" class="askbox" role="search" data-busy="AI로 지원자 찾는 중">
     <input name="q" value="${esc(q)}" placeholder="예: 안양 사무 추천해줘" maxlength="200" aria-label="찾는 조건" autocomplete="off" ${q ? '' : 'autofocus'}>
     <button class="btn">찾기</button></form>
-  <div class="askex">${examples.map((e) => `<a class="chipbtn" href="/applicants/ask?q=${encodeURIComponent(e)}">${esc(e)}</a>`).join('')}</div>
+  <div class="askex">${examples.map((e) => `<a class="chipbtn" data-busy="AI로 지원자 찾는 중" href="/applicants/ask?q=${encodeURIComponent(e)}">${esc(e)}</a>`).join('')}</div>
   ${q ? `<div class="bubble me">${esc(q)}</div>${answer}` : emptyState({ title: '찾는 조건을 적어 보세요', desc: '지역·직무·학력·경력·주소·나이·성별·별점 등 무엇이든 적어 보세요. AI는 조건만 정하고, 순서는 담당자들이 준 별점으로 정해요. 지원자 정보는 AI에 보내지 않아요.' })}
   <script>(function(){var f=document.getElementById('askform');if(!f)return;var go=document.getElementById('askgo'),ids=document.getElementById('askids');
     f.addEventListener('change',function(){var v=Array.prototype.slice.call(f.querySelectorAll('.askchk:checked')).map(function(c){return c.value;});ids.value=v.join(',');go.disabled=!v.length;go.textContent=v.length?'선택한 '+v.length+'명으로 면접 안내 만들기':'선택한 사람으로 면접 안내 만들기';});})();</script>`;
