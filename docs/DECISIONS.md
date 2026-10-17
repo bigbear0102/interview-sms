@@ -23,14 +23,15 @@
 
 ## 로드맵
 - [ ] 실제 폰 연동 시험 및 API 경로/payload 보정
-- [ ] 커스텀 도메인 연결, Cloudflare Access 로 `/hook/*` 외 경로 접근 제한(선택)
+- [x] 커스텀 도메인 연결(`interview.bigbears.me` Worker route)
+- [ ] Cloudflare Access 로 `/hook/*` 외 경로 접근 제한(선택)
 - [ ] 감사 로그에 지원자 목록 조회 기록, 감사 로그 보관기간 정책
 - [ ] 면접 일정 변경 요청 처리, 전달 확인(`sms:delivered`) 반영
 - [ ] 대량 발송 시 Cloudflare Queues 도입 (유료 플랜)
 - [x] 질문형 답장을 `unclear`로 분류, CSRF/감사 로그/Secure 쿠키
 
 ## 운영 메모
-- 기존 Cloudflare Worker `interview-sms`(workers.dev)와 D1 은 PC 이전 전 시험 배포본이다. 현재 운영 대상이 아니며 필요 없으면 삭제한다(`npx wrangler delete`, D1 삭제).
+- (2026-10-15 이후) Cloudflare Worker `interview-sms` + D1 `interview-sms` 가 **운영 본체**다. 삭제하지 않는다. 예전 "시험 배포본, 삭제 가능" 메모는 폐기.
 - Cloudflare 계정에는 다른 터널(`real-estate-dashboard`, `my-homelab-tunnel`, `oracle`)이 있다. `interview-sms` 터널만 사용하며 DNS 연결 시 반드시 **터널 UUID** 로 지정한다(이름 지정 시 기본 config 의 다른 터널로 연결될 수 있음).
 
 ## 2026-10-15 웹을 Cloudflare Workers 로 이전

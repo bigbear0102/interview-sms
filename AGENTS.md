@@ -6,8 +6,9 @@
 **문자 관리 시스템**(문자 보내기/문자함/예약 문자) 안에 **면접 안내** 기능(명단 업로드, 참석 여부 자동 집계)이 있다. 서버 렌더링 HTML, 외부 런타임 의존성 없음. **같은 코드가 두 런타임에서 동작**한다:
 - **Cloudflare Workers + D1**(**현재 운영**): `src/worker.js`, `wrangler.jsonc`, 배포 `npm run deploy`
 - **Node + SQLite**(회사 서버 이전용, 검증 완료): `src/node/server.js`, D1 API 어댑터 `src/node/d1-sqlite.js`
-부서별 안드로이드 폰(android-sms-gateway)은 **자체 호스팅 Private 서버**(`deploy/gateway`, Docker)에 연결되고,
-폰이 웹훅(`/hook/:gatewayId/:token`)으로 답장을 보낸다. 외부 접속은 Cloudflare Tunnel.
+부서별 안드로이드 폰(android-sms-gateway, SMSGate 앱)은 **공개 클라우드(`api.sms-gate.app`) + 종단간 암호화**로 연결되고(2026-10-15 전환, `wrangler.jsonc` `GATEWAY_URL`),
+폰이 웹훅(`/hook/:gatewayId/:token`)으로 답장을 보낸다. 운영 주소는 `interview.bigbears.me`(Worker route). 자체 호스팅 게이트웨이(`deploy/gateway`, Docker)·Tunnel 은 대체 경로로만 남아 있다.
+알바몬 지원 메일·연락처 가져오기는 크롬 확장(`tools/albamon-extension`, 화면에서 내려받기 `src/extension-bundle.js`)이 담당자 PC에서 처리한다.
 
 ## 명령어
 ```bash
@@ -16,7 +17,7 @@ npm run db:migrate       # 원격 D1 마이그레이션 (스키마 변경 시)
 npm run deploy           # 안전 배포(테스트→마이그레이션→배포→/healthz). 직접 `wrangler deploy` 하지 말 것
 npm run backup           # 운영 DB 내보내기(개인정보 포함, git 제외)
 npm start                # Node 서버 (회사 서버 이전용, .env 필요)
-# 게이트웨이(PC) 재시작: powershell -File deploywindowsestart.ps1  (웹 작업은 비활성화됨)
+# (자체 호스팅 게이트웨이를 쓸 때만) PC 재시작: powershell -File deploy\windows\restart.ps1
 ```
 
 ## 코드 지도
