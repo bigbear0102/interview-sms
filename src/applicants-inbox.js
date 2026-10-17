@@ -1,5 +1,5 @@
 // 새 지원(메일 수신함): 알바몬 지원 알림 메일이 모이는 곳. 담당자가 이력서를 열어 연락처를 확인해 지원자로 등록한다.
-import { first, run, all } from './d1.js';
+import { first, run, all, stmt, chunks } from './d1.js';
 import { makeZip } from './zip.js';
 import { EXTENSION_FILES, EXTENSION_VERSION } from './extension-bundle.js';
 import { EXT_BRIDGE_JS } from './ext-bridge-page.js';
@@ -473,17 +473,20 @@ export async function handleInbox(c, deps) {
     const ids = [...new Set(sp.getAll('ids').map((x) => parseInt(x, 10)).filter((x) => Number.isInteger(x) && x > 0))].slice(0, 200);
     if (!ids.length) return redirect('/applicants/inbox?err=nopick');
     const op = sp.get('op');
-    const ph = ids.map(() => '?').join(',');
     const sc = inboxScope(viewer);
-    const rows = await all(db, `SELECT * FROM applicant_inbox WHERE id IN (${ph}) AND status='pending' AND ${sc.sql}`, ...ids, ...sc.args);
+    // D1 은 쿼리당 값 100개까지라 나눠서 읽는다("이 화면 전체 선택"은 200건까지)
+    const rows = [];
+    for (const part of chunks(ids)) rows.push(...await all(db, `SELECT * FROM applicant_inbox WHERE id IN (${part.map(() => '?').join(',')}) AND status='pending' AND ${sc.sql}`, ...part, ...sc.args));
     const now = Date.now();
     if (op === 'fetch') {
-      const n = await requestFetch(db, rows.map((r) => r.id), viewer);
+      let n = 0;
+      for (const part of chunks(rows.map((r) => r.id))) n += await requestFetch(db, part, viewer);
       await audit(db, user, 'applicant.inbox_fetch_bulk', `n=${n}`);
       return redirect(`/applicants/inbox?ok=fetchall&n=${n}`);
     }
     if (op === 'ignore') {
-      for (const r of rows) await run(db, `UPDATE applicant_inbox SET status='ignored', handled_by=?, handled_at=? WHERE id=? AND status='pending'`, user.id, now, r.id);
+      const st = rows.map((r) => stmt(db, `UPDATE applicant_inbox SET status='ignored', handled_by=?, handled_at=? WHERE id=? AND status='pending'`, user.id, now, r.id));
+      for (const part of chunks(st, 40)) await db.batch(part);
       await audit(db, user, 'applicant.inbox_ignore_bulk', `n=${rows.length}`);
       return redirect(`/applicants/inbox?ok=bulkign&n=${rows.length}`);
     }

@@ -30,6 +30,9 @@
 - `docs/WORKFLOW.md` 의 P0·P1 반영 후 배포(테스트 167/167, CI 화면 캡처 전 화면·가로 넘침 0, 운영 코드 = 레포). 오늘 면접(`/interviews/today`), 메뉴(홈·지원자·면접·문자함), 면접 안내 상세 순서·상태별 버튼, 문자함 이름·자동 표시, 홈 정리, 면접 이력 통합, 연결 설정 자동 전달 우선.
 - 남은 결정: 시스템 이름(P1-7). 운영 화면을 실제 계정으로 눈으로 보는 확인은 아직(사용자 확인 필요).
 
+## QC 점검 배포 (2026-10-17)
+- `docs/QC.md`: 고친 결함 Q1~Q6, 위험 R1~R6, 미시험 항목. 남은 사용자 결정: 새 지원 개인정보 보관 기한, 웹훅 서명 키, 유료 요금제 시점. 시스템 이름은 "문자 관리" 유지.
+
 ## 작업 방법 메모
 - 배포는 `npm run deploy`(테스트→마이그레이션→배포→/healthz). 이 환경(Termux PRoot)에서도 wrangler 로그인·배포·D1 원격 조회가 된다.
 - 라이브 코드 비교: `GET /accounts/{id}/workers/scripts/interview-sms/content/v2` 결과의 worker.js ↔ `npx wrangler deploy --dry-run --outdir <dir>`.

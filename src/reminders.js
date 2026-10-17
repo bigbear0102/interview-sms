@@ -67,8 +67,8 @@ export async function queueAutoReminders(db, now = Date.now(), { limit = 200 } =
        FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
       WHERE ca.status='attending' AND ca.reminded_at IS NULL AND ca.interview_at!='' AND ca.phone!=''
         AND (k.auto_remind=1 OR (k.remind_prev=1 AND ca.reminded_prev_at IS NULL))
-        AND k.purged_at IS NULL AND k.status!='cancelled'
-      ORDER BY ca.id DESC LIMIT ?`, 1000);
+        AND k.purged_at IS NULL AND k.status!='cancelled' AND k.created_at>?
+      ORDER BY ca.id DESC LIMIT ?`, now - 60 * DAY, 1000); // 오래된 안내는 다시 읽지 않는다(4분마다 도는 작업, D1 읽기 절약)
   let queued = 0;
   for (const c of rows) {
     if (queued >= limit) break;

@@ -950,7 +950,8 @@ export async function handleApplicants(c) {
   if (path === '/applicants/bulk-action' && method === 'POST') {
     const sp = new URLSearchParams(await request.text());
     const back = safeBack(sp.get('back')) || '/applicants';
-    const ids = [...new Set(sp.getAll('ids').map((x) => parseInt(x, 10)).filter((x) => Number.isInteger(x) && x > 0))].slice(0, 200);
+    // 목록은 한 쪽에 50명이라 80명이면 충분하다(D1 쿼리당 값 100개 제한)
+    const ids = [...new Set(sp.getAll('ids').map((x) => parseInt(x, 10)).filter((x) => Number.isInteger(x) && x > 0))].slice(0, 80);
     if (!ids.length) return redirect(withParam(back, 'err', 'nopick'));
     const op = sp.get('op');
     // 면접 안내 만들기: 고른 사람으로 명단을 채운 만들기 화면으로 보낸다(여기서는 아무것도 바꾸지 않음)
