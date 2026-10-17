@@ -62,6 +62,9 @@ async function req(jar, url, init = {}, diag = null, label = '') {
   for (let hop = 0; hop < 8; hop++) {
     // 그룹웨어는 브라우저 정보(User-Agent)를 해석하므로 실제 크롬과 같은 값을 보낸다(낯선 값이면 로그인이 500 으로 실패한 사례)
     const headers = { 'User-Agent': BROWSER_UA, 'Accept-Language': 'ko-KR,ko;q=0.9', Accept: init.accept || '*/*', ...(init.headers || {}) };
+    // Cloudflare Worker 의 요청에는 접속 IP 로 IPv6(2a06:98c0:3600::103)가 붙는데, 그룹웨어는 로그인 기록에 이를 저장하지 못해
+    // 로그인 성공 시점에 500(JPA rollback)이 난다(2026-10-17 진단). 이 서버의 실제 IPv4 를 접속 IP 로 함께 보낸다.
+    if (jar.ipv4) headers['X-Forwarded-For'] = jar.ipv4;
     const ck = jar.header(cur);
     if (ck) headers.Cookie = ck;
     const res = await fetch(cur, { method, headers, body, redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT) });
@@ -85,6 +88,20 @@ const jsonPost = (jar, url, obj, diag, label) => {
     headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', Origin: o, Referer: o + (o.includes('mail') ? '/mail/link/emlMail/emlMailMain.do' : '/gw/sub/common/login/cmmLogin.do') }
   }, diag, label);
 };
+
+// 이 서버(Cloudflare)가 밖에서 보이는 IPv4. 한 실행(isolate) 동안 기억한다
+let cachedV4 = '';
+export async function egressIPv4() {
+  if (cachedV4) return cachedV4;
+  for (const u of ['https://api.ipify.org?format=json', 'https://httpbin.org/ip']) {
+    try {
+      const j = await (await fetch(u, { signal: AbortSignal.timeout(5000) })).json();
+      const v4 = String(j.ip || j.origin || '').split(',').map((x) => x.trim()).find((x) => /^\d{1,3}(\.\d{1,3}){3}$/.test(x));
+      if (v4) return (cachedV4 = v4);
+    } catch { /* 다음 주소로 */ }
+  }
+  return '';
+}
 
 // 그룹웨어 로그인. 반환: { ok } | { ok:false, wrong:true, code, now, limit } | { ok:false, error }
 export async function gwLogin(jar, id, pw, diag = [], base = GW_BASE) {
@@ -162,10 +179,12 @@ export async function deleteGwAccount(db, id, userId, isSuper) {
 
 // ---------------- 한 계정 확인 ----------------
 // 반환: { ok, added, error? }
-export async function scanGwAccount(env, acct, { gw = GW_BASE, mail = MAIL_BASE, budget = BODY_BUDGET, now = Date.now() } = {}) {
+export async function scanGwAccount(env, acct, { gw = GW_BASE, mail = MAIL_BASE, budget = BODY_BUDGET, now = Date.now(), ipv4: opts_ipv4 } = {}) {
   const db = env.DB;
   const diag = [];
   const jar = acct.session_enc ? CookieJar.parse(await decryptText(env.ENCRYPTION_KEY, acct.session_enc).catch(() => '[]')) : new CookieJar();
+  jar.ipv4 = opts_ipv4 !== undefined ? opts_ipv4 : await egressIPv4();
+  if (jar.ipv4) diag.push(`접속 IP(IPv4)로 보냄: ${jar.ipv4}`);
   const done = async (fields) => {
     const sets = Object.keys(fields).map((k) => `${k}=?`).join(', ');
     await run(db, `UPDATE gw_accounts SET ${sets}, last_check_at=?, diag=? WHERE id=?`, ...Object.values(fields), now, diag.join('\n').slice(0, 3000), acct.id);

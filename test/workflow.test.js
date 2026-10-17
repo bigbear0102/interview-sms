@@ -548,7 +548,7 @@ test('그룹웨어 직접 연결: 가짜 그룹웨어로 로그인→메일 세�
   });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${srv.address().port}`;
-  const opt = { gw: base, mail: base };
+  const opt = { gw: base, mail: base, ipv4: '' };   // 시험에서는 밖의 IP 를 묻지 않는다
   try {
     const { id } = await saveGwAccount(db, env, 1, 'bigbear@willvi.co.kr', 'Gw!Secret#771');
     let a = await db.prepare(`SELECT * FROM gw_accounts WHERE id=?`).bind(id).first();
