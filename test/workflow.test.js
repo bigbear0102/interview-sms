@@ -280,3 +280,18 @@ test('화면 스크립트 문법 오류 없음 (만들기·상세·지원자)', 
     for (const m of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) assert.doesNotThrow(() => new Function(m[1]), p);
   }
 });
+
+test('되돌아온 문자(폰 자기 번호로 보낸 문자)는 답장으로 보지 않음', async () => {
+  const { db } = await setup();
+  await createCampaign(db, { departmentId: 1, gatewayId: 1, name: 'e', template: '{이름}님\n참석/불참 답장', userId: 1,
+    candidates: [{ site: '강남', name: '나', phone: '01011110001', interview_at: '10/21 14:00' }] });
+  await db.prepare(`UPDATE candidates SET status='sent', sent_at=?, message_text=?`).bind(Date.now(), '나님\n참석/불참 답장').run();
+  const r = await handleInbound(db, 1, { sender: '+821011110001', message: '나님\r\n참석/불참 답장' });
+  assert.equal(r.echo, true);
+  assert.equal((await cand(db, '01011110001')).status, 'sent');
+  // 확정 문자 같은 직접 문자도 되돌아오면 무시
+  await db.prepare(`INSERT INTO messages (gateway_id,phone,text,status,at) VALUES (1,'01011110001','일정이 정해졌어요. 어려우면 "불참"','sent',?)`).bind(Date.now()).run();
+  assert.equal((await handleInbound(db, 1, { sender: '01011110001', message: '일정이 정해졌어요. 어려우면 "불참"' })).echo, true);
+  assert.equal((await handleInbound(db, 1, { sender: '01011110001', message: '참석' })).result, 'attending');
+  assert.equal((await db.prepare(`SELECT result FROM inbound ORDER BY id LIMIT 1`).first()).result, 'echo');
+});

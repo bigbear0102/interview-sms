@@ -37,7 +37,7 @@ const BADGES = {
   scheduled: ['info', '예약됨'], cancelled: ['mute', '취소함'],
   // 면접 안내(캠페인) 상태
   draft: ['mute', '아직 안 보냄'], done: ['ok', '모두 보냄'],
-  unmatched: ['mute', '일반 문자']
+  unmatched: ['mute', '일반 문자'], echo: ['mute', '보낸 문자가 되돌아옴']
 };
 export function badge(key, labelOverride) {
   const [tone, label] = BADGES[key] || ['mute', key];

@@ -211,6 +211,22 @@ export async function processQueue(env, { batchSize = Number(env.SEND_BATCH || 2
 export async function handleInbound(db, gatewayId, { sender, message }) {
   const phone = normalizePhone(sender);
   const now = Date.now();
+  // 되돌아온 문자: 우리가 30분 안에 이 번호로 보낸 문자와 내용이 같으면 답장이 아니다.
+  // (문자 보내는 폰 자기 번호로 보냈을 때 그 문자가 그대로 수신된다. 안내 문구 속 "불참"으로 잘못 집계되지 않게)
+  const body = cleanMessage(message);
+  if (body) {
+    const echo = await first(db,
+      `SELECT 1 FROM candidates c JOIN campaigns k ON k.id=c.campaign_id
+        WHERE k.gateway_id=? AND c.phone=? AND c.message_text=? AND c.sent_at>?
+       UNION ALL
+       SELECT 1 FROM messages WHERE gateway_id=? AND phone=? AND text=? AND at>? LIMIT 1`,
+      gatewayId, phone, body, now - 30 * 60000, gatewayId, phone, body, now - 30 * 60000);
+    if (echo) {
+      await run(db, `INSERT INTO inbound (gateway_id,sender,message,received_at,result) VALUES (?,?,?,?,?)`,
+        gatewayId, phone, message, now, 'echo');
+      return { matched: false, echo: true };
+    }
+  }
   const cand = await first(db,
     `SELECT c.*, k.slots camp_slots, k.gateway_id camp_gateway FROM candidates c JOIN campaigns k ON k.id=c.campaign_id
      WHERE k.gateway_id=? AND c.phone=? AND c.status IN ('sent','attending','absent','unclear') AND k.purged_at IS NULL
