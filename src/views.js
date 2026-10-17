@@ -179,11 +179,10 @@ dialog.cdlg p{margin:0 0 20px;font-size:17px;font-weight:600;line-height:1.5;wor
 table.cand td.actions{width:168px}
 table.cand td.actions select{width:100%;max-width:168px;min-height:38px}
 table.cand td.c-outcome select{width:auto;min-width:96px}
-table.cand td.c-site{min-width:72px}
-@media (min-width:721px){table.cand td.c-reply{max-width:180px}}
+@media (min-width:721px){table.cand td.c-reply{max-width:170px}table.cand td.c-site{white-space:nowrap}}
 .resch>summary{cursor:pointer;color:var(--blue);font-size:14px;margin-top:6px}
 .resch form{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
-.resch input{width:auto;min-width:130px;min-height:36px;padding:6px 10px}
+.resch input{width:110px;min-width:0;min-height:36px;padding:6px 10px}
 .slotsum{display:grid;gap:8px;margin:0;padding:0;list-style:none}
 .slotsum li{display:flex;justify-content:space-between;gap:12px;padding:10px 14px;background:var(--surface-2);border-radius:var(--r-s)}
 .tgl-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px}
