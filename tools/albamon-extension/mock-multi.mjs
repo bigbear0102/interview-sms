@@ -151,11 +151,11 @@ check(r3.A2 && r3.A2.ok, '다른 계정이 막혀도 A 공고는 채움');
 check(r3.B1 && !r3.B1.ok && /모두 열어 봤지만/.test(r3.B1.note), 'B 공고는 남은 계정으로 시도 후 이유와 함께 실패');
 check(statusPosts.some((p) => p.account_id === 2 && /로그인 실패/.test(p.error)), '로그인 실패한 계정을 시스템에 알림');
 check(/로그인이 안 돼요/.test(s), '상태 문구에 해야 할 일(비밀번호 확인)');
-const loginsB = logins.length;
+const loginsB = logins.length, viewsB = views.length;
 items = [mk(9, 'B2', 'RB')];
 s = await runAndWait();
 console.log('  상태:', s, '| 로그인 기록:', logins.join(','), '| 마지막 열람:', JSON.stringify(views.slice(-3)));
-check(logins.length === loginsB && !views.slice(-3).some(([, a]) => a === 'B'), '같은 비밀번호로는 다시 로그인 시도하지 않음(계정 잠김 방지)');
+check(logins.length === loginsB && !views.slice(viewsB).some(([, a]) => a === 'B'), '같은 비밀번호로는 다시 로그인 시도하지 않음(계정 잠김 방지)');
 check(await myCookie() === 'MINE', '마지막에도 내 알바몬 로그인을 되돌림');
 
 await browser.close();
