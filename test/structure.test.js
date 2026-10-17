@@ -51,8 +51,8 @@ test('홈: "오늘 할 일"이 맨 위, 할 일이 없으면 안내', async () =
   await db.prepare(`INSERT INTO campaigns (department_id,gateway_id,name,template,created_at,status) VALUES (1,1,'시험','x',?, 'done')`).bind(Date.now()).run();
   await db.prepare(`INSERT INTO candidates (campaign_id,site,name,phone,status,sent_at) VALUES (1,'A','가','01011110001','sent',?)`).bind(Date.now() - 3600000).run();
   html = visible(await (await call('/')).text());
-  assert.ok(html.includes('안 읽은 받은 문자'));
-  assert.ok(html.includes('아직 답이 없는 사람'));
+  assert.ok(!html.includes('안 읽은 받은 문자'));   // 안 읽은 문자는 탭 뱃지로 충분(할 일 아님)
+  assert.ok(html.includes('답이 없는 사람'));
   assert.ok(!html.includes('지금 처리할 일이 없어요'));
 });
 

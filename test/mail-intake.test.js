@@ -169,9 +169,9 @@ test('수신함 화면: 대기 목록, 등록(연락처 필수)·무시·되돌�
   assert.equal(await pendingInboxCount(db), 0);
   await post(`/applicants/inbox/${id2}/restore`, {});
   assert.equal(await pendingInboxCount(db), 1);
-  // 홈 "오늘 할 일"에 메일로 들어온 지원자
+  // 홈 "오늘 할 일": 연락처를 기다리는 새 지원은 자동으로 진행되므로 할 일이 아니다(연락처가 생기면 "등록할 새 지원")
   const home = visible(await (await call('/')).text());
-  assert.ok(home.includes('새 지원이 도착했어요'));
+  assert.ok(!home.includes('등록할 새 지원'));
   // 가져오기 화면
   const cap = await (await call('/applicants/inbox/capture')).text();
   assert.match(cap, /id="pending-data"/);
@@ -233,8 +233,8 @@ test('에이전트 API: 토큰 인증, 요청 목록, 결과 저장, 자동 등�
   assert.equal(row.status, 'pending');
   // 수신함 화면: 연락처가 미리 채워져 있다
   const page = await (await call('/applicants/inbox')).text();
-  assert.match(page, /value="010-9999-8888"/);
-  assert.match(page, /연락처 있음/);
+  assert.match(page, /<span class="ph">010-9999-8888<\/span><button class="btn small"/);   // 연락처가 있으면 번호와 [등록]만
+  assert.match(page, /등록할 수 있어요 <span class="n">1<\/span>/);
 
   // 자동 등록을 켜면 연락처를 가져오는 즉시 지원자로 등록
   assert.equal(await getAutoRegister(db), false);

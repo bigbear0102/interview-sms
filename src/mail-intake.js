@@ -268,7 +268,7 @@ export async function inboxBreakdown(db, viewer = null) {
 export async function listInbox(db, status = 'pending', limit = 200, viewer = null) {
   const where = status === 'done' ? `status IN ('registered','ignored')` : `status='pending'`;
   const sc = inboxScope(viewer);
-  return all(db, `SELECT i.*, (SELECT name FROM users WHERE id=i.owner_user_id) owner_name, EXISTS (SELECT 1 FROM applicant_resumes r WHERE r.inbox_id=i.id) has_resume FROM applicant_inbox i WHERE ${where.replace(/status/g, 'i.status')} AND ${inboxScope(viewer, 'i').sql} ORDER BY received_at DESC, i.id DESC LIMIT ${Number(limit) || 200}`, ...inboxScope(viewer, 'i').args);
+  return all(db, `SELECT i.*, (SELECT name FROM users WHERE id=i.owner_user_id) owner_name, EXISTS (SELECT 1 FROM applicant_resumes r WHERE r.inbox_id=i.id) has_resume, (SELECT parsed FROM applicant_resumes r WHERE r.inbox_id=i.id) resume_parsed FROM applicant_inbox i WHERE ${where.replace(/status/g, 'i.status')} AND ${inboxScope(viewer, 'i').sql} ORDER BY received_at DESC, i.id DESC LIMIT ${Number(limit) || 200}`, ...inboxScope(viewer, 'i').args);
 }
 
 // ---------------- 연락처 가져오기 요청 · 에이전트 ----------------

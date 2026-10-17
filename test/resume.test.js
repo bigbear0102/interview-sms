@@ -84,7 +84,7 @@ test('예전에 연락처만 가져온 사람: 이력서만 다시 읽기(등록
   await db.prepare(`UPDATE applicant_inbox SET phone='01011110001', fetch_state='done' WHERE id=?`).bind(a).run();
   await db.prepare(`UPDATE applicant_inbox SET phone='01011110002', fetch_state='done', status='registered' WHERE id=?`).bind(b).run();
   const inbox = await (await boss.call('/applicants/inbox')).text();
-  assert.match(inbox, /이력서가 없는 지원자 <b>2명<\/b>/);
+  assert.match(inbox, /이력서 없음 <b>2<\/b> · 가져오기/);
   const res = await boss.post('/applicants/inbox/resume-all', {});
   assert.equal(res.headers.get('location'), '/applicants/inbox?ok=resumeall&n=2');
   const q = await agentQueue(db, 10, null);
@@ -140,7 +140,7 @@ test('새 지원 메일: 들어오자마자 연락처+이력서 가져오기 요
   // 연락처 없이 이력서만 읽는 중인 건(예전 버전 데이터)에 연락처 가져오기를 누르면 연락처 요청으로 바뀜
   await db.prepare(`UPDATE applicant_inbox SET phone='', resume_only=1, fetch_at=NULL WHERE id=?`).bind(id).run();
   const page = await (await boss.call('/applicants/inbox')).text();
-  assert.match(page, /이력서 읽는 중/);
+  assert.doesNotMatch(page, /연락처 가져오는 중<\/span>/);   // 이력서만 읽는 중은 조용히(연락처 상태 뱃지 없음)
   await boss.post(`/applicants/inbox/${id}/fetch`, {});
   const r2 = await db.prepare(`SELECT fetch_state, resume_only FROM applicant_inbox WHERE id=?`).bind(id).first();
   assert.deepEqual({ ...r2 }, { fetch_state: 'requested', resume_only: 0 });

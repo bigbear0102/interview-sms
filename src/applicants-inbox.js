@@ -9,7 +9,7 @@ import { getLinkSettings, linkSettingsPanel } from './applicants-link.js';
 import { listAccounts, saveAccount, setAccountActive, deleteAccount, MULTI_ACCOUNT_ENABLED } from './albamon-accounts.js';
 import { listGwAccounts, saveGwAccount, deleteGwAccount, scanGwAccount } from './groupware.js';
 import { opFor } from './oplog.js';
-import { resumeOfInbox, resumePanel, RESUME_CSS } from './resume.js';
+import { resumeOfInbox, resumePanel, RESUME_CSS, KNOWN_LABEL } from './resume.js';
 import { peopleTabs, connState, unclassifiedPostings, suggestForTitles, agentIdle, stalledText } from './workspace.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import {
@@ -85,8 +85,6 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   // 연락처는 가져왔지만 이력서 내용은 없는 사람(확장 v1.9 전에 가져온 사람): 이력서만 다시 읽기
   const noResume = (await first(db, `SELECT COUNT(*) n FROM applicant_inbox i WHERE i.resume_url != '' AND i.fetch_state != 'requested'
       AND NOT EXISTS (SELECT 1 FROM applicant_resumes r WHERE r.inbox_id=i.id) AND ${inboxScope(viewer, 'i').sql}`, ...inboxScope(viewer, 'i').args).catch(() => ({ n: 0 }))).n;
-  if (noResume) notices.push(`<div class="notice info">${icon('info')}<div>이력서가 없는 지원자 <b>${noResume}명</b>
-    <form method="post" action="/applicants/inbox/resume-all" class="inline" data-busy="이력서 다시 읽기 요청 중" style="margin-left:6px"><button class="small secondary">가져오기</button></form></div></div>`);
 
   const needPhone = all_.filter((r) => !r.phone).length;
   const stalledN = idle ? all_.filter((r) => !r.phone && r.fetch_state === 'requested' && !r.resume_only).length : 0;
@@ -101,17 +99,25 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   const stat = (key, value, label, tone = '') =>
     `<a class="stat ${tone}${f === key ? ' on' : ''}" href="/applicants/inbox${key ? '?f=' + key : ''}"${f === key ? ' aria-current="true"' : ''}><b>${value}</b><span>${label}</span></a>`;
 
+  // 연락처 상태는 뱃지 하나(자세한 경과는 마우스를 올리면). 연락처가 있으면 아래 등록 줄에 번호가 보이므로 뱃지를 달지 않는다.
+  const ago = (t) => { const m = Math.max(0, Math.round((Date.now() - t) / 60000)); return m < 1 ? '방금' : m < 60 ? `${m}분 전` : `${Math.round(m / 60)}시간 전`; };
   const contactState = (r) => {
-    if (r.phone) return '<span class="badge ok">연락처 있음</span>';
-    if (r.fetch_state === 'requested' && r.resume_only) return `<span class="badge">연락처 없음</span><small class="muted fetchwhen">이력서 읽는 중</small>`;
+    if (r.phone || (r.fetch_state === 'requested' && r.resume_only)) return '';
     if (r.fetch_state === 'requested') {
-      // 기다리는 동안 멈춘 건지 알 수 있게: 요청한 지 얼마나 됐는지, 확장이 가져갔는지
-      const ago = (t) => { const m = Math.max(0, Math.round((Date.now() - t) / 60000)); return m < 1 ? '방금' : m < 60 ? `${m}분 전` : `${Math.round(m / 60)}시간 전`; };
       const when = [r.fetch_req_at ? `요청 ${ago(r.fetch_req_at)}` : '', r.fetch_at ? `확장이 여는 중(${ago(r.fetch_at)})` : '확장 차례 기다림'].filter(Boolean).join(' · ');
-      return (idle ? '<span class="badge wait" title="확장 프로그램이 깔린 PC 크롬이 켜지면 채워져요">PC 크롬을 기다려요</span>' : '<span class="badge wait">가져오는 중…</span>') + `<small class="muted fetchwhen">${esc(when)}</small>`;
+      return idle ? `<span class="badge wait" title="${esc(when)}">PC 꺼짐 · 대기</span>` : `<span class="badge wait" title="${esc(when)}">연락처 가져오는 중</span>`;
     }
     if (r.fetch_state === 'failed') return `<span class="badge fail" title="${esc(r.fetch_note)}">가져오기 실패</span>`;
     return '<span class="badge">연락처 없음</span>';
+  };
+  // 이력서 요약(판단하는 자리에서 바로 보게): 희망 근무지 · 경력 · 자격증 · 희망 급여
+  const resumeOf = (r) => { try { return r.resume_parsed ? JSON.parse(r.resume_parsed) : null; } catch { return null; } };
+  const RSUM = [['hopeArea', '희망'], ['career', '경력'], ['license', ''], ['hopePay', ''], ['hopeType', '']];
+  const resumeLine = (p) => p ? RSUM.filter(([k]) => p[k]).slice(0, 4).map(([k, l]) => `${l ? l + ' ' : ''}${p[k]}`.slice(0, 40)).join(' · ') : '';
+  const resumeBox = (r, p) => {
+    const keys = Object.keys(KNOWN_LABEL).filter((k) => p[k] && k !== 'intro');
+    return `<details class="rsum"><summary>이력서 요약</summary><dl>${keys.map((k) => `<dt>${esc(KNOWN_LABEL[k])}</dt><dd>${esc(String(p[k]).slice(0, 200))}</dd>`).join('')}</dl>
+      ${p.intro ? `<p class="msg intro">${esc(String(p.intro).slice(0, 400))}${p.intro.length > 400 ? '…' : ''}</p>` : ''}<a class="lk" href="/applicants/inbox/${r.id}/resume">이력서 전체 보기</a></details>`;
   };
   const classState = (r) => r.cost_center
     ? `<span class="badge info">${esc(r.cost_center)}${r.job ? ' · ' + esc(r.job) : ''}</span>` : '<span class="badge wait">분류 필요</span>';
@@ -121,12 +127,16 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
     const who = [r.mail_account ? `메일함 ${esc(r.mail_account)}` : '', isSuper && r.owner_name ? `${esc(r.owner_name)} 담당` : ''].filter(Boolean).join(' · ');
     const fetchBtn = !r.phone && (r.fetch_state !== 'requested' || r.resume_only)
       ? `<form method="post" action="/applicants/inbox/${r.id}/fetch" class="inline"><button class="lk">${r.fetch_state === 'failed' ? '다시 가져오기' : '연락처 가져오기'}</button></form>` : '';
+    const rp = resumeOf(r);
+    const rl = resumeLine(rp);
     return `<article class="appcard${open && r.phone ? ' ready' : ''}" id="a${r.id}">
       <div class="sel">${open ? `<input type="checkbox" name="ids" value="${r.id}" form="bulkform" class="rowchk" aria-label="${esc(r.name)} 선택">` : ''}</div>
       <div class="body">
         <div class="head"><b class="name">${esc(r.name)}</b><span class="meta">${esc(SUBLINE(r))}</span><span class="when" title="${esc(fmtTime(r.received_at))}">${esc(fmtWhen(r.received_at))}</span></div>
         <div class="post" title="${esc(r.job_title)}"><b>${esc(r.company || '-')}</b> · ${esc(r.job_title)}</div>
-        <div class="states">${open ? `${contactState(r)}${classState(r)}` : (STATUS_BADGE[r.status] || '')}${who ? `<span class="badge">${who}</span>` : ''}${r.fetch_state === 'failed' && !r.phone ? `<small class="muted">${esc(r.fetch_note)}</small>` : ''}</div>
+        ${rl ? `<div class="rline" title="알바몬 이력서에서">${esc(rl)}</div>` : ''}
+        <div class="states">${open ? `${contactState(r)}${classState(r)}` : (STATUS_BADGE[r.status] || '')}${who ? `<span class="badge">${who}</span>` : ''}</div>
+        ${rp ? resumeBox(r, rp) : ''}
         ${open && !r.cost_center && (sugg.get(r.job_title) || []).length ? `<div class="sugg"><span>제안</span>${sugg.get(r.job_title).map((nm) => `<form method="post" action="/applicants/inbox/${r.id}/cost" class="inline"><input type="hidden" name="cost_center" value="${esc(nm)}"><input type="hidden" name="apply_all" value="1"><button class="chipbtn" title="누르면 같은 공고${same[r.recruit_no] > 1 ? ` 대기 ${same[r.recruit_no]}명` : ''}에 한 번에 적용돼요">${esc(nm)}</button></form>`).join('')}<small class="muted">누르면 같은 공고에 한 번에 적용돼요</small></div>` : ''}
         ${open ? `<details class="cl"><summary>${r.cost_center ? '분류 바꾸기' : '원가중심점·직무 정하기'}</summary>
         <form method="post" action="/applicants/inbox/${r.id}/cost" class="classify">
@@ -137,14 +147,16 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
         </form></details>
         <div class="foot">
           ${r.resume_url ? `<a class="lk" href="${esc(r.resume_url)}" target="_blank" rel="noopener noreferrer">이력서 열기</a>` : ''}
-          ${r.has_resume ? `<a class="lk" href="/applicants/inbox/${r.id}/resume">저장된 이력서</a>` : ''}
           ${fetchBtn}
           <form method="post" action="/applicants/inbox/${r.id}/ignore" class="inline"><button class="lk quiet">무시</button></form>
           <span class="grow"></span>
-          <form method="post" action="/applicants/inbox/${r.id}/register" class="reg">
+          ${r.phone ? `<form method="post" action="/applicants/inbox/${r.id}/register" class="reg">
+            <input type="hidden" name="name" value="${esc(r.name)}"><input type="hidden" name="phone" value="${esc(r.phone)}">
+            <span class="ph">${esc(fmtPhone(r.phone))}</span><button class="btn small" style="flex:none">등록</button></form>`
+          : `<details class="manual"><summary>직접 입력</summary><form method="post" action="/applicants/inbox/${r.id}/register" class="reg">
             <input type="hidden" name="name" value="${esc(r.name)}">
-            <input name="phone" type="tel" inputmode="tel" value="${esc(r.phone ? fmtPhone(r.phone) : '')}" placeholder="연락처 010-0000-0000" required aria-label="${esc(r.name)} 연락처">
-            <button class="btn small" style="flex:none">등록</button></form>
+            <input name="phone" type="tel" inputmode="tel" placeholder="연락처 010-0000-0000" required aria-label="${esc(r.name)} 연락처">
+            <button class="btn small" style="flex:none">등록</button></form></details>`}
         </div>`
     : `<div class="foot"><span class="grow"></span>${r.applicant_id ? `<a class="lk" href="/applicants/${r.applicant_id}">지원자 보기</a>` : ''}
           <form method="post" action="/applicants/inbox/${r.id}/restore" class="inline"><button class="lk quiet">다시 대기로</button></form></div>`}
@@ -166,13 +178,20 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
       <button name="op" value="ignore" class="ghost" data-confirm="선택한 건을 무시로 처리할까요?">무시</button></form>` : '';
 
 
-  return `${pageHeader({ title: '새 지원', desc: '알바몬 지원 알림이 모여요. 연락처를 확인하고 원가중심점을 정한 뒤 지원자로 등록해요.',
-    actions: `<a class="conn ${cs.cls}" href="/applicants/inbox/connect" title="${esc(cs.hint)}"><i></i>${esc(cs.text)} · ${esc(cs.hint)}</a>` })}
+  // 상태 줄 하나: 자동 수집 상태 · 가져오는 중 · 이력서 없음(가져오기) · 공고 정리 (같은 상태를 여러 곳에 반복하지 않는다)
+  const waitingN = all_.filter((r) => !r.phone && r.fetch_state === 'requested' && !r.resume_only).length;
+  const autoText = !agent.hasKey || !agent.lastUsedAt ? '자동 수집 설정 필요' : idle ? `자동 수집 멈춤 · ${cs.hint.replace(/^마지막 확인 /, '').replace(/ · .*$/, '')}` : '자동 수집 켜짐';
+  const sline = status === 'pending' ? `<div class="sline">
+      <a class="conn ${cs.cls}" href="/applicants/inbox/connect" title="${esc(idle ? stalledText(agent) : cs.hint)}"><i></i>${esc(autoText)}</a>
+      ${waitingN ? `<span>연락처 가져오는 중 <b>${waitingN}</b></span>` : ''}
+      ${noResume ? `<form method="post" action="/applicants/inbox/resume-all" class="inline" data-busy="이력서 가져오기 요청 중"><button class="lk">이력서 없음 <b>${noResume}</b> · 가져오기</button></form>` : ''}
+      ${todo ? `<a href="/applicants/postings">공고 정리 <b>${todo}</b> →</a>` : ''}</div>` : '';
+  const chip = (key, value, label) => `<a href="/applicants/inbox${key ? '?f=' + key : ''}"${f === key ? ' aria-current="page"' : ''}>${label} <span class="n">${value}</span></a>`;
+  return `${pageHeader({ title: '새 지원', desc: '들어온 지원을 검토하고 지원자로 등록해요.' })}
     ${peopleTabs('inbox', pending, todo)}
     ${notices.join('')}
-    ${stalledN && status === 'pending' ? `<div class="notice warn" role="status">${icon('alert')}<div><b>연락처 요청 ${stalledN}건이 기다리고 있어요.</b><br>${esc(stalledText(agent))} <a href="/applicants/inbox/connect">연결 설정 →</a></div></div>` : ''}
-    ${todo ? `<div class="notice info">${icon('info')}<div>원가중심점이 정해지지 않은 공고가 <b>${todo}개</b> 있어요. <a href="/applicants/postings"><b>공고 정리에서 한 번에 정하기 →</b></a></div></div>` : ''}
-    ${status === 'pending' ? `<div class="stats tight">${stat('', pending, '대기 중')}${stat('phone', needPhone, '연락처 필요', 'wait')}${stat('class', needClass, '분류 필요', 'review')}${stat('ready', ready, '등록할 수 있어요', 'yes')}</div>` : ''}
+    ${sline}
+    ${status === 'pending' ? `<div class="tabs fchips">${chip('', pending, '전체')}${chip('ready', ready, '등록할 수 있어요')}${chip('phone', needPhone, '연락처 필요')}${chip('class', needClass, '분류 필요')}</div>` : ''}
     ${dock}${list}
     <script>${AUTO_REFRESH_JS}</script>
     <script>${INBOX_JS}</script>`;

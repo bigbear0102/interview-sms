@@ -5,10 +5,10 @@ import { esc, fmtTime, icon } from './views.js';
 import { OUTCOMES } from './reminders.js';
 import { unreadCount } from './delivery.js';
 import { inboxBreakdown, agentStatus } from './mail-intake.js';
-import { agentIdle, stalledText } from './workspace.js';
+import { agentIdle, stalledText, unclassifiedPostings } from './workspace.js';
 import { todayTodo } from './today.js';
 import { outcomeSection } from './outcome-view.js';
-import { monthStats, renderSavingsCard } from './savings.js';
+import { monthStats, renderSavingsCard, estimateMinutes, fmtMinutes } from './savings.js';
 import { phoneWaitBadge, colHead, colCount, fmtPhone, fmtWhen, badge, messageBadge, responseBar, pageHeader, tableWrap, stat, emptyState } from './ui.js';
 
 const DAY = 86400000;
@@ -179,7 +179,11 @@ export async function renderHome(db, user, deps) {
     noreply7 = nr.reduce((a, r) => a + r.n, 0);
   }
 
-  const savings = renderSavingsCard(await monthStats(db, depIds));
+  // 절약 시간은 월 1회 보는 정보라 맨 아래 한 줄(펼치면 자세히)
+  const ms = await monthStats(db, depIds);
+  const savingsCard = renderSavingsCard(ms);
+  const savings = savingsCard ? `<details class="savline"><summary>이번 달 시스템이 대신한 일 · ${esc(fmtMinutes(estimateMinutes(ms)))}</summary>${savingsCard}</details>` : '';
+  const postTodo = await unclassifiedPostings(db).catch(() => 0);
 
   // 사업장·발송일별 현황 (최근 30일)
   let board = [];
@@ -209,14 +213,14 @@ export async function renderHome(db, user, deps) {
       user.role === 'super' ? '<a href="/admin">설정에서 폰을 연결하세요.</a> · <a href="/help/phone">폰 설치 안내</a>' : '관리자에게 폰 연결을 부탁하세요. · <a href="/help/phone">폰 설치 안내</a>'}</div></div>`;
 
   const td = await todayTodo(db, user).catch(() => ({ total: 0, left: 0 }));
+  // 할 일은 숫자 + 제목만, 0이면 숨긴다. 자동으로 진행 중인 일(연락처 가져오기 등)은 할 일이 아니다.
+  const item = (href, n, tone, title) => `<li><a href="${href}"><span class="n ${tone}">${n}</span><span class="t">${title}</span><span class="go" aria-hidden="true">›</span></a></li>`;
   const todoItems = [
-    td.total ? `<li><a href="/interviews/today"><span class="n ${td.left ? 'ok' : 'mute'}">${td.total}</span><span class="t">오늘 면접<small>${td.left ? `출석·노쇼 기록이 ${td.left}명 남았어요` : '모두 기록했어요'}</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
-    review ? `<li><a href="${reviewHref}"><span class="n review">${review}</span><span class="t">확인이 필요한 답장<small>참석인지 불참인지 애매해서 사람이 봐야 해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
-    inbox.ready ? `<li><a href="/applicants/inbox?f=ready"><span class="n ok">${inbox.ready}</span><span class="t">등록할 수 있는 새 지원<small>연락처가 채워졌어요. 확인하고 지원자로 등록해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
-    stalled ? `<li><a href="/applicants/inbox/connect"><span class="n wait">${inbox.waiting}</span><span class="t">연락처를 기다리는 새 지원<small>${esc(stalledText(agent))}</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
-    inbox.pending - inbox.ready - (stalled ? inbox.waiting : 0) > 0 ? `<li><a href="/applicants/inbox"><span class="n info">${inbox.pending - inbox.ready - (stalled ? inbox.waiting : 0)}</span><span class="t">${inbox.ready || stalled ? '그 밖의 새 지원' : '새 지원이 도착했어요'}<small>원가중심점을 정하면 연락처를 자동으로 가져와요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
-    unread ? `<li><a href="/messages?dir=in"><span class="n info">${unread}</span><span class="t">안 읽은 받은 문자<small>문자함에서 확인해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
-    noreply7 ? `<li><a href="${noreplyHref}"><span class="n wait">${noreply7}</span><span class="t">아직 답이 없는 사람 (최근 7일)<small>면접 안내에서 "답 없는 사람에게 다시 보내기"를 쓸 수 있어요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
+    td.left ? item('/interviews/today', td.left, 'ok', '오늘 면접 출석 기록') : '',
+    review ? item(reviewHref, review, 'review', '확인할 답장') : '',
+    inbox.ready ? item('/applicants/inbox?f=ready', inbox.ready, 'ok', '등록할 새 지원') : '',
+    postTodo ? item('/applicants/postings', postTodo, 'wait', '원가중심점을 정할 공고') : '',
+    noreply7 ? item(noreplyHref, noreply7, 'wait', '답이 없는 사람 (최근 7일)') : ''
   ].filter(Boolean);
   const todoHtml = todoItems.length
     ? `<ul class="todo">${todoItems.join('')}</ul>`
@@ -229,6 +233,7 @@ export async function renderHome(db, user, deps) {
 
     <section class="section">
       <div class="shead"><h2>오늘 할 일</h2></div>
+      ${stalled ? `<a class="conn idle" href="/applicants/inbox/connect" style="margin-bottom:10px" title="${esc(stalledText(agent))}"><i></i>자동 수집 멈춤 · 연락처 대기 ${inbox.waiting}건</a>` : ''}
       <div class="card" style="padding:0">${todoHtml}</div>
     </section>
 

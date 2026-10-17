@@ -286,6 +286,21 @@ a.conn:hover{text-decoration:none;filter:brightness(.96)}
 .applist{display:flex;flex-direction:column;gap:12px}
 .appcard{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 14px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);padding:16px 18px 14px}
 .appcard.ready{box-shadow:inset 4px 0 0 var(--green)}
+.savline{margin-top:24px}.savline>summary{cursor:pointer;color:var(--muted);font-size:14px;padding:8px 0}.savline[open]>summary{margin-bottom:4px}
+.sline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;margin:0 0 12px;font-size:14px;color:var(--muted)}
+.sline b{color:var(--ink)}
+.sline .conn{padding:5px 12px;font-size:13px}
+.sline .lk{font-size:14px;padding:0;min-height:32px;color:var(--blue)}
+.fchips{margin-bottom:12px}
+.appcard .rline{font-size:14px;color:var(--ink);margin-top:4px;overflow-wrap:anywhere}
+.appcard .rsum{margin-top:6px;font-size:14px}
+.appcard .rsum>summary{cursor:pointer;color:var(--blue);font-size:13px}
+.appcard .rsum dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:8px 0}
+.appcard .rsum dt{color:var(--muted)}.appcard .rsum dd{margin:0;overflow-wrap:anywhere}
+.appcard .rsum .intro{font-size:13px;color:var(--muted);margin:0 0 6px}
+.appcard .reg .ph{font-variant-numeric:tabular-nums;font-weight:600;align-self:center}
+.appcard .manual>summary{cursor:pointer;color:var(--blue);font-size:14px;list-style:none;min-height:36px;display:flex;align-items:center}
+.appcard .manual[open]>summary{margin-bottom:6px}
 .appcard .sel{padding-top:4px}
 .appcard .head{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px}
 .appcard .name{font-size:18px;font-weight:700;letter-spacing:-.02em}

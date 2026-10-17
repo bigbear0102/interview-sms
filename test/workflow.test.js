@@ -312,20 +312,20 @@ test('새 지원: PC 크롬(확장)이 꺼져 연락처 요청이 멈추면 홈�
   // 확장이 2시간 전에 마지막으로 접속
   await db.prepare(`INSERT INTO agent_tokens (user_id, token_hash, created_at, last_used_at) VALUES (1,'h',1,?)`).bind(Date.now() - 2 * 3600e3).run();
   let home = visible(await (await call('/')).text());
-  assert.match(home, /1 등록할 수 있는 새 지원/);
-  assert.match(home, /2 연락처를 기다리는 새 지원 확장 프로그램이 깔린 PC 크롬이 꺼져 있어요\(마지막 연결 2시간 전\)/);
-  assert.match(home, /1 그 밖의 새 지원/);
+  assert.match(home, /1 등록할 새 지원/);
+  assert.match(home, /자동 수집 멈춤 · 연락처 대기 2건/);       // 할 일이 아니라 경고 한 줄
+  assert.doesNotMatch(home, /그 밖의 새 지원/);
   let inbox = visible(await (await call('/applicants/inbox')).text());
-  assert.match(inbox, /연락처 요청 2건이 기다리고 있어요/);
-  assert.match(inbox, /PC 크롬을 기다려요/);
+  assert.match(inbox, /자동 수집 멈춤/);                        // 상태 줄 하나
+  assert.match(inbox, /연락처 가져오는 중 2/);
+  assert.match(inbox, /PC 꺼짐 · 대기/);
   // 방금 접속했으면 멈춘 게 아니다
   await db.prepare(`UPDATE agent_tokens SET last_used_at=?`).bind(Date.now()).run();
   home = visible(await (await call('/')).text());
-  assert.doesNotMatch(home, /연락처를 기다리는 새 지원/);
-  assert.match(home, /3 그 밖의 새 지원/);
+  assert.doesNotMatch(home, /자동 수집 멈춤/);
   inbox = visible(await (await call('/applicants/inbox')).text());
-  assert.doesNotMatch(inbox, /기다리고 있어요/);
-  assert.match(inbox, /가져오는 중…/);
+  assert.doesNotMatch(inbox, /자동 수집 멈춤|PC 꺼짐/);
+  assert.match(inbox, /연락처 가져오는 중/);
 });
 
 test('오늘 면접: 오늘 면접일시인 사람을 모아 출석·노쇼 기록, 홈 할 일, 문자함에 이름 표시', async () => {
@@ -352,7 +352,7 @@ test('오늘 면접: 오늘 면접일시인 사람을 모아 출석·노쇼 기�
   assert.doesNotMatch(page, /내일참석|오늘불참/);
   assert.match(page, /참석 예정 1명 · 기록 0명/);
   let home = visible(await (await call('/')).text());
-  assert.match(home, /1 오늘 면접 출석·노쇼 기록이 1명 남았어요/);
+  assert.match(home, /1 오늘 면접 출석 기록/);
 
   const id = (await cand(db, '01011110001')).id;
   const r = await post('/interviews/outcome', { id, outcome: 'showed' });
@@ -361,7 +361,7 @@ test('오늘 면접: 오늘 면접일시인 사람을 모아 출석·노쇼 기�
   page = visible(await (await call('/interviews/today')).text());
   assert.match(page, /참석 예정 1명 · 기록 1명/);
   home = visible(await (await call('/')).text());
-  assert.match(home, /오늘 면접 모두 기록했어요/);
+  assert.doesNotMatch(home, /오늘 면접 출석 기록/);   // 다 기록하면 할 일에서 빠짐
   await post('/interviews/outcome', { id, outcome: '' });           // 다시 누르면 기록 지움
   assert.equal((await cand(db, '01011110001')).outcome, '');
   assert.equal((await post('/interviews/outcome', { id, outcome: 'nope' })).status, 303);
