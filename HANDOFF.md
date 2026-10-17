@@ -48,6 +48,18 @@
 - 시험: 174개 통과, CI Extension test·UI shots 성공.
 - **남은 일:** 운영 배포(`npm run deploy`, 마이그레이션 0027 포함)는 자동 권한 검사에서 거부됐어요. 사용자 승인 후 실행해야 해요. 배포가 끝나면 담당자 PC 확장을 v1.8로 덮어쓴 뒤 새로고침해요.
 
+## 답장 AI 해석: NVIDIA — main 병합, 시크릿 등록, **배포 대기** (2026-10-17)
+- main `fcf0328`에 `src/reply-ai.js`와 마이그레이션 0028(`candidates.ai_note`)을 추가했어요. 규칙이 "확인 필요"로 본 답장과 문장이 긴 "불참" 답장을 웹훅 처리 뒤(`waitUntil`) `openai/gpt-oss-20b`가 다시 판단해요.
+  - 일정 고르기 답장은 확정 문자까지 보내요.
+  - 불참, 일정 변경 요청, 참석도 적용해요.
+  - 질문이나 확신이 낮은 답장은 확인 필요로 남겨요.
+- 시크릿 `NVIDIA_API_KEY`는 운영 Worker에 등록했어요. 사용자가 대화에 붙여 준 키예요. 레포에는 넣지 않았어요.
+- 시험 결과:
+  - 단위 시험 184개 통과(가짜 AI), CI 성공.
+  - 실제 NVIDIA API와 실제 코드 경로로 가짜 지원자 답장 15건을 시험해 15건 모두 정답, 1건당 1.6~3.9초 걸렸어요(로컬 메모리 DB, 문자 발송 없음).
+- **남은 일:** 운영 배포(`npm run deploy`, 마이그레이션 0027·0028)는 자동 권한 검사에서 거부돼 사용자 승인이 필요해요. 배포 뒤 관리자 번호로 "22일 10시요" 같은 답장을 보내 운영에서도 확인해야 해요.
+- 끄는 방법: vars `AI_REPLY=off`, 또는 `wrangler secret delete NVIDIA_API_KEY`.
+
 ## 작업 방법 메모
 - 배포는 `npm run deploy`(테스트→마이그레이션→배포→/healthz). 이 환경(Termux PRoot)에서도 wrangler 로그인·배포·D1 원격 조회가 된다.
 - 라이브 코드 비교: `GET /accounts/{id}/workers/scripts/interview-sms/content/v2` 결과의 worker.js ↔ `npx wrangler deploy --dry-run --outdir <dir>`.
