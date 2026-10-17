@@ -13,12 +13,12 @@ export function peopleTabs(active, pending = 0, todo = 0) {
 
 // 자동 수집 연결 상태(서버가 아는 것만): 내 확장이 최근에 시스템에 접속했는지
 export function connState(a) {
-  if (!a.hasKey) return { cls: '', text: '자동 수집 설정 필요', hint: '연결 설정에서 한 번만 설정해요' };
+  if (!a.hasKey) return { cls: '', text: '연락처 가져오기 설정 필요', hint: '연결 설정에서 한 번만 설정해요' };
   if (!a.lastUsedAt) return { cls: 'idle', text: '확장 프로그램 연결 대기', hint: '확장을 설치하고 이 PC 크롬에서 연결 설정을 열어 주세요' };
   const min = Math.round((Date.now() - a.lastUsedAt) / 60000);
-  if (min <= 15) return { cls: 'on', text: '자동 수집 켜짐', hint: min <= 1 ? '방금 확인했어요' : `${min}분 전 확인` };
+  if (min <= 15) return { cls: 'on', text: '연락처 가져오기 켜짐', hint: min <= 1 ? '방금 확인했어요' : `${min}분 전 확인` };
   const when = min < 120 ? `${min}분 전` : min < 2880 ? `${Math.round(min / 60)}시간 전` : `${Math.round(min / 1440)}일 전`;
-  return { cls: 'idle', text: '자동 수집 멈춤', hint: `마지막 확인 ${when} · 크롬이 꺼져 있을 수 있어요` };
+  return { cls: 'idle', text: '연락처 가져오기 멈춤', hint: `마지막 확인 ${when} · 크롬이 꺼져 있을 수 있어요` };
 }
 
 // 확장 프로그램(내 PC 크롬)이 지금 연락처 요청을 처리하지 못하는 상태인지: 키가 없거나 15분 넘게 접속이 없음

@@ -245,7 +245,7 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
             <input name="login_id" maxlength="80" required placeholder="그룹웨어 아이디 (예: bigbear)" autocomplete="off" aria-label="그룹웨어 아이디">
             <input name="pw" type="password" maxlength="100" required placeholder="그룹웨어 비밀번호" autocomplete="new-password" aria-label="그룹웨어 비밀번호">
             <button class="btn small">${gwList.length ? '추가·비밀번호 바꾸기' : '연결하기'}</button></form>
-          <p class="muted" style="font-size:13px;margin:0">비밀번호가 틀리면 계정이 잠기지 않게 다시 저장할 때까지 쉬어요. 확장 프로그램의 그룹웨어 계정과 같이 써도 같은 지원은 한 번만 들어와요.</p>
+          <p class="muted" style="font-size:13px;margin:0">비밀번호가 틀리면 계정이 잠기지 않게 다시 저장할 때까지 쉬어요. 그룹웨어 비밀번호를 바꾸면 여기서도 다시 저장해 주세요.</p>
           <p class="muted" style="font-size:13px;margin:0">참고: 회사 메일 서버(POP3)가 암호화를 지원하지 않아 <b>비밀번호가 암호화 없이 전송</b>돼요(관리자 승인, 2026-10). 메일은 읽기만 하고 지우지 않아요.</p>
         </div></section>`;
   // 관리자: 연락처를 가져오면 바로 지원자로 등록(예전에는 공용 수신 주소 카드 안에 있었다)
@@ -265,51 +265,44 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
       <p><a class="btn secondary small" href="${esc(bookmarklet(origin))}" onclick="alert('이 버튼은 즐겨찾기 줄로 끌어다 놓아 쓰는 도구예요. 알바몬 이력서 페이지에서 눌러 주세요.');return false;">${icon('download', 18)}이력서 연락처 가져오기</a></p>
     </div></div>`;
 
-  return `${pageHeader({ title: '연결 설정', desc: '알바몬 지원 메일과 연락처를 자동으로 모으는 설정이에요. 처음 한 번만 하면 돼요.', back: { href: '/applicants/inbox', label: '새 지원' } })}
+  // 위쪽 상태: 지원 메일(시스템이 그룹웨어에서 직접) · 연락처(PC 크롬 확장) 두 가지를 따로 보여 준다
+  const gwOk = gwList.filter((g) => g.active && !g.blocked && g.last_ok_at && Date.now() - g.last_ok_at < 10 * 60000);
+  const mailState = gwOk.length ? { cls: 'on', text: '지원 메일: 1분마다 받는 중', hint: `마지막 확인 ${fmtWhen(Math.max(...gwOk.map((g) => g.last_check_at || 0)))}` }
+    : gwList.some((g) => g.blocked || g.last_error) ? { cls: 'idle', text: '지원 메일: 확인 필요', hint: '아래 1단계의 빨간 안내를 확인해 주세요' }
+    : { cls: '', text: '지원 메일: 설정 필요', hint: '아래 1단계에서 그룹웨어를 연결해 주세요' };
+  const contactState = { cls: cs.cls, text: cs.text.replace('자동 수집', '연락처 가져오기'), hint: cs.hint };
+  const pill = (x) => `<div class="cstate"><span class="conn ${x.cls}"><i></i>${esc(x.text)}</span><span class="muted" style="font-size:13px">${esc(x.hint)}</span></div>`;
+
+  return `<style>.cstates{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))}.cstate{display:grid;gap:4px;align-content:start}</style>
+    ${pageHeader({ title: '연결 설정', desc: '지원 메일과 연락처를 자동으로 모으는 설정이에요. 처음 한 번만 하면 돼요.', back: { href: '/applicants/inbox', label: '새 지원' } })}
     ${peopleTabs('connect', pending, todo)}
     ${notices.join('')}
-    <div class="hero"><span class="conn ${cs.cls}"><i></i>${esc(cs.text)}</span><span class="muted" style="font-size:14px">${esc(cs.hint)}</span></div>
+    <div class="hero cstates">${pill(mailState)}${pill(contactState)}</div>
     <div class="csteps">
       ${gwCard}
       <section class="cstep${agent.lastUsedAt ? ' done' : ''}"><h2>연락처 가져오기: 크롬 확장 프로그램 설치</h2>
-        <p class="muted" style="font-size:15px">알바몬 메일에는 연락처가 없어요. 내 PC 크롬이 이력서를 열어 연락처를 채워 줘요. 한 번만 설치하면 돼요. (그 PC의 크롬이 켜져 있을 때 처리돼요)</p>
+        <p class="muted" style="font-size:15px">알바몬 메일에는 연락처가 없어요. <b>PC 크롬의 확장 프로그램</b>이 알바몬 이력서를 열어 연락처를 채워 줘요. 한 번만 설치하면 돼요. 그 PC의 크롬이 켜져 있을 때 처리돼요(휴대폰에서 요청해도 돼요).</p>
         <div class="stack">
           <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
             <li>아래 <b>확장 프로그램 내려받기</b>로 파일을 받고 압축을 풀어요.</li>
-            <li>크롬 주소창에 <code>chrome://extensions</code> 입력 → 오른쪽 위 <b>개발자 모드</b> 켜기 → <b>압축해제된 확장 프로그램을 로드합니다</b> → 풀어 둔 <code>albamon-extension</code> 폴더 선택.</li>
+            <li>크롬 주소창에 <code>chrome://extensions</code> 입력 → 오른쪽 위 <b>개발자 모드</b> 켜기 → <b>압축해제된 확장 프로그램을 로드합니다</b> → 풀어 둔 <code>albamon-extension</code> 폴더 선택. (새 버전은 같은 폴더에 덮어쓰고 <b>새로고침</b>)</li>
             <li>이 화면을 새로고침하면 아래 상태 줄이 <b>"확장 프로그램: 연결됨"</b>으로 바뀌고 연결 키도 자동으로 연결돼요.</li>
           </ol>
           <div><a class="btn small" href="/applicants/inbox/extension.zip" download>${icon('download', 18)}확장 프로그램 내려받기 (v${esc(EXTENSION_VERSION)})</a></div>
           <div id="extstate" class="notice" role="status" data-latest="${esc(EXTENSION_VERSION)}">확장 프로그램 확인 중…</div>
           <div id="extlast" class="notice" role="status" hidden></div>
+          ${agentToken ? `<span id="newkey" hidden>${esc(agentToken)}</span>` : ''}
         </div></section>
       <section class="cstep"><h2>알바몬 로그인 유지</h2>
-        <p class="muted" style="font-size:15px">같은 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 두세요. 새 지원 화면에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 이력서를 열어 연락처를 채워 줘요.</p></section>
+        <p class="muted" style="font-size:15px">확장 프로그램이 있는 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 두세요(문자 인증 포함). 새 지원에서 <b>연락처 가져오기</b>를 누르면 30초 안에 이력서를 열어 연락처를 채워요. 로그인이 풀리면 확장이 "로그인이 필요해요"라고 알리고 멈춰요. 그 크롬에서 다시 로그인하면 이어서 해요.</p></section>
     </div>
-    ${autoCard}
-    ${isSuper && MULTI_ACCOUNT_ENABLED ? await albamonAccountsCard(db) : ''}
-    ${isSuper ? linkSettingsPanel(await getLinkSettings(db), true) : ''}
-    <details class="advanced"><summary>고급 설정 · 다른 방법</summary>
+    ${isSuper ? `<section class="section"><div class="shead"><h2>관리자 설정</h2></div>
+      ${autoCard}
+      ${MULTI_ACCOUNT_ENABLED ? await albamonAccountsCard(db) : ''}
+      ${linkSettingsPanel(await getLinkSettings(db), true)}
+    </section>` : ''}
+    <details class="advanced"><summary>고급 설정</summary>
       ${keyCard}
-      <section class="card" style="margin-top:12px"><h2 style="font-size:18px">다른 방법: 그룹웨어 계정으로 가져오기 <small class="muted" style="font-weight:400">자동 전달을 쓸 수 없을 때만</small></h2>
-        <p class="muted" style="font-size:15px">메일 주소(또는 아이디)와 비밀번호를 넣으면 그 메일함에서 알바몬 지원 메일을 5분마다 가져와요. 비밀번호는 <b>이 PC 크롬의 확장에만</b> 저장되고 시스템(서버)으로는 보내지 않아요. 계정은 <b>최대 5개</b>까지 등록할 수 있어요.</p>
-        <div class="stack">
-          <ul id="gwlist" style="list-style:none;margin:0;padding:0"></ul>
-          <div id="gwprog" class="notice" role="status" hidden>확인하는 중… 그룹웨어에 로그인할 수 있는지 확인하고 있어요. (몇 초 걸려요)</div>
-          <div id="gwerr" class="notice warn" role="alert" hidden></div>
-          <div id="gwok" class="notice ok" hidden>${icon('check')}<div><b>그룹웨어 로그인을 확인했고</b> 내 확장에 저장했어요. 이제 5분마다 등록한 메일함에서 알바몬 지원 메일을 가져와요.</div></div>
-          <label style="display:grid;gap:4px;max-width:360px"><span style="font-size:13px">가져올 양 <small class="muted">(알바몬 지원 메일 기준, 최신 순)</small></span>
-            <select id="gwlimit" aria-label="가져올 양"><option value="0">전부 (기본)</option><option value="30">최근 30통</option><option value="100">최근 100통</option><option value="300">최근 300통</option><option value="1000">최근 1000통</option></select>
-            <small class="muted">이미 가져온 메일은 다시 가져오지 않아요(중복 제외). 양을 늘리면 다음 확인 때 더 오래된 메일까지 이어서 가져와요.</small></label>
-          <form id="gwform" data-nolock autocomplete="off" style="display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));align-items:end">
-            <label style="display:grid;gap:4px"><span style="font-size:13px">그룹웨어 메일 주소 (또는 아이디)</span><input id="gwid" autocomplete="off" maxlength="80" placeholder="예: bigbear@willvi.co.kr" aria-label="그룹웨어 메일 주소 또는 아이디"></label>
-            <label style="display:grid;gap:4px"><span style="font-size:13px">그룹웨어 비밀번호</span><input id="gwpw" type="password" autocomplete="new-password" maxlength="100" aria-label="그룹웨어 비밀번호"></label>
-            <button class="btn small" type="submit">계정 추가·확인</button>
-            <label class="check" style="grid-column:1/-1;font-size:13px;min-height:28px;font-weight:400;color:var(--muted)"><input type="checkbox" id="gwshow"> 비밀번호 보기</label>
-          </form>
-          ${agentToken ? `<span id="newkey" hidden>${esc(agentToken)}</span>` : ''}
-          <div class="notice warn" role="note">${icon('alert')}<div><b>계정이 2개 이상이면</b> 5분마다 이 PC 크롬의 그룹웨어 로그인이 계정을 바꿔 가며 잠깐 바뀌었다가 <b>원래대로 돌아와요.</b> 이 크롬에서 그룹웨어를 직접 쓰는 중이면 잠깐 로그아웃된 것처럼 보일 수 있어요. 그룹웨어를 쓰지 않는 크롬(또는 별도 프로필)에서 쓰는 걸 권해요. 또 <b>다른 사람의 아이디·비밀번호를 이 PC에 저장</b>하게 되니, 회사 규정과 본인의 동의를 확인해 주세요.</div></div>
-        </div></section>
       ${tool}
     </details>
     <script>${EXT_BRIDGE_JS}</script>

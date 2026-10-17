@@ -286,85 +286,12 @@ check(rr[13] && rr[13].ok && rr[13].phone === '01041300413', '이용권과 상�
 check(rr[14] && !rr[14].ok && /찾을 수 없어요/.test(rr[14].note), '삭제된 이력서는 "찾을 수 없어요"로 이유를 남김');
 check(rr[15] && !rr[15].ok && /연락처 보기 버튼을 찾지 못했어요/.test(rr[15].note) && /스크랩/.test(rr[15].note), '버튼이 없으면 이유와 함께 화면에 있던 버튼 이름을 남김(원인 파악용)');
 
-// ---- 그룹웨어 메일 가져오기 ----
-await setCfg({ gwOn: true, gwId: GW_ID, gwPw: 'wrong-password' });
-s = await runAndWait();
-console.log('  상태(틀린 비밀번호):', s);
-check(/로그인이 안 돼요/.test(s) && /아이디 또는 비밀번호/.test(s), '그룹웨어 비밀번호가 틀리면 "로그인이 안 돼요"와 해야 할 일을 알림');
-check((await sw.evaluate(() => chrome.storage.local.get('lastLevel'))).lastLevel === 'error', '틀린 비밀번호는 "막힘(error)" 단계로 기록');
-check(mailIn.length === 0 && gwViews.length === 0, '로그인이 안 되면 메일을 열지 않음');
-check(gwLoginPosts === 1, '로그인은 한 번만 시도함(계정 잠김 방지, 시도 ' + gwLoginPosts + '번)');
-const sBlocked = await runAndWait();
-check(gwLoginPosts === 1 && /다시 시도하지 않아요/.test(sBlocked), '실패 뒤에는 다시 저장하기 전까지 로그인을 다시 시도하지 않음');
-
-await setCfg({ gwOn: true, gwId: GW_ID, gwPw: GW_PW });
-s = await runAndWait();
-console.log('  상태(그룹웨어):', s);
-check(mailIn.length === 2 && mailIn.map((x) => x.name).sort().join() === '가나다,라마바', '알바몬 지원 메일 2건만 가져옴(다른 발신 메일은 건너뜀)');
-check(gwViews.length === 2 && gwViews.every((v) => v.mb === MBX), '메일함 번호를 목록의 속성에서 읽어 사용(고정값 아님)');
-check(!gwViews.some((v) => v.id === 'M2'), '알바몬이 아닌 메일은 열지 않음');
-const before = gwViews.length;
-await setCfg({ gwOn: true, gwId: GW_ID, gwPw: GW_PW, gwSeen: (((await sw.evaluate(() => chrome.storage.local.get('gwAccounts'))).gwAccounts || [{}])[0].seen || []) });
-await runAndWait();
-check(gwViews.length === before, '이미 가져온 메일은 다시 열지 않음');
-const sNone = (await sw.evaluate(() => chrome.storage.local.get(['lastStatus', 'lastLevel'])));
-check(/새 메일은 없어요/.test(sNone.lastStatus) && sNone.lastLevel === 'ok', '새 메일이 없을 때도 "확인 완료: 새 메일은 없어요"로 알림');
-// 메일 주소(아이디@도메인)로 입력해도 아이디 부분으로 로그인한다
-await sw.evaluate(() => chrome.storage.local.set({ gwSeen: [], gwLastScan: 0 }));
-await setCfg({ gwOn: true, gwId: GW_ID + '@willvi.co.kr', gwPw: GW_PW });
-await sw.evaluate(() => chrome.storage.local.set({ gwSeen: [] }));
-const viewsBefore = gwViews.length;
-await runAndWait();
-check(gwViews.length > viewsBefore, '메일 주소로 입력해도 그룹웨어 로그인이 됨(@ 앞 아이디 사용)');
-// ---- 여러 그룹웨어 계정 ----
-const cookieOf = (name) => sw.evaluate((n) => chrome.cookies.get({ url: 'http://127.0.0.1/', name: n }).then((c) => (c ? c.value : null)), name);
-// 이 크롬의 "내 그룹웨어 로그인"은 tester 라고 두고, 계정 3개(tester, tester2, 비밀번호 확인이 필요한 tester3)를 등록한다
-await sw.evaluate(() => chrome.cookies.set({ url: 'http://127.0.0.1/', name: 'gw', value: 'ok-tester', path: '/' }));
-await sw.evaluate(() => chrome.cookies.set({ url: 'http://127.0.0.1/', name: 'myown', value: 'keep-me', path: '/', httpOnly: true, expirationDate: Math.floor(Date.now() / 1000) + 86400 }));
-const acc = (id, pw, extra = {}) => ({ id, pw, on: true, blocked: false, force: false, seen: [], last: null, ...extra });
-await sw.evaluate((a) => chrome.storage.local.set({ gwAccounts: a, gwLastScan: 0 }), [acc(GW_ID, GW_PW), acc(GW2_ID, GW2_PW), acc('tester3', 'whatever', { blocked: true })]);
-const mailPre = mailIn.length, usersPre = gwLoginUsers.length;
-s = await runAndWait();
-console.log('  상태(여러 계정):', s);
-check(mailIn.some((x) => x.name === '사아자' && x.account === 'tester2') && mailIn.some((x) => x.name === '차카타' && x.account === 'tester2'), '두 번째 계정(tester2)의 메일함에서도 지원 메일을 가져오고 계정 이름을 함께 기록함');
-check(!mailIn.some((x) => x.name === '가나다' && x.account === 'tester2'), '계정별로 자기 메일함만 읽음(섞이지 않음)');
-check(!gwLoginUsers.slice(usersPre).includes('tester3'), '비밀번호 확인이 필요한 계정은 건너뛰고 로그인을 시도하지 않음');
-check(/tester3/.test(s) && /확인이 필요/.test(s), '건너뛴 계정은 이유와 함께 알림');
-check((await cookieOf('gw')) === 'ok-tester', '여러 계정을 읽은 뒤 내 그룹웨어 로그인(쿠키)이 원래대로 돌아옴');
-check((await cookieOf('myown')) === 'keep-me', '내 다른 쿠키도 그대로 돌아옴');
-check(!(await sw.evaluate(() => chrome.storage.session.get('gwSwap'))).gwSwap, '쿠키 보관본은 정리됨');
-// 읽는 도중 확장이 꺼졌던 경우를 흉내: 보관본만 남기고 쿠키를 바꿔 둔 뒤 복구 함수가 되돌리는지
-await sw.evaluate(() => chrome.storage.session.set({ gwSwap: { domain: '127.0.0.1', snap: [{ name: 'gw', value: 'ok-tester', domain: '127.0.0.1', path: '/', secure: false, httpOnly: false, hostOnly: true, session: true, sameSite: 'unspecified', storeId: '0' }] } }));
-await sw.evaluate(() => chrome.cookies.set({ url: 'http://127.0.0.1/', name: 'gw', value: 'ok-tester2', path: '/' }));
-await sw.evaluate(() => recoverGwSwap());
-check((await cookieOf('gw')) === 'ok-tester', '읽는 도중 꺼졌다가 켜져도 내 그룹웨어 로그인이 복구됨');
-
-
-// ---- 가져올 양(설정) ----
-await sw.evaluate((a) => chrome.storage.local.set({ gwAccounts: a, gwLastScan: 0, gwLimit: 10 }), [acc(GW4_ID, GW4_PW, { force: true })]);
-const mailPre4 = mailIn.length, viewPre4 = gwViews.filter((v) => v.id.startsWith('P')).length;
-s = await runAndWait();
-console.log('  상태(최근 10통):', s);
-const got4 = mailIn.slice(mailPre4);
-check(got4.length === 10 && got4.every((x) => x.account === 'tester4'), '가져올 양을 "최근 10통"으로 정하면 10통만 가져옴');
-check(got4.some((x) => x.name === '후보25') && !got4.some((x) => x.name === '후보15'), '최신 메일부터 가져옴(최근 10통 = 후보25~후보16)');
-check(!gwViews.some((v) => v.id.startsWith('Q')), '알바몬이 보낸 메일만 목록에서 골라 읽음(광고 메일은 열지 않음)');
-// 양을 "전부"로 바꾸면 남은 메일을 이어서 가져오고, 이미 가져온 10통은 다시 열지 않는다
-await sw.evaluate(() => chrome.storage.local.set({ gwLimit: 0, gwLastScan: 0 }));
-s = await runAndWait();
-console.log('  상태(전부):', s);
-check(mailIn.length - mailPre4 === 25, '"전부"로 바꾸면 나머지 15통까지 모두 가져옴(총 25통)');
-check(gwViews.filter((v) => v.id.startsWith('P')).length - viewPre4 === 25, '이미 가져온 10통은 다시 열지 않음(본문 요청 25번)');
-const views4 = gwViews.length;
-await sw.evaluate(() => chrome.storage.local.set({ gwLastScan: 0 }));
-s = await runAndWait();
-check(/새 메일은 없어요/.test(s) && gwViews.length === views4, '다시 확인해도 중복은 가져오지 않음(새 메일 없음)');
-check(gwListCalls.some((c) => c.no === 1 && c.size === 100), '목록은 100통씩 쪽을 넘겨 받음');
-await sw.evaluate(() => chrome.storage.local.set({ gwLimit: 0 }));
-
-const leaked = sysLog.filter((l) => l.includes(GW4_PW) || l.includes(GW2_PW) || l.includes(GW_PW) || l.includes(encodeURIComponent(GW_PW)) );
-check(leaked.length === 0, '그룹웨어 비밀번호가 시스템으로 가는 요청에 전혀 없음(' + sysLog.length + '건 검사)');
-
+// ---- v1.8: 예전 버전이 저장한 그룹웨어 계정·비밀번호를 지운다(그룹웨어 메일은 시스템이 POP3 로 직접) ----
+await sw.evaluate(() => chrome.storage.local.set({ gwAccounts: [{ id: 'x', pw: 'old-secret' }], gwId: 'x', gwPw: 'old-secret', gwSeen: ['1'] }));
+await sw.evaluate(() => cleanupOld());
+const leftover = await sw.evaluate(() => chrome.storage.local.get(['gwAccounts', 'gwId', 'gwPw', 'gwSeen']));
+check(Object.keys(leftover).length === 0, '예전 그룹웨어 계정·비밀번호·메일 기록을 확장 저장소에서 지움');
+check(typeof (await sw.evaluate(() => typeof scanGroupware)) === 'string' && (await sw.evaluate(() => typeof scanGroupware)) === 'undefined', '그룹웨어 메일 가져오기 기능이 없음(연락처 전용)');
 
 // ---- 수신함 화면 ↔ 확장 연결 (그룹웨어 계정을 웹 화면에서 입력) ----
 await sw.evaluate(() => chrome.storage.local.clear());
@@ -379,75 +306,13 @@ check(/확장 프로그램: 연결됨/.test(t1), '화면이 확장 프로그램�
 await sleep(1500);
 const afterKey = await sw.evaluate(() => chrome.storage.local.get(['agentToken', 'serverUrl']));
 check(afterKey.agentToken === TOKEN, '연결 키가 없으면 화면이 자동으로 만들어 확장에 넣음(입력 불필요)');
-// (0) 없는 아이디를 저장해 본다
-await web.type('#gwid', 'nobody-here');
-await web.type('#gwpw', 'whatever');
-await web.click('#gwform button');
-await web.waitForFunction(() => /없는 아이디/.test(document.getElementById('gwerr').textContent), { timeout: 15000 }).catch(() => {});
-check(/없는 아이디/.test(await web.$eval('#gwerr', (e) => e.textContent)), '그룹웨어에 없는 아이디를 저장하면 "없는 아이디예요"로 알림');
-await sw.evaluate(() => chrome.storage.local.set({ gwAccounts: [] }));
-await web.$eval('#gwid', (e) => { e.value = ''; });
-await web.$eval('#gwpw', (e) => { e.value = ''; });
-// (1) 일부러 틀린 비밀번호를 저장해 본다: 이 크롬은 이미 그룹웨어에 로그인된 상태여도 틀린 비밀번호를 알아채야 한다
-const viewsPre = gwViews.length, flagPre = gwFlagCalls;
-await web.type('#gwid', GW_ID);
-await web.type('#gwpw', 'wrong-password');
-await web.click('#gwform button');
-await web.waitForFunction(() => /맞지 않아요/.test(document.getElementById('extlast').textContent), { timeout: 15000 }).catch(() => {});
-const tWrong = await web.$eval('#extlast', (e) => ({ text: e.textContent, cls: e.className }));
-console.log('  화면 결과(틀린 비밀번호):', tWrong.text);
-check(/맞지 않아요/.test(tWrong.text) && /틀린 횟수 \d+\/5/.test(tWrong.text), '틀린 비밀번호를 저장하면 바로 "맞지 않아요"와 틀린 횟수를 알림');
-check(/warn/.test(tWrong.cls), '화면에 경고 색으로 표시');
-const errBox = await web.$eval('#gwerr', (e) => ({ hidden: e.hidden, text: e.textContent }));
-check(!errBox.hidden && /맞지 않아요/.test(errBox.text), '입력칸 바로 아래에도 "맞지 않아요" 오류가 보임');
-check((await web.$eval('#gwpw', (e) => e.value)) === 'wrong-password', '틀렸을 때는 입력한 값을 지우지 않아 고칠 수 있음');
-check((await web.$eval('#gwok', (e) => e.hidden)) === true, '틀렸을 때는 "저장했어요" 성공 안내를 보이지 않음');
-check(gwFlagCalls === flagPre + 1 && gwViews.length === viewsPre, '저장 때 확인 요청은 한 번만, 메일은 읽지 않음');
-check((((await sw.evaluate(() => chrome.storage.local.get('gwAccounts'))).gwAccounts || [])[0] || {}).blocked === true, '틀리면 자동 재시도를 막음(계정 잠김 방지)');
-// (2) 올바른 비밀번호로 다시 저장
-const postsPre = gwLoginPosts;
-await web.$eval('#gwpw', (e) => { e.value = ''; });
-await web.type('#gwpw', GW_PW);
-await web.click('#gwform button');
-await web.waitForFunction(() => /그룹웨어 계정 \d개 등록됨/.test(document.getElementById('extstate').textContent) && !/⚠/.test(document.getElementById('extstate').textContent), { timeout: 15000 }).catch(() => {});
-const t2 = await web.$eval('#extstate', (e) => e.textContent);
-console.log('  화면 상태(저장 뒤):', t2);
-const stored = ((await sw.evaluate(() => chrome.storage.local.get('gwAccounts'))).gwAccounts || [])[0] || {};
-check(stored.id === GW_ID && stored.pw === GW_PW && stored.on === true, '그룹웨어 아이디·비밀번호가 확장 저장소에 들어감');
-check(/계정 1개 등록됨/.test(t2) && !t2.includes(GW_PW), '화면에는 저장 여부만 보이고 비밀번호는 보이지 않음');
-check((await web.$eval('#gwpw', (e) => e.value)) === '', '확인에 성공하면 비밀번호 입력칸은 비워짐');
-check((await web.$eval('#gwok', (e) => e.hidden)) === false && (await web.$eval('#gwerr', (e) => e.hidden)) === true, '성공하면 성공 안내만 보이고 오류는 사라짐');
-await sleep(300);
-const btn = await web.$eval('#gwform button', (e) => ({ disabled: e.disabled, text: e.textContent.trim() }));
-check(!btn.disabled && !/처리 중/.test(btn.text), '저장 버튼이 "처리 중…"으로 잠기지 않음(공통 스크립트와 함께 시험)');
-const htmlNow = await web.content();
-check(!htmlNow.includes(GW_PW), '화면 어디에도 비밀번호가 남지 않음');
-await sleep(3500);   // 저장 뒤 자동 실행이 끝날 시간
-check(gwLoginPosts > postsPre, '새 계정을 저장하면 이미 로그인된 세션이 있어도 저장한 계정으로 다시 로그인함(엉뚱한 메일함 방지)');
-const leaked2 = sysLog.slice(sentBefore).filter((l) => l.includes(GW_PW) || l.includes(encodeURIComponent(GW_PW)));
-check(leaked2.length === 0, '화면에서 저장해도 비밀번호가 시스템 서버로 가는 요청에 없음(' + (sysLog.length - sentBefore) + '건 검사)');
-// 가져올 양 선택: 화면에서 고르면 확장에 저장되고, 다시 열면 그 값이 보인다
-await web.select('#gwlimit', '100');
-await sleep(800);
-check((await sw.evaluate(() => chrome.storage.local.get('gwLimit'))).gwLimit === 100, '화면에서 "가져올 양"을 고르면 확장에 저장됨');
-await sleep(3500);
-check((await web.$eval('#gwlimit', (e) => e.value)) === '100', '확장이 알려 주는 값으로 선택칸이 유지됨');
-await web.select('#gwlimit', '0');
-await sleep(500);
-// 두 번째 계정을 화면에서 추가하고, 목록에 보이고, 삭제할 수 있는지
-await web.type('#gwid', GW2_ID);
-await web.type('#gwpw', GW2_PW);
-await web.click('#gwform button[type=submit]');
-await web.waitForFunction(() => document.querySelectorAll('#gwlist li').length === 2, { timeout: 15000 }).catch(() => {});
-const lis = await web.$$eval('#gwlist li', (els) => els.map((e) => e.textContent));
-console.log('  등록된 계정 목록:', JSON.stringify(lis.map((t) => t.slice(0, 40))));
-check(lis.length === 2 && lis.some((t) => t.includes(GW_ID)) && lis.some((t) => t.includes(GW2_ID)), '화면에 등록된 계정 두 개가 목록으로 보임');
-check(!(await web.content()).includes(GW2_PW), '두 번째 계정의 비밀번호도 화면에 남지 않음');
-web.on('dialog', (d) => d.accept());
-await web.evaluate(() => { [...document.querySelectorAll('#gwlist li')].find((li) => li.textContent.includes('tester2') && !li.textContent.startsWith('tester ')).querySelector('button').click(); });
-await web.waitForFunction(() => document.querySelectorAll('#gwlist li').length === 1, { timeout: 15000 }).catch(() => {});
-check((await web.$$eval('#gwlist li', (els) => els.length)) === 1, '삭제하면 목록에서 사라짐');
-check(!(((await sw.evaluate(() => chrome.storage.local.get('gwAccounts'))).gwAccounts || []).some((a) => a.id === GW2_ID)), '삭제하면 확장 저장소에서도(비밀번호 포함) 지워짐');
+check(!(await web.$('#gwform')), '화면에 그룹웨어 계정 입력칸이 없음');
+// 화면에서 연락처 가져오기를 누르면(kick) 30초 알람을 기다리지 않고 바로 처리
+pending.add(1); items[0].resume_url = `http://127.0.0.1:${albaPort}/resume?applyNo=111`;
+const tKick = Date.now();
+await web.evaluate(() => window.postMessage({ source: 'interview-page', type: 'kick' }, window.location.origin));
+for (let i = 0; i < 40 && pending.has(1); i++) await sleep(250);
+check(!pending.has(1), `화면의 요청 신호로 바로 처리(${((Date.now() - tKick) / 1000).toFixed(1)}초)`);
 await web.close();
 
 await browser.close().catch(() => {});

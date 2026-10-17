@@ -490,7 +490,9 @@ test('메일 수신 주소(담당자별)도 쓰지 않는다: 화면에 없고, 
   assert.ok(visible(page).includes('지원 메일 받기: 그룹웨어 직접 연결'));
   assert.ok(!visible(page).includes('그룹웨어 자동 전달'));
   assert.ok(!visible(page).includes('공용 수신 주소'));
-  assert.ok(visible(page).includes('다른 방법: 그룹웨어 계정으로 가져오기'));
+  assert.ok(!visible(page).includes('그룹웨어 계정으로 가져오기'));
+  assert.ok(visible(page).includes('지원 메일: 설정 필요') && visible(page).includes('연락처 가져오기'));   // 위쪽 상태 두 가지
+  assert.ok(visible(page).includes('관리자 설정'));
   assert.ok(visible(page).includes('연락처를 가져오면 바로 지원자로 등록'));   // 자동 등록 설정은 관리자 카드로 남음
   assert.ok(visible(page).indexOf('그룹웨어 직접 연결') < visible(page).indexOf('크롬 확장 프로그램 설치'));
   const before = await getUserMailName(db, 1);
@@ -539,7 +541,8 @@ test('연결 키 자동 발급(JSON): 로그인한 사람의 키가 만들어지
   // 화면에는 자동 연결 안내가 있고 카드가 펼쳐져 있다
   const page = await (await call('/applicants/inbox/connect')).text();
   assert.ok(visible(page).includes('연결 키도 자동으로 연결돼요'));
-  assert.match(page, /id="gwform"/);
+  assert.doesNotMatch(page, /id="gwform"/);   // v1.8: 확장의 그룹웨어 계정 입력은 없앰(지원 메일은 시스템이 POP3 로)
+  assert.match(page, /id="extstate"/);
   // 로그인하지 않으면 만들 수 없다
   const anon = await handleRequest(new Request('https://interview.example.test/applicants/inbox/agent-token.json', { method: 'POST', headers: { origin: 'https://interview.example.test' } }), { DB: db, ENCRYPTION_KEY: 'k', PUBLIC_BASE_URL: 'https://interview.example.test' }, { waitUntil() {} });
   assert.notEqual(anon.status, 200);

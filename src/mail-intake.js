@@ -216,10 +216,10 @@ export async function saveParsed(db, p, now = Date.now(), ownerId = null, mailAc
   // 같은 공고에 이미 정해 둔 원가중심점이 있으면 자동으로 붙인다
   const rule = p.recruitNo ? await first(db, `SELECT cost_center, job FROM inbox_cost_rules WHERE recruit_no=?`, clip(p.recruitNo, 30)) : null;
   const r = await run(db,
-    `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at, cost_center, owner_user_id, job, mail_account, fetch_state)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at, cost_center, owner_user_id, job, mail_account, fetch_state, fetch_req_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     p.source, p.applyNo, clip(p.recruitNo, 30), clip(p.company, 100), clip(p.jobTitle, 200), clip(p.name, 50), clip(p.gender, 4),
-    p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), safeResumeUrl(p.resumeUrl).slice(0, 500), now, rule ? rule.cost_center : '', ownerId, rule ? rule.job : '', clip(mailAccount, 60), rule && rule.cost_center && safeResumeUrl(p.resumeUrl) ? 'requested' : '');
+    p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), safeResumeUrl(p.resumeUrl).slice(0, 500), now, rule ? rule.cost_center : '', ownerId, rule ? rule.job : '', clip(mailAccount, 60), rule && rule.cost_center && safeResumeUrl(p.resumeUrl) ? 'requested' : '', rule && rule.cost_center && safeResumeUrl(p.resumeUrl) ? now : null);
   return { ok: true, id: Number(r.meta.last_row_id) };
 }
 
@@ -322,7 +322,7 @@ export async function setAutoRegister(db, on) {
 // 가져오기 요청: 아직 연락처가 없고 대기 중인 건만. ids 가 없으면 대기 전체. 반환: 요청한 건수
 export async function requestFetch(db, ids = null, viewer = null) {
   const sc = inboxScope(viewer);
-  let sql = `UPDATE applicant_inbox SET fetch_state='requested', fetch_note='', fetch_at=NULL WHERE status='pending' AND phone='' AND fetch_state != 'requested' AND ${sc.sql}`;
+  let sql = `UPDATE applicant_inbox SET fetch_state='requested', fetch_note='', fetch_at=NULL, fetch_req_at=${Date.now()} WHERE status='pending' AND phone='' AND fetch_state != 'requested' AND ${sc.sql}`;
   const args = [...sc.args];
   if (Array.isArray(ids)) {
     if (!ids.length) return 0;
@@ -337,7 +337,7 @@ export async function requestFetch(db, ids = null, viewer = null) {
 export async function requestFetchByPosting(db, recruitNo) {
   const r = String(recruitNo || '');
   if (!r) return 0;
-  const x = await run(db, `UPDATE applicant_inbox SET fetch_state='requested', fetch_note='', fetch_at=NULL WHERE recruit_no=? AND status='pending' AND phone='' AND fetch_state != 'requested' AND resume_url != ''`, r);
+  const x = await run(db, `UPDATE applicant_inbox SET fetch_state='requested', fetch_note='', fetch_at=NULL, fetch_req_at=${Date.now()} WHERE recruit_no=? AND status='pending' AND phone='' AND fetch_state != 'requested' AND resume_url != ''`, r);
   return x.meta.changes || 0;
 }
 
@@ -372,10 +372,10 @@ export async function saveFetchResult(db, id, { ok, phone = '', note = '' }, now
   if (userId != null && row.owner_user_id != null && row.owner_user_id !== userId) return { ok: false, reason: 'gone' };
   const p = String(phone || '').replace(/\D/g, '');
   if (ok && /^01[016789]\d{7,8}$/.test(p)) {
-    await run(db, `UPDATE applicant_inbox SET phone=?, fetch_state='done', fetch_note='', fetch_at=? WHERE id=?`, p, now, id);
+    await run(db, `UPDATE applicant_inbox SET phone=?, fetch_state='done', fetch_note='', fetch_done_at=? WHERE id=?`, p, now, id);
     return { ok: true, phone: p };
   }
-  await run(db, `UPDATE applicant_inbox SET fetch_state='failed', fetch_note=?, fetch_at=? WHERE id=?`,
+  await run(db, `UPDATE applicant_inbox SET fetch_state='failed', fetch_note=?, fetch_done_at=? WHERE id=?`,
     String(note || '연락처를 찾지 못했어요').slice(0, 200), now, id);
   return { ok: false, reason: 'failed' };
 }
