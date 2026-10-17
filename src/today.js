@@ -82,7 +82,7 @@ export function renderToday(list, { day = Date.now(), now = Date.now() } = {}) {
 .trow{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:4px 14px;align-items:center;padding:14px 16px;border-top:1px solid var(--line-soft)}
 .trow:first-child{border-top:0}
 .trow.rec{background:var(--surface-2)}
-.trow .tm{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+.trow .tm{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
 .trow .who b{font-size:17px}
 .trow .sub{display:block;color:var(--muted);font-size:14px}
 .trow .tcamp{color:var(--muted);white-space:nowrap}
@@ -94,7 +94,7 @@ export function renderToday(list, { day = Date.now(), now = Date.now() } = {}) {
 .obtn{min-width:76px;min-height:48px;border-radius:12px;font-size:16px;font-weight:700;background:var(--chip);color:var(--ink);border:2px solid transparent;display:inline-flex;gap:4px;align-items:center;justify-content:center}
 .obtn.yes.on{background:var(--green-bg);color:var(--green-t);border-color:var(--green)}
 .obtn.no.on{background:var(--red-bg);color:var(--red-t);border-color:var(--red)}
-@media (max-width:640px){.trow{grid-template-columns:52px minmax(0,1fr)}.trow .ob{grid-column:1/-1}.obtn{flex:1}}
+@media (max-width:640px){.trow{grid-template-columns:58px minmax(0,1fr)}.trow .tm{font-size:18px}.trow .ob{grid-column:1/-1}.obtn{flex:1}}
 </style>
   ${pageHeader({ title: isToday ? '오늘 면접' : `${dayLabel(start)} 면접`,
     desc: '면접일시가 이날인 사람을 모든 면접 안내에서 모았어요. 면접이 끝나면 <b>출석</b> 또는 <b>노쇼</b>를 눌러 기록해요.',

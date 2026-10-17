@@ -76,7 +76,8 @@ body{margin:0;background:var(--bg);color:var(--ink);
 input,textarea,select{word-break:normal}
 h1,h2,h3,h4{text-wrap:balance}
 p,li,dd,.notice>div,.muted,small{text-wrap:pretty}
-.chipbtn,.tabs a,.lk,td button,.conn{white-space:nowrap}
+.chipbtn,.tabs a,.lk,td button,.conn,.num,.when,time,.badge{white-space:nowrap}
+.wstabs>a{flex:none;white-space:nowrap}
 h1,h2,h3,h4{letter-spacing:-.02em;line-height:1.25;margin:0}
 h1{font-size:28px;font-weight:700}h2{font-size:22px;font-weight:700}h3{font-size:18px;font-weight:600}
 p{margin:0}
@@ -299,7 +300,8 @@ a.conn:hover{text-decoration:none;filter:brightness(.96)}
 .sline .conn{padding:5px 12px;font-size:13px}
 .sline .lk,.sline button.lk{font-size:14px;padding:0;min-height:32px;color:var(--blue);background:none;border:0;font-weight:500}
 .sline .lk b{color:inherit}
-.appcard .foot{margin-left:-8px}
+.appcard .foot>.lk:first-child{padding-left:0}
+.appcard details.cl{margin-top:2px}.appcard details.cl:not([open])>summary{margin:0}
 .fchips{margin-bottom:12px}
 .appcard .rline{font-size:14px;color:var(--ink);margin-top:4px;overflow-wrap:anywhere}
 .appcard .rsum{margin-top:6px;font-size:14px}

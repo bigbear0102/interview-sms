@@ -184,7 +184,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   const sline = status === 'pending' ? `<div class="sline">
       <a class="conn ${cs.cls}" href="/applicants/inbox/connect" title="${esc(idle ? stalledText(agent) : cs.hint)}"><i></i>${esc(autoText)}</a>
       ${waitingN ? `<span>연락처 가져오는 중 <b>${waitingN}</b></span>` : ''}
-      ${noResume ? `<form method="post" action="/applicants/inbox/resume-all" class="inline" data-busy="이력서 가져오기 요청 중"><button class="lk">이력서 없음 <b>${noResume}</b> · 가져오기</button></form>` : ''}
+      ${noResume ? `<form method="post" action="/applicants/inbox/resume-all" class="inline" data-busy="이력서 가져오기 요청 중"><button class="lk">이력서 없음 <b>${noResume}</b> — 가져오기</button></form>` : ''}
       ${todo ? `<a href="/applicants/postings">공고 정리 <b>${todo}</b> →</a>` : ''}</div>` : '';
   const chip = (key, value, label) => `<a href="/applicants/inbox${key ? '?f=' + key : ''}"${f === key ? ' aria-current="page"' : ''}>${label} <span class="n">${value}</span></a>`;
   return `${pageHeader({ title: '새 지원', desc: '들어온 지원을 검토하고 지원자로 등록해요.' })}

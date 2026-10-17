@@ -833,7 +833,7 @@ export async function renderApplicantSheet(db, opts = {}) {
         </tbody></table>`)}</div></details>` : ''}
     <form method="get" action="/applicants" class="searchbar">
       ${params.status ? `<input type="hidden" name="status" value="${esc(params.status)}">` : ''}
-      <input name="q" value="${esc(params.q)}" placeholder="이름·번호, 또는 '안양 사무 20대'처럼 조건" aria-label="검색" type="search">
+      <input name="q" value="${esc(params.q)}" placeholder="이름·번호·조건(예: 안양 사무)" aria-label="검색" type="search">
       <button class="btn">찾기</button>
       <details class="filterbox"${filterActive ? ' open' : ''}><summary class="btn secondary">필터${filterActive ? ' ●' : ''}</summary>
         <div class="filters">
