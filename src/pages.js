@@ -380,10 +380,10 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate, slotTempl
     <script>
     (function () {
       var t = document.getElementById('template'), p = document.getElementById('preview'), sl = document.getElementById('slots');
-      var TPL = { fixed: ${JSON.stringify(defaultTemplate).replace(/</g, '\u003c')}, slots: ${JSON.stringify(slotTemplate).replace(/</g, '\u003c')} };
+      var TPL = { fixed: ${JSON.stringify(defaultTemplate).replace(/</g, '\\u003c')}, slots: ${JSON.stringify(slotTemplate).replace(/</g, '\\u003c')} };
       function slotLines() {
-        var xs = sl.value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean).slice(0, 9);
-        return (xs.length ? xs : ['10/21(화) 14:00', '10/22(수) 10:00']).map(function (x, i) { return (i + 1) + ') ' + x; }).join('\n');
+        var xs = sl.value.split('\\n').map(function (x) { return x.trim(); }).filter(Boolean).slice(0, 9);
+        return (xs.length ? xs : ['10/21(화) 14:00', '10/22(수) 10:00']).map(function (x, i) { return (i + 1) + ') ' + x; }).join('\\n');
       }
       function show() {
         var s = t.value.split('{일정목록}').join(slotLines()).split('{이름}').join('홍길동').split('{면접일시}').join('10/20 14:00').split('{사업장}').join('');

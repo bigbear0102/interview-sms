@@ -269,3 +269,14 @@ test('화면: 결과 안내 문자 보내기', async () => {
   assert.match(html, /1명에게 결과 안내 문자를 보내요/);
   assert.doesNotMatch(html, /합격 1명 에게 보내기/);
 });
+
+test('화면 스크립트 문법 오류 없음 (만들기·상세·지원자)', async () => {
+  const { db, call } = await setup();
+  const a = await saveApplicant(db, { name: '홍길동', phone: '010-1234-5678' }, 1, 'manual');
+  const r = await createCampaign(db, { departmentId: 1, gatewayId: 1, name: 's', template: '', userId: 1, slots: ['10/21 14:00'],
+    candidates: [{ site: '강남', name: '가', phone: '01011110001' }] });
+  for (const p of ['/campaigns/new', `/campaigns/new?ids=${a.id}`, `/campaigns/${r.campaignId}`, '/applicants', `/applicants/${a.id}`]) {
+    const html = await (await call(p)).text();
+    for (const m of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) assert.doesNotThrow(() => new Function(m[1]), p);
+  }
+});
