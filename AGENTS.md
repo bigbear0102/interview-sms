@@ -31,6 +31,7 @@ npm start                # Node 서버 (회사 서버 이전용, .env 필요)
 | `src/ai.js` | NVIDIA AI 공용 호출(`askJson`), 날짜 계산(`resolveWhen`, AI 대신 코드가) |
 | `src/reply-ai.js` | 애매한 답장 AI 해석·희망 일시·질문 답장 초안·일반 문자 분류(웹훅 뒤 `waitUntil`) |
 | `src/applicant-ratings.js` / `src/applicant-ask.js` | 지원자 별점(담당자별 1~5) / AI로 지원자 찾기(문장→조건, 순서는 별점) |
+| `src/oplog.js` | 진행 카드용 서버 단계 기록(`opFor(request)('…')`, 개인정보 금지) |
 | `src/ai-features.js` | 공고 원가중심점 추천, 명단 칸 맞추기, 면접일시 형식, 문구 점검 |
 | `src/gateway.js` | 게이트웨이 API 호출, 웹훅 등록, HMAC 서명 검증 |
 | `src/auth.js` / `src/crypto.js` | 세션/권한, PBKDF2·AES-GCM·HMAC (WebCrypto) |
