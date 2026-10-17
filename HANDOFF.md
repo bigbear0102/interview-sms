@@ -142,6 +142,10 @@
 ## 자동 가져오기 기본 — 배포 (2026-10-18, 마이그레이션 0033)
 - 5분마다 빠진 연락처·이력서를 자동으로 요청해요. 실패하면 1시간 간격으로 3번까지 다시 시도해요. 관리자 토글이 있고 기본은 켜짐이에요. 시험 216개 통과.
 
+## UX/UI 재검토 v2 — 설계 완료, 구현 전 (2026-10-18)
+- `docs/WORKFLOW.md` v2에 "자동이 기본"에 맞춘 재설계를 정리했어요: P0 6개, P1 8개, P2 4개, 작업 묶음 A~E, 반영 절차 8단계. v1은 `docs/WORKFLOW-v1.md`로 옮겼어요.
+- 사용자 결정 대기: 시스템 이름(P2-1), 자동 등록 기본값(P2-3).
+
 ## 작업 방법 메모
 - 배포는 `npm run deploy`(테스트→마이그레이션→배포→/healthz). 이 환경(Termux PRoot)에서도 wrangler 로그인·배포·D1 원격 조회가 된다.
 - 라이브 코드 비교: `GET /accounts/{id}/workers/scripts/interview-sms/content/v2` 결과의 worker.js ↔ `npx wrangler deploy --dry-run --outdir <dir>`.
