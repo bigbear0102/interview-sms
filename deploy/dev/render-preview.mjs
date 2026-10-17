@@ -21,7 +21,7 @@ const env = {
   GATEWAY_URL: 'https://api.sms-gate.app/3rdparty/v1', GATEWAY_PRIVATE_TOKEN: '',
   NVIDIA_API_KEY: 'preview', NO_REAL_NETWORK: true,  // AI 버튼·표시를 보이게(실제 AI 접속은 하지 않음)
   // 가짜 AI: "AI로 지원자 찾기" 조건만 돌려준다
-  AI_FETCH: async () => Response.json({ choices: [{ message: { content: JSON.stringify({ areas: ['아마노'], jobs: ['주차관리'], keywords: [], minStars: null, includeBlacklist: false, limit: null, ignored: ['20대'] }) } }] })
+  AI_FETCH: async () => Response.json({ choices: [{ message: { content: JSON.stringify({ areas: ['아마노'], jobs: ['주차관리'], keywords: [], minStars: null, includeBlacklist: false, limit: null, ignored: [] }) } }] })
 };
 const ctx = { waitUntil() {} };
 
@@ -113,7 +113,7 @@ const pages = {
   today: ['/interviews/today', true],
   inbox_connect: ['/applicants/inbox/connect', true],
   postings: ['/applicants/postings', true],
-  applicant_ask: ['/applicants/ask?q=' + encodeURIComponent('아마노 주차관리 20대 추천해줘'), true],
+  applicant_ask: ['/applicants/ask?q=' + encodeURIComponent('아마노 주차관리 추천해줘'), true],
   applicant_detail: [`/applicants/${appIds[0]}`, true],
   admin: ['/admin', true],
   password: ['/password', true],

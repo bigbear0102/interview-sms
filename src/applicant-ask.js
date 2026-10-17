@@ -1,9 +1,9 @@
 // "AI로 지원자 찾기": 담당자가 문장으로 물으면("안양 사무 추천해줘") 조건을 뽑아 지원자를 찾고, 담당자 별점 높은 순으로 보여 준다.
 // - AI 에는 담당자가 쓴 문장만 보낸다. 지원자 정보는 보내지 않는다(검색·순서는 시스템이 DB 에서 한다).
 // - AI 는 조건만 정한다. 추천 순서는 담당자 별점 → 별점 수 → 최근 지원. AI 가 사람을 평가하지 않는다.
-// - 검색은 제한 없이: 지역·직무·학력·경력·주소 등 무엇이든 찾는다(2026-10-18 사용자 결정).
-//   단, 나이·성별·혼인·임신으로 고르는 것은 채용에서 법으로 금지(남녀고용평등법 7조, 고령자고용법 4조의4)라 빼고 알려 준다.
-//   청소년(19세 미만) 제외는 근로 보호 목적이라 "성인만"으로 쓸 수 있다.
+// - 검색은 제한 없이: 지역·직무·학력·경력·주소·나이·성별 등(2026-10-18 사용자 결정: 회사 내부 시스템, 법률 자문을 받았고
+//   조건을 고르는 판단과 책임은 담당자에게 있음). 나이·성별은 알바몬 지원 메일에 있는 값(applicant_inbox.age, gender)으로 거른다.
+//   혼인·임신 여부는 시스템에 정보가 없어 거를 수 없다(따로 모으지 않는다).
 // - AI 가 꺼져 있거나 실패하면 문장의 낱말로 그대로 찾는다.
 import { all } from './d1.js';
 import { esc, icon, fmtTime } from './views.js';
@@ -15,27 +15,46 @@ import { peopleTabs } from './workspace.js';
 const clip = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 
 const SYSTEM = `채용 담당자가 지원자를 찾는 문장을 검색 조건으로 바꾼다. JSON 한 개만 출력한다.
-형식: {"areas":[],"jobs":[],"keywords":[],"minStars":숫자 또는 null,"includeBlacklist":false,"adultsOnly":false,"limit":숫자 또는 null,"ignored":[]}
+형식: {"areas":[],"jobs":[],"keywords":[],"minStars":숫자 또는 null,"includeBlacklist":false,"ageMin":숫자 또는 null,"ageMax":숫자 또는 null,"gender":"남|여" 또는 null,"limit":숫자 또는 null,"ignored":[]}
 - areas: 지역·지점·현장·고객사 이름(예: 안양, 강남점, 아마노). 원문 낱말 그대로, "시/구/점" 같은 꼬리는 빼도 된다.
 - jobs: 직무(예: 사무, 주차관리, 물류, 상담). 원문 낱말 그대로.
 - keywords: 그 밖의 검색어(학력·경력·주소·회사 등, 예: 대졸, 경력, 운전). "추천", "찾아줘", "사람", "지원자" 같은 말은 넣지 않는다.
 - "별점 4점 이상", "평가 좋은" → minStars(좋은=4). "5명" → limit. "블랙리스트 포함" → includeBlacklist true.
-- "성인만", "미성년자 제외" → adultsOnly true.
-- 나이(20대, 30살, 젊은)·성별(남자, 여자)·결혼·임신 조건은 검색어로 쓰지 않고 ignored 에 그 말을 적는다(법으로 금지).
+- 나이: "20대" → ageMin 20, ageMax 29. "30세 이상" → ageMin 30. "25살 이하" → ageMax 25. "성인만" → ageMin 19. 숫자가 없는 말("젊은")은 ignored 에.
+- 성별: 남자·남성 → "남", 여자·여성 → "여".
+- 결혼·임신처럼 시스템에 정보가 없는 조건은 ignored 에 적는다.
 - 원문에 없는 조건을 만들지 않는다.`;
 
 const STOP = /^(블랙리스트|포함|포함해서|추천|추천해|추천해줘|추천해주세요|찾아|찾아줘|찾아주세요|알려줘|보여줘|사람|사람들|지원자|지원자들|인원|좀|해줘|주세요|중에|중에서|있는|에서|으로|로)$/;
-// 채용에서 법으로 금지된 기준(나이·성별·혼인·임신)만 막는다
-const PROTECTED = /(\d+\s*대(?!학)|\d+\s*살|\d+\s*세\s*(?:이상|이하|미만|초과)|나이|연령|젊은|남자|여자|남성|여성|남자분|여자분|결혼|미혼|기혼|임신)/g;
-const ADULT = /(성인만|성인|미성년자?\s*제외|청소년\s*제외)/;
+// 나이·성별은 낱말로 직접 읽는다(AI 보다 확실하게). 결혼·임신은 정보가 없어 거를 수 없다.
+const NOINFO = /(결혼|미혼|기혼|임신|출산)/g;
+const AGE_GENDER = /(\d{1,2})\s*대(?!학)(?:\s*(초반|중반|후반))?|(\d{1,2})\s*(?:세|살)\s*(이상|이하|미만|초과|부터|까지)?|성인만|성인|미성년자?\s*제외|청소년\s*제외|남자분?|남성|여자분?|여성/g;
+export function ageGenderOf(q) {
+  const out = { ageMin: null, ageMax: null, gender: null };
+  const t = String(q);
+  for (const m of t.matchAll(AGE_GENDER)) {
+    const w = m[0];
+    if (m[1]) {
+      const d = Number(m[1]); let lo = d, hi = d + 9;
+      if (m[2] === '초반') hi = d + 3; else if (m[2] === '중반') { lo = d + 3; hi = d + 6; } else if (m[2] === '후반') lo = d + 7;
+      out.ageMin = Math.max(out.ageMin ?? 0, lo); out.ageMax = Math.min(out.ageMax ?? 200, hi);
+    } else if (m[3]) {
+      const n = Number(m[3]), op = m[4] || '';
+      if (op === '이상' || op === '부터') out.ageMin = n; else if (op === '초과') out.ageMin = n + 1;
+      else if (op === '이하' || op === '까지') out.ageMax = n; else if (op === '미만') out.ageMax = n - 1;
+      else { out.ageMin = n; out.ageMax = n; }
+    } else if (/성인|미성년|청소년/.test(w)) out.ageMin = Math.max(out.ageMin ?? 0, 19);
+    else out.gender = /남/.test(w) ? '남' : '여';
+  }
+  return out;
+}
 
 // AI 없이: 낱말로
 export function plainFilters(q) {
-  const ignored = [...new Set((String(q).match(PROTECTED) || []).map((x) => x.trim()))];
-  const words = String(q).replace(PROTECTED, ' ').replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/)
-    .map((w) => w.replace(/(을|를|이|가|은|는|의|에|만|도)$/u, '')).filter((w) => w.length >= 2 && !STOP.test(w));
-  const adultsOnly = ADULT.test(q);
-  return { areas: [], jobs: [], keywords: words.filter((w) => !ADULT.test(w) && !/^(미성년자?|청소년|제외)$/.test(w)).slice(0, 3), minStars: null, includeBlacklist: /블랙/.test(q), adultsOnly, limit: null, ignored };
+  const ignored = [...new Set((String(q).match(NOINFO) || []).map((x) => x.trim()))];
+  const words = String(q).replace(NOINFO, ' ').replace(AGE_GENDER, ' ').replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/)
+    .map((w) => w.replace(/(을|를|이|가|은|는|의|에|만|도)$/u, '')).filter((w) => w.length >= 2 && !STOP.test(w) && !/^(미성년자?|청소년|제외|초반|중반|후반)$/.test(w));
+  return { areas: [], jobs: [], keywords: words.slice(0, 3), minStars: null, includeBlacklist: /블랙/.test(q), ...ageGenderOf(q), limit: null, ignored };
 }
 
 // AI 답을 검사해 안전한 조건으로
@@ -45,26 +64,36 @@ export function cleanFilters(j, q) {
     areas: list(j.areas, 3), jobs: list(j.jobs, 3), keywords: list(j.keywords, 3),
     minStars: Number.isInteger(j.minStars) && j.minStars >= 1 && j.minStars <= 5 ? j.minStars : null,
     includeBlacklist: j.includeBlacklist === true && /블랙/.test(q),
-    adultsOnly: j.adultsOnly === true || ADULT.test(q),
+    ageMin: Number.isInteger(j.ageMin) && j.ageMin > 0 && j.ageMin < 100 ? j.ageMin : null,
+    ageMax: Number.isInteger(j.ageMax) && j.ageMax > 0 && j.ageMax < 100 ? j.ageMax : null,
+    gender: j.gender === '남' || j.gender === '여' ? j.gender : null,
     limit: Number.isInteger(j.limit) && j.limit >= 1 ? Math.min(j.limit, 100) : null,
     ignored: list(j.ignored, 5)
   };
   // "사무직", "물류업무" → "사무", "물류"(지원 건에는 짧게 적혀 있는 일이 많다)
   f.jobs = f.jobs.map((w) => (w.length > 2 ? w.replace(/(직원|직|업무|일)$/u, '') : w));
-  // 법으로 금지된 기준은 AI 가 놓쳐도 코드가 막는다(검색어에서 빼고 ignored 로)
+  // 나이·성별은 원문에서 직접 읽은 값이 있으면 그것을 쓴다(AI 가 틀려도), 검색어에서는 뺀다
+  const ag = ageGenderOf(q);
+  if (ag.ageMin !== null || ag.ageMax !== null) { f.ageMin = ag.ageMin; f.ageMax = ag.ageMax; }
+  if (ag.gender) f.gender = ag.gender;
+  const isAG = (w) => new RegExp(AGE_GENDER.source).test(w) || /^(젊은|나이|연령)$/.test(w);
+  const isNo = (w) => new RegExp(NOINFO.source).test(w);
   for (const k of ['areas', 'jobs', 'keywords']) {
-    f[k] = f[k].filter((w) => { const bad = new RegExp(PROTECTED.source).test(w); if (bad && !f.ignored.includes(w)) f.ignored.push(w); return !bad; });
+    f[k] = f[k].filter((w) => { if (isNo(w) && !f.ignored.includes(w)) f.ignored.push(w); return !isAG(w) && !isNo(w); });
   }
-  for (const m of String(q).match(PROTECTED) || []) if (!f.ignored.includes(m.trim())) f.ignored.push(m.trim());
+  for (const m of String(q).match(NOINFO) || []) if (!f.ignored.includes(m.trim())) f.ignored.push(m.trim());
+  f.ignored = f.ignored.filter((w) => !isAG(w) || !(ag.ageMin !== null || ag.ageMax !== null || ag.gender));
   return f;
 }
+
+const hasCond = (f) => !!(f.areas.length || f.jobs.length || f.keywords.length || f.minStars || f.ageMin !== null || f.ageMax !== null || f.gender);
 
 export async function interpret(env, q) {
   if (aiEnabled(env)) {
     const j = await askJson(env, { system: SYSTEM, user: `문장: ${clip(q, 200)}`, maxTokens: 800 }).catch(() => null);
     if (j && !j.error) {
       const f = cleanFilters(j, q);
-      if (f.areas.length || f.jobs.length || f.keywords.length || f.minStars || f.adultsOnly) return { ...f, by: 'ai' };
+      if (hasCond(f)) return { ...f, by: 'ai' };
     }
   }
   return { ...plainFilters(q), by: 'plain' };
@@ -90,15 +119,25 @@ export async function searchApplicants(db, f) {
   group(f.areas, APP_AREA, INB_AREA);
   group(f.jobs, APP_JOB, INB_JOB);
   for (const k of f.keywords) where.push(termSql(k, [...APP_AREA, 'x.job'], [...INB_AREA, 'i.job', 'i.education', 'i.career'], args));
-  if (!where.length && !f.minStars && !f.adultsOnly) return { rows: [], total: 0 };
-  if (f.adultsOnly) where.push(`NOT EXISTS (SELECT 1 FROM applicant_inbox i WHERE i.phone=a.phone AND i.phone != '' AND i.age IS NOT NULL AND i.age < 19)`);
+  if (!hasCond(f)) return { rows: [], total: 0 };
+  // 나이·성별: 알바몬 지원 메일에 그 값이 있는 사람만(모르는 사람은 빠진다)
+  const ageMin = f.ageMin ?? null, ageMax = f.ageMax ?? null;
+  if (ageMin !== null || ageMax !== null || f.gender) {
+    const c = [];
+    if (ageMin !== null) { c.push('i.age >= ?'); args.push(ageMin); }
+    if (ageMax !== null) { c.push('i.age <= ?'); args.push(ageMax); }
+    if (f.gender) { c.push('i.gender = ?'); args.push(f.gender); }
+    where.push(`EXISTS (SELECT 1 FROM applicant_inbox i WHERE i.phone=a.phone AND i.phone != '' AND ${c.join(' AND ')})`);
+  }
   if (!f.includeBlacklist) where.push(`NOT EXISTS (SELECT 1 FROM blacklist b WHERE b.applicant_id=a.id AND b.status='active')`);
   const having = f.minStars ? ` WHERE COALESCE(avg_stars, 0) >= ${Number(f.minStars)}` : '';
   const inner = `SELECT a.id, a.name, a.phone,
       (SELECT ROUND(AVG(stars), 1) FROM applicant_ratings WHERE applicant_id=a.id) avg_stars,
       (SELECT COUNT(*) FROM applicant_ratings WHERE applicant_id=a.id) n_stars,
       (SELECT MAX(created_at) FROM applicant_applications WHERE applicant_id=a.id) last_at,
-      EXISTS (SELECT 1 FROM blacklist b WHERE b.applicant_id=a.id AND b.status='active') bl
+      EXISTS (SELECT 1 FROM blacklist b WHERE b.applicant_id=a.id AND b.status='active') bl,
+      (SELECT age FROM applicant_inbox i WHERE i.phone=a.phone AND i.phone != '' AND i.age IS NOT NULL ORDER BY i.received_at DESC LIMIT 1) age,
+      (SELECT gender FROM applicant_inbox i WHERE i.phone=a.phone AND i.phone != '' AND i.gender != '' ORDER BY i.received_at DESC LIMIT 1) gender
     FROM applicants a WHERE ${where.length ? where.join(' AND ') : '1=1'}`;
   const total = (await all(db, `SELECT COUNT(*) n FROM (${inner})${having}`, ...args))[0].n;
   const rows = await all(db, `SELECT * FROM (${inner})${having}
@@ -124,23 +163,25 @@ function describe(f) {
   if (f.jobs.length) parts.push(`직무 <b>${f.jobs.map(esc).join(', ')}</b>`);
   if (f.keywords.length) parts.push(`검색어 <b>${f.keywords.map(esc).join(', ')}</b>`);
   if (f.minStars) parts.push(`별점 <b>${f.minStars}점 이상</b>`);
-  if (f.adultsOnly) parts.push('<b>청소년(19세 미만) 제외</b>');
+  if (f.ageMin !== null || f.ageMax !== null) parts.push(`나이 <b>${f.ageMin ?? ''}${f.ageMin !== null && f.ageMax !== null ? '~' : f.ageMin !== null ? '세 이상' : ''}${f.ageMax !== null ? `${f.ageMax}세${f.ageMin === null ? ' 이하' : ''}` : ''}</b>`);
+  if (f.gender) parts.push(`성별 <b>${f.gender}</b>`);
   parts.push(f.includeBlacklist ? '블랙리스트 포함' : '블랙리스트 제외');
   return parts.join(' · ');
 }
 
 export function renderAsk({ q = '', f = null, result = null, pending = 0, todo = 0, ai = false }) {
-  const examples = ['안양 사무 추천해줘', '주차관리 별점 4점 이상', '강남 물류 경력 성인만'];
-  const answer = !q ? '' : !f || (!f.areas.length && !f.jobs.length && !f.keywords.length && !f.minStars && !f.adultsOnly)
+  const examples = ['안양 사무 추천해줘', '주차관리 별점 4점 이상', '강남 물류 20대 남자'];
+  const answer = !q ? '' : !f || !hasCond(f)
     ? `<div class="bubble ai">무엇을 찾을지 알 수 없었어요. 지역이나 직무를 넣어 다시 물어봐 주세요. (예: 안양 사무)</div>`
     : `<div class="bubble ai">
         <p>${describe(f)} 조건으로 찾았어요. ${result.total ? `<b>${result.total}명</b> 중 ${result.rows.length < result.total ? `상위 ${result.rows.length}명을 ` : ''}담당자 별점 높은 순으로 보여 드려요.` : '맞는 지원자가 없어요.'}</p>
-        ${f.ignored.length ? `<p class="notice warn" style="margin-top:8px">${icon('alert')}<span><b>${f.ignored.map(esc).join(', ')}</b> 조건은 빼고 찾았어요. 채용에서 나이·성별·결혼으로 고르는 것은 법으로 금지되어 있어요(남녀고용평등법·고령자고용법, 벌금 대상). 청소년을 빼려면 "성인만"이라고 적어 주세요.</span></p>` : ''}
+        ${f.ignored.length ? `<p class="notice info" style="margin-top:8px">${icon('info')}<span><b>${f.ignored.map(esc).join(', ')}</b> 조건은 시스템에 정보가 없어서 거르지 못했어요.${f.ignored.some((w) => /젊|나이|연령/.test(w)) ? ' 나이는 "20대", "30세 이상"처럼 숫자로 적어 주세요.' : ''}</span></p>` : ''}
+        ${f.ageMin !== null || f.ageMax !== null || f.gender ? '<p class="muted" style="font-size:13px;margin-top:6px">나이·성별은 알바몬 지원 메일에 적힌 값으로 걸러요. 그 정보가 없는 지원자(직접 등록 등)는 결과에서 빠져요.</p>' : ''}
         ${f.by === 'plain' ? `<p class="muted" style="font-size:13px;margin-top:6px">${ai ? 'AI가 응답하지 않아' : 'AI가 꺼져 있어'} 입력한 낱말로 찾았어요.</p>` : ''}
         ${result.rows.length ? `<form method="get" action="/campaigns/new" class="asklist" id="askform">
           <ul>${result.rows.map((r) => `<li>
             <label class="pick"><input type="checkbox" value="${r.id}" class="askchk" aria-label="${esc(r.name)} 선택"></label>
-            <div class="who"><a href="/applicants/${r.id}"><b>${esc(r.name)}</b></a> <span class="muted">${esc(fmtPhone(r.phone))}</span> ${r.n_stars ? starBadge(r.avg_stars, r.n_stars) : '<span class="muted" style="font-size:13px">별점 없음</span>'}${r.bl ? ' <span class="badge no">블랙리스트</span>' : ''}
+            <div class="who"><a href="/applicants/${r.id}"><b>${esc(r.name)}</b></a> <span class="muted">${esc(fmtPhone(r.phone))}${r.gender || r.age ? ` · ${esc([r.gender, r.age ? r.age + '세' : ''].filter(Boolean).join(' '))}` : ''}</span> ${r.n_stars ? starBadge(r.avg_stars, r.n_stars) : '<span class="muted" style="font-size:13px">별점 없음</span>'}${r.bl ? ' <span class="badge no">블랙리스트</span>' : ''}
               <div class="facts">${r.apps.map((x) => esc([x.applied_to, x.job, x.posting_title].filter(Boolean).join(' · '))).join('<br>') || '<span class="muted">지원 건 없음</span>'}</div>
               ${r.showed || r.noshow ? `<div class="facts">면접 출석 ${r.showed}번${r.noshow ? ` · <b style="color:var(--red-t)">노쇼 ${r.noshow}번</b>` : ''}</div>` : ''}
               ${r.last_at ? `<div class="facts muted">최근 지원 ${esc(fmtTime(r.last_at).slice(0, 10))}</div>` : ''}</div></li>`).join('')}</ul>
@@ -165,7 +206,7 @@ export function renderAsk({ q = '', f = null, result = null, pending = 0, todo =
     <input name="q" value="${esc(q)}" placeholder="예: 안양 사무 추천해줘" maxlength="200" aria-label="찾는 조건" autocomplete="off" ${q ? '' : 'autofocus'}>
     <button class="btn">찾기</button></form>
   <div class="askex">${examples.map((e) => `<a class="chipbtn" href="/applicants/ask?q=${encodeURIComponent(e)}">${esc(e)}</a>`).join('')}</div>
-  ${q ? `<div class="bubble me">${esc(q)}</div>${answer}` : emptyState({ title: '찾는 조건을 적어 보세요', desc: '지역·직무·학력·경력·주소·별점 등 무엇이든 적어 보세요. AI는 조건만 정하고, 순서는 담당자들이 준 별점으로 정해요. 지원자 정보는 AI에 보내지 않아요.' })}
+  ${q ? `<div class="bubble me">${esc(q)}</div>${answer}` : emptyState({ title: '찾는 조건을 적어 보세요', desc: '지역·직무·학력·경력·주소·나이·성별·별점 등 무엇이든 적어 보세요. AI는 조건만 정하고, 순서는 담당자들이 준 별점으로 정해요. 지원자 정보는 AI에 보내지 않아요.' })}
   <script>(function(){var f=document.getElementById('askform');if(!f)return;var go=document.getElementById('askgo'),ids=document.getElementById('askids');
     f.addEventListener('change',function(){var v=Array.prototype.slice.call(f.querySelectorAll('.askchk:checked')).map(function(c){return c.value;});ids.value=v.join(',');go.disabled=!v.length;go.textContent=v.length?'선택한 '+v.length+'명으로 면접 안내 만들기':'선택한 사람으로 면접 안내 만들기';});})();</script>`;
 }
