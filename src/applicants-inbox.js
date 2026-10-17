@@ -203,7 +203,7 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
   if (isSuper) {
     const token = await ensureIntakeToken(db);
     const addr = intakeAddress(token, env);
-    sharedCard = `<div class="card"><b>공용 메일 수신 주소</b> <small class="muted">관리자만 보여요</small>
+    sharedCard = `<div class="card"><b>공용 수신 주소 (담당자 없음)</b> <small class="muted">관리자만 보여요 · 보통은 쓰지 않아요. 담당자마다 위 1단계 주소를 쓰세요</small>
       <div class="stack" style="margin-top:10px">
         <div class="copybox"><div class="copylabel">담당자가 정해지지 않은 건이 들어오는 주소</div><div class="copyvalue">${esc(addr)}</div>
           <button type="button" class="btn secondary small" data-copy="${esc(addr)}">복사</button></div>
@@ -221,9 +221,7 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
 
   const myAddrCard = myAddr ? `<div class="card"><b>자동 전달 주소 이름 바꾸기</b> <small class="muted">바꾸면 그룹웨어 전달 규칙도 새 주소로 고쳐야 해요</small>
       <div class="stack" style="margin-top:10px">
-        <p class="muted" style="font-size:14px">내 그룹웨어 메일에서 알바몬 메일을 이 주소로 <b>자동 전달</b>하도록 규칙을 걸 때만 써요. 이 주소로 온 알바몬 지원 메일은 <b>내 수신함</b>에 들어와요.</p>
-        <div class="copybox"><div class="copylabel">자동 전달할 주소</div><div class="copyvalue">${esc(myAddr)}</div>
-          <button type="button" class="btn secondary small" data-copy="${esc(myAddr)}">복사</button></div>
+        <p class="muted" style="font-size:14px">위 1단계의 내 자동 전달 주소(<b>${esc(myAddr)}</b>)에서 <b>apply-</b> 뒤 이름을 바꿔요. 이 주소로 온 알바몬 지원 메일은 <b>내 새 지원</b>에 들어와요.</p>
         <form method="post" action="/applicants/inbox/my-address" style="display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));align-items:end">
           <label style="display:grid;gap:4px"><span style="font-size:13px">주소 이름 바꾸기 <small class="muted">(영문 소문자·숫자·- , 3~30자)</small></span>
             <input name="name" value="${esc(myName)}" maxlength="30" autocomplete="off" pattern="[a-z0-9][a-z0-9\\-]{2,29}" aria-label="주소 이름"></label>
