@@ -101,7 +101,7 @@ test('AI 찾기: 나이·성별 조건은 쓰지 않고 알려 줌(AI 가 놓쳐
   const { db, users, add } = await setup({ areas: ['안양'], jobs: [], ignored: ['젊은'] });
   await add('일번', '01020000001', '효성안양공장(도급)', '사무');
   const page = await (await users.boss.call('/applicants/ask?q=' + encodeURIComponent('안양 젊은 사람'))).text();
-  assert.match(page, /<b>젊은<\/b> 조건은 쓰지 않았어요/);
+  assert.match(page, /<b>젊은<\/b> 조건은 빼고 찾았어요/);
   void db;
 });
 
@@ -116,6 +116,29 @@ test('AI 찾기: AI 가 없거나 실패하면 낱말로 찾음, 블랙리스트
   assert.ok(page.includes('<b>일번</b>') && !page.includes('<b>이번</b>'));
   const none = await setup();
   assert.doesNotMatch(await (await none.users.boss.call('/applicants/ask')).text(), /오류/);
+});
+
+test('AI 찾기: 학력·경력도 검색, 성인만(19세 미만 제외), 외모·국적 같은 말은 막지 않음(검색어로)', async () => {
+  const { db, add } = await setup();
+  const a = await add('일번', '01020000001', '안양A', '사무');
+  const b = await add('이번', '01020000002', '안양B', '사무');
+  const ins = `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, age, education, career, received_at, status, phone) VALUES ('albamon',?,'1','c','t',?,?,?,?,1,'done',?)`;
+  await db.prepare(ins).bind('1', '일번', 17, '고등학교 재학', '신입', '01020000001').run();
+  await db.prepare(ins).bind('2', '이번', 25, '대학교 졸업', '경력 3년', '01020000002').run();
+  const base = { areas: [], jobs: [], keywords: [], minStars: null, includeBlacklist: false, adultsOnly: false, limit: null, ignored: [] };
+  assert.deepEqual((await searchApplicants(db, { ...base, keywords: ['대학교'] })).rows.map((r) => r.name), ['이번']);
+  assert.deepEqual((await searchApplicants(db, { ...base, keywords: ['경력'] })).rows.map((r) => r.name), ['이번']);
+  assert.deepEqual((await searchApplicants(db, { ...base, areas: ['안양'], adultsOnly: true })).rows.map((r) => r.name), ['이번']);
+  assert.equal((await searchApplicants(db, { ...base, adultsOnly: true })).total, 1);   // 성인만 하나로도 찾음
+  const f = cleanFilters({ keywords: ['외국인', '대졸'], ignored: [] }, '외국인 대졸 성인만');
+  assert.deepEqual(f.keywords, ['외국인', '대졸']);
+  assert.equal(f.adultsOnly, true);
+  assert.deepEqual(f.ignored, []);
+  assert.equal(plainFilters('강남 물류 성인만').adultsOnly, true);
+  assert.deepEqual(plainFilters('아마노 블랙리스트 포함').keywords, ['아마노']);
+  assert.equal(plainFilters('아마노 블랙리스트 포함').includeBlacklist, true);
+  assert.equal(cleanFilters({ limit: 80 }, 'x').limit, 80);
+  void a; void b;
 });
 
 test('AI 찾기: 별점 기준·인원수, 아무 조건도 없으면 다시 물어봄', async () => {
