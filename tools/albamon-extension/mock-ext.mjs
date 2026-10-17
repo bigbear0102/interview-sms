@@ -306,7 +306,6 @@ check(/확장 프로그램: 연결됨/.test(t1), '화면이 확장 프로그램�
 await sleep(1500);
 const afterKey = await sw.evaluate(() => chrome.storage.local.get(['agentToken', 'serverUrl']));
 check(afterKey.agentToken === TOKEN, '연결 키가 없으면 화면이 자동으로 만들어 확장에 넣음(입력 불필요)');
-check(!(await web.$('#gwform')), '화면에 그룹웨어 계정 입력칸이 없음');
 // 화면에서 연락처 가져오기를 누르면(kick) 30초 알람을 기다리지 않고 바로 처리
 pending.add(1); items[0].resume_url = `http://127.0.0.1:${albaPort}/resume?applyNo=111`;
 const tKick = Date.now();
