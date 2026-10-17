@@ -196,6 +196,8 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
 
   const myName = viewer ? await getUserMailName(db, viewer.id) : '';
   const myAddr = myName ? intakeAddress(myName, env) : '';
+  // 내 수신함에 메일로 들어온 지원이 한 번이라도 있으면 1단계는 끝난 것으로 본다
+  const mailIn = viewer ? !!(await first(db, `SELECT 1 x FROM applicant_inbox WHERE owner_user_id=? LIMIT 1`, viewer.id).catch(() => null)) : false;
   let sharedCard = '';
   if (isSuper) {
     const token = await ensureIntakeToken(db);
@@ -216,7 +218,7 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
       </div></div>`;
   }
 
-  const myAddrCard = myAddr ? `<div class="card"><b>메일 자동 전달용 주소</b> <small class="muted">내 메일 주소가 아니에요 · 확장 프로그램을 쓰면 필요 없어요</small>
+  const myAddrCard = myAddr ? `<div class="card"><b>자동 전달 주소 이름 바꾸기</b> <small class="muted">바꾸면 그룹웨어 전달 규칙도 새 주소로 고쳐야 해요</small>
       <div class="stack" style="margin-top:10px">
         <p class="muted" style="font-size:14px">내 그룹웨어 메일에서 알바몬 메일을 이 주소로 <b>자동 전달</b>하도록 규칙을 걸 때만 써요. 이 주소로 온 알바몬 지원 메일은 <b>내 수신함</b>에 들어와요.</p>
         <div class="copybox"><div class="copylabel">자동 전달할 주소</div><div class="copyvalue">${esc(myAddr)}</div>
@@ -247,8 +249,20 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
     ${notices.join('')}
     <div class="hero"><span class="conn ${cs.cls}"><i></i>${esc(cs.text)}</span><span class="muted" style="font-size:14px">${esc(cs.hint)}</span></div>
     <div class="csteps">
-      <section class="cstep${agent.lastUsedAt ? ' done' : ''}"><h2>크롬 확장 프로그램 설치</h2>
-        <p class="muted" style="font-size:15px">내 PC 크롬이 그룹웨어에서 알바몬 메일을 읽어 오고, 이력서의 연락처를 확인해 줘요. 한 번만 설치하면 돼요.</p>
+      <section class="cstep${mailIn ? ' done' : ''}"><h2>지원 메일 받기: 그룹웨어 자동 전달</h2>
+        <p class="muted" style="font-size:15px">알바몬 지원 알림 메일이 오면 그룹웨어가 아래 주소로 <b>자동 전달</b>하게 규칙을 한 번 만들어요. 전달된 메일은 <b>내 새 지원</b>에 바로 들어와요. 비밀번호를 저장할 필요가 없어요.</p>
+        <div class="stack">
+          ${myAddr ? `<div class="copybox"><div class="copylabel">자동 전달할 주소 (내 메일 주소가 아니에요)</div><div class="copyvalue">${esc(myAddr)}</div>
+            <button type="button" class="btn secondary small" data-copy="${esc(myAddr)}">복사</button></div>` : ''}
+          <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
+            <li>그룹웨어 메일 → <b>환경설정</b> → <b>메일 자동 분류(규칙)</b> 또는 <b>자동 전달</b>을 열어요.</li>
+            <li>조건: <b>보낸 사람</b>이 <code>mailmaster@albamon.com</code> 인 메일.</li>
+            <li>동작: <b>전달</b> → 위 주소를 붙여 넣고 저장해요. (원본은 내 메일함에도 남겨 두세요)</li>
+            <li>시험: 알바몬에서 지원 알림이 오면 몇 분 안에 <a href="/applicants/inbox">새 지원</a>에 보여요.</li>
+          </ol>
+        </div></section>
+      <section class="cstep${agent.lastUsedAt ? ' done' : ''}"><h2>연락처 가져오기: 크롬 확장 프로그램 설치</h2>
+        <p class="muted" style="font-size:15px">알바몬 메일에는 연락처가 없어요. 내 PC 크롬이 이력서를 열어 연락처를 채워 줘요. 한 번만 설치하면 돼요. (그 PC의 크롬이 켜져 있을 때 처리돼요)</p>
         <div class="stack">
           <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
             <li>아래 <b>확장 프로그램 내려받기</b>로 파일을 받고 압축을 풀어요.</li>
@@ -259,7 +273,12 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
           <div id="extstate" class="notice" role="status" data-latest="${esc(EXTENSION_VERSION)}">확장 프로그램 확인 중…</div>
           <div id="extlast" class="notice" role="status" hidden></div>
         </div></section>
-      <section class="cstep"><h2>그룹웨어 계정 등록</h2>
+      <section class="cstep"><h2>알바몬 로그인 유지</h2>
+        <p class="muted" style="font-size:15px">같은 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 두세요. 새 지원 화면에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 이력서를 열어 연락처를 채워 줘요.</p></section>
+    </div>
+    <details class="advanced"><summary>고급 설정 · 다른 방법</summary>
+      ${myAddrCard}${keyCard}${sharedCard}
+      <section class="card" style="margin-top:12px"><h2 style="font-size:18px">다른 방법: 그룹웨어 계정으로 가져오기 <small class="muted" style="font-weight:400">자동 전달을 쓸 수 없을 때만</small></h2>
         <p class="muted" style="font-size:15px">메일 주소(또는 아이디)와 비밀번호를 넣으면 그 메일함에서 알바몬 지원 메일을 5분마다 가져와요. 비밀번호는 <b>이 PC 크롬의 확장에만</b> 저장되고 시스템(서버)으로는 보내지 않아요. 계정은 <b>최대 5개</b>까지 등록할 수 있어요.</p>
         <div class="stack">
           <ul id="gwlist" style="list-style:none;margin:0;padding:0"></ul>
@@ -278,11 +297,7 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
           ${agentToken ? `<span id="newkey" hidden>${esc(agentToken)}</span>` : ''}
           <div class="notice warn" role="note">${icon('alert')}<div><b>계정이 2개 이상이면</b> 5분마다 이 PC 크롬의 그룹웨어 로그인이 계정을 바꿔 가며 잠깐 바뀌었다가 <b>원래대로 돌아와요.</b> 이 크롬에서 그룹웨어를 직접 쓰는 중이면 잠깐 로그아웃된 것처럼 보일 수 있어요. 그룹웨어를 쓰지 않는 크롬(또는 별도 프로필)에서 쓰는 걸 권해요. 또 <b>다른 사람의 아이디·비밀번호를 이 PC에 저장</b>하게 되니, 회사 규정과 본인의 동의를 확인해 주세요.</div></div>
         </div></section>
-      <section class="cstep"><h2>알바몬 로그인 유지</h2>
-        <p class="muted" style="font-size:15px">같은 크롬에서 <b>알바몬 기업회원으로 로그인</b>해 두세요. 새 지원 화면에서 <b>연락처 가져오기</b>를 누르면 1분 안에 크롬이 이력서를 열어 연락처를 채워 줘요.</p></section>
-    </div>
-    <details class="advanced"><summary>고급 설정 · 다른 방법</summary>
-      ${keyCard}${myAddrCard}${sharedCard}${tool}
+      ${tool}
     </details>
     <script>${EXT_BRIDGE_JS}</script>
     <script>document.addEventListener('click',function(e){var b=e.target.closest('[data-copy]');if(!b)return;navigator.clipboard.writeText(b.getAttribute('data-copy')).then(function(){var t=b.textContent;b.textContent='복사됐어요 ✓';setTimeout(function(){b.textContent=t;},1800);});});</script>`;

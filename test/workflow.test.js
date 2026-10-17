@@ -323,3 +323,53 @@ test('새 지원: PC 크롬(확장)이 꺼져 연락처 요청이 멈추면 홈�
   assert.doesNotMatch(inbox, /기다리고 있어요/);
   assert.match(inbox, /가져오는 중…/);
 });
+
+test('오늘 면접: 오늘 면접일시인 사람을 모아 출석·노쇼 기록, 홈 할 일, 문자함에 이름 표시', async () => {
+  const { db, call, post } = await setup();
+  const now = Date.now();
+  const d = new Date(now + 9 * 3600e3);
+  const today = `${d.getUTCMonth() + 1}/${d.getUTCDate()} 23:50`;
+  const tomorrow = new Date(now + 9 * 3600e3 + 86400e3);
+  const tmr = `${tomorrow.getUTCMonth() + 1}/${tomorrow.getUTCDate()} 10:00`;
+  await createCampaign(db, { departmentId: 1, gatewayId: 1, name: '오늘 안내', template: '{이름}', userId: 1, candidates: [
+    { site: '강남', name: '오늘참석', phone: '01011110001', interview_at: today },
+    { site: '강남', name: '오늘무응답', phone: '01011110002', interview_at: today },
+    { site: '강남', name: '내일참석', phone: '01011110003', interview_at: tmr },
+    { site: '강남', name: '오늘불참', phone: '01011110004', interview_at: today }] });
+  await db.prepare(`UPDATE campaigns SET status='done'`).run();
+  await db.prepare(`UPDATE candidates SET status='attending', sent_at=? WHERE name IN ('오늘참석','내일참석')`).bind(now).run();
+  await db.prepare(`UPDATE candidates SET status='sent', sent_at=? WHERE name='오늘무응답'`).bind(now).run();
+  await db.prepare(`UPDATE candidates SET status='absent', sent_at=? WHERE name='오늘불참'`).bind(now).run();
+
+  let page = visible(await (await call('/interviews/today')).text());
+  assert.match(page, /오늘 면접/);
+  assert.match(page, /23:50 오늘참석/);
+  assert.match(page, /참석 답장은 없지만 이날 면접인 사람 1명[\s\S]*오늘무응답/);
+  assert.doesNotMatch(page, /내일참석|오늘불참/);
+  assert.match(page, /참석 예정 1명 · 기록 0명/);
+  let home = visible(await (await call('/')).text());
+  assert.match(home, /1 오늘 면접 출석·노쇼 기록이 1명 남았어요/);
+
+  const id = (await cand(db, '01011110001')).id;
+  const r = await post('/interviews/outcome', { id, outcome: 'showed' });
+  assert.equal(r.status, 303);
+  assert.equal((await cand(db, '01011110001')).outcome, 'showed');
+  page = visible(await (await call('/interviews/today')).text());
+  assert.match(page, /참석 예정 1명 · 기록 1명/);
+  home = visible(await (await call('/')).text());
+  assert.match(home, /오늘 면접 모두 기록했어요/);
+  await post('/interviews/outcome', { id, outcome: '' });           // 다시 누르면 기록 지움
+  assert.equal((await cand(db, '01011110001')).outcome, '');
+  assert.equal((await post('/interviews/outcome', { id, outcome: 'nope' })).status, 303);
+  assert.equal((await cand(db, '01011110001')).outcome, '');
+
+  // 내일로 넘겨 보기
+  const tk = new Date(now + 9 * 3600e3 + 86400e3).toISOString().slice(0, 10);
+  assert.match(visible(await (await call(`/interviews/today?d=${tk}`)).text()), /내일참석/);
+
+  // 문자함: 번호 대신 이름과 면접 안내
+  await handleInbound(db, 1, { sender: '01011110003', message: '네 갈게요' });
+  const box = visible(await (await call('/messages')).text());
+  assert.match(box, /내일참석 010-1111-0003/);
+  assert.match(box, /오늘 안내/);
+});

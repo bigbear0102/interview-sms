@@ -30,6 +30,7 @@ import { handleAgentApi } from './agent-api.js';
 import { getIntakeToken, ingestRaw, ownerForMailName, MAX_MAIL_BYTES } from './mail-intake.js';
 import { getLinkSettings, flaggedInCampaign } from './applicants-link.js';
 import { renderLanding } from './landing.js';
+import { interviewsOn, renderToday, saveTodayOutcome } from './today.js';
 import { OUTCOMES, setOutcome, queueAutoReminders, queueFollowups, queueResultMessages, RESULT_TEMPLATES } from './reminders.js';
 import { phoneApiUrl, isPublicCloud } from './admin.js';
 import { monitorPhones, recordError } from './monitor.js';
@@ -82,7 +83,7 @@ async function prefillFromApplicants(db, idsParam) {
 // 화면 위치(상단/하단 메뉴 강조)
 const navFor = (p) =>
   p === '/' ? 'home' : p.startsWith('/send') ? 'send' : p.startsWith('/messages') ? 'inbox'
-    : p.startsWith('/campaigns') ? 'interview' : (p.startsWith('/applicants') || p.startsWith('/people')) ? 'applicants' : (p.startsWith('/admin') || p.startsWith('/audit')) ? 'settings'
+    : (p.startsWith('/campaigns') || p.startsWith('/interviews')) ? 'interview' : (p.startsWith('/applicants') || p.startsWith('/people')) ? 'applicants' : (p.startsWith('/admin') || p.startsWith('/audit')) ? 'settings'
     : p.startsWith('/password') ? 'account' : '';
 
 async function handle(request, env, ctx) {
@@ -256,6 +257,20 @@ async function handle(request, env, ctx) {
   if (path === '/' && method === 'GET') {
     const deps = await visibleDepartments(db, user);
     return html(pg('홈', await renderHome(db, user, deps)));
+  }
+
+  // 오늘 면접(날짜를 바꿔 볼 수 있다): 출석·노쇼 기록
+  if (path === '/interviews/today' && method === 'GET') {
+    const d = url.searchParams.get('d') || '';
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(d) ? Date.parse(d + 'T12:00:00+09:00') : Date.now();
+    return html(pg('오늘 면접', renderToday(await interviewsOn(db, user, day), { day })));
+  }
+  if (path === '/interviews/outcome' && method === 'POST') {
+    const f = form(await request.text());
+    const ok = await saveTodayOutcome(db, user, Number(f.id), String(f.outcome || ''));
+    if (ok) await audit(db, user, 'candidate.outcome', `candidate=${Number(f.id)} outcome=${f.outcome || '-'} via=today`);
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(f.d || '') ? f.d : '';
+    return redirect(`/interviews/today${d ? `?d=${d}` : ''}#c${Number(f.id)}`);
   }
 
   // 면접 안내 목록 (문자 관리 안의 한 기능)

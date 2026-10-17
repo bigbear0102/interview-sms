@@ -498,8 +498,10 @@ test('내 메일 수신 주소: 사람마다 따로, 이름 바꾸기(중복·�
   assert.equal(await getUserMailName(db, a.id), n1);   // 그대로 유지
   let page = await (await a.call('/applicants/inbox/connect')).text();
   assert.ok(page.includes(`apply-${n1}@bigbears.me`) || page.includes(`apply-${n1}@`));
-  assert.ok(visible(page).includes('메일 자동 전달용 주소'));
-  assert.ok(visible(page).includes('그룹웨어 계정 등록'));
+  // 1단계는 그룹웨어 자동 전달(주소 복사), 그룹웨어 계정 등록은 "다른 방법"으로 내려갔다
+  assert.ok(visible(page).includes('지원 메일 받기: 그룹웨어 자동 전달'));
+  assert.ok(visible(page).includes('다른 방법: 그룹웨어 계정으로 가져오기'));
+  assert.ok(visible(page).indexOf('그룹웨어 자동 전달') < visible(page).indexOf('크롬 확장 프로그램 설치'));
   // 이름 바꾸기
   let r = await a.post('/applicants/inbox/my-address', { name: 'Hong-Gildong' });
   assert.equal(r.headers.get('location'), '/applicants/inbox/connect?ok=addr');

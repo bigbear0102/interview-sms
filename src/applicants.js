@@ -337,7 +337,7 @@ const statusBadge = (blActive) => (blActive
 
 // 진행 단계(가장 최근 면접 안내 기준). 면접 안내 전이면 흐린 글자로 다음 할 일을 보여 준다.
 const stageCell = (st) => (st
-  ? `<span class="badge ${st.tone}">${esc(st.label)}</span>${st.interviewAt ? `<span class="sub">면접 ${esc(st.interviewAt)}</span>` : ''}`
+  ? `<span class="badge ${st.tone}">${esc(st.label)}</span>${st.interviewAt ? `<span class="sub">면접 ${esc(st.interviewAt)}</span>` : ''}<span class="sub">면접 안내 ${st.times}회${st.noshow ? ` · <b style="color:var(--red-t)">노쇼 ${st.noshow}</b>` : ''}</span>`
   : '<span class="muted" style="font-size:14px">면접 안내 전</span>');
 
 const STATUS_LABEL = { pending: '보내는 중', sending: '보내는 중', sent: '답 없음', attending: '참석', absent: '불참', unclear: '확인 필요', failed: '못 보냄' };
@@ -455,7 +455,7 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
       <div class="acts"><a class="btn" href="/campaigns/new?ids=${a.id}">${icon('calendar', 18)}면접 안내 만들기</a><a class="btn secondary" href="/send?to=${encodeURIComponent(a.phone)}">${icon('send', 18)}문자 보내기</a><button type="button" class="btn secondary" data-dialog="dlg-edit">정보 수정</button></div>
     </header>
     <div class="pd">
-      <div>
+      <div class="pd-main">
         <section class="panel"><div class="shead" style="margin-bottom:6px"><h2 style="margin:0">지원 이력</h2><button type="button" class="tertiary small" data-dialog="dlg-app">${icon('plus', 16)}지원 건 추가</button></div>${appsPanel}</section>
         ${hist ? `<section class="panel"><h2>면접 안내 이력 <small class="muted" style="font-weight:400">문자 시스템 연결</small></h2>${historyHtml(hist)}</section>` : ''}
         ${a.memo ? `<section class="panel"><h2>메모</h2><p>${esc(a.memo)}</p></section>` : ''}
@@ -465,8 +465,10 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
             <td>${esc(fmtTime(b.released_at).slice(0, 10))}<br><small>${esc(b.rel_name || '-')}${b.release_note ? ` · ${esc(b.release_note)}` : ''}</small></td></tr>`).join('')}</tbody></table>`)}</section>` : ''}
         <section class="panel" style="padding:0"><h2 style="padding:18px 20px 0">변경 기록</h2>${evPanel}</section>
       </div>
-      <aside>
+      <aside class="pd-side">
         ${statusPanel}
+      </aside>
+      <aside class="pd-manage">
         <section class="panel"><h2>관리</h2>
           <div class="stack" style="gap:10px">
             <button type="button" class="secondary small" data-dialog="dlg-merge">같은 사람 합치기</button>
@@ -541,7 +543,7 @@ export function paramsFrom(sp) {
   const page = Math.max(1, Math.min(10000, parseInt(sp.get('page') || '1', 10) || 1));
   const sort = SORTS.some(([k]) => k === g('sort')) ? g('sort') : 'updated';
   const date = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '');
-  const status = ['bl', 'ok'].includes(g('status')) ? g('status') : '';
+  const status = ['bl', 'ok', 'noshow'].includes(g('status')) ? g('status') : '';
   const reason = REASON_LABEL[g('reason')] ? g('reason') : '';
   return { q: g('q'), status, applied: g('applied'), job: g('job'), reason, from: date(g('from')), to: date(g('to')), sort, page };
 }
@@ -664,6 +666,7 @@ export async function renderApplicantSheet(db, opts = {}) {
   }
   if (params.status === 'bl') where.push('b.id IS NOT NULL');
   else if (params.status === 'ok') where.push('b.id IS NULL');
+  else if (params.status === 'noshow') where.push(`EXISTS (SELECT 1 FROM candidates ca WHERE ca.phone=a.phone AND ca.outcome='noshow')`);
   if (params.applied) { where.push('EXISTS (SELECT 1 FROM applicant_applications x WHERE x.applicant_id=a.id AND x.applied_to=?)'); args.push(params.applied); }
   if (params.job) { where.push('EXISTS (SELECT 1 FROM applicant_applications x WHERE x.applicant_id=a.id AND x.job=?)'); args.push(params.job); }
   if (params.reason) { where.push('b.reason_code=?'); args.push(params.reason); }
@@ -687,8 +690,13 @@ export async function renderApplicantSheet(db, opts = {}) {
   const stages = await latestStages(db, rows.map((r) => r.phone), user || { role: isSuper ? 'super' : '', departments: [] }).catch(() => new Map());
   const c = await first(db,
     `SELECT COUNT(*) total,
-            COALESCE(SUM(EXISTS (SELECT 1 FROM blacklist b WHERE b.applicant_id=a.id AND b.status='active')),0) bl
+            COALESCE(SUM(EXISTS (SELECT 1 FROM blacklist b WHERE b.applicant_id=a.id AND b.status='active')),0) bl,
+            COALESCE(SUM(EXISTS (SELECT 1 FROM candidates ca WHERE ca.phone=a.phone AND ca.outcome='noshow')),0) noshow
        FROM applicants a`);
+  // 면접 안내만 받고 지원자로 등록되지 않은 사람(예전 안내 등). 자동 등록을 켜면 새 안내부터는 생기지 않는다.
+  const unreg = (await first(db,
+    `SELECT COUNT(DISTINCT ca.phone) n FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
+      WHERE ca.phone!='' AND k.purged_at IS NULL AND NOT EXISTS (SELECT 1 FROM applicants x WHERE x.phone=ca.phone)`).catch(() => ({ n: 0 }))).n;
   const appliedOpts = await all(db, `SELECT applied_to v, COUNT(*) n FROM applicant_applications WHERE applied_to != '' GROUP BY applied_to ORDER BY n DESC, v LIMIT 100`);
   const jobOpts = await all(db, `SELECT job v, COUNT(*) n FROM applicant_applications WHERE job != '' GROUP BY job ORDER BY n DESC, v LIMIT 100`);
   const batches = await all(db,
@@ -704,6 +712,7 @@ export async function renderApplicantSheet(db, opts = {}) {
   const needClass = await unclassifiedPostings(db).catch(() => 0);
   if (needClass) notices.push(`<div class="notice warn">${icon('alert')}<div>원가중심점이 아직 없는 공고가 <b>${needClass}개</b> 있어요. <a href="/applicants/postings"><b>공고별로 한꺼번에 정리하기 →</b></a></div></div>`);
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
+  if (unreg) notices.push(`<div class="notice info">${icon('info')}<div>면접 안내만 받고 지원자로 등록되지 않은 사람이 <b>${unreg}명</b> 있어요. <a href="/people"><b>확인하고 등록하기 →</b></a></div></div>`);
   if (flash === 'undone') {
     notices.push(`<div class="notice ok">${icon('check')}<div><b>업로드를 되돌렸어요.</b> ${Number(extra.removed) || 0}명을 삭제했어요.${Number(extra.kept) ? ` ${Number(extra.kept)}명은 업로드 뒤에 정보가 바뀌어서 남겨 두었어요.` : ''}</div></div>`);
   }
@@ -818,7 +827,7 @@ export async function renderApplicantSheet(db, opts = {}) {
       </details>
     </form>
     ${lookupHtml}
-    <div class="tabs" style="margin-top:12px">${tab('', '전체', c.total)}${tab('bl', '블랙리스트', c.bl)}${tab('ok', '일반', c.total - c.bl)}</div>
+    <div class="tabs" style="margin-top:12px">${tab('', '전체', c.total)}${tab('bl', '블랙리스트', c.bl)}${tab('ok', '일반', c.total - c.bl)}${tab('noshow', '노쇼 있음', c.noshow)}</div>
     <form id="bulkform" method="post" action="/applicants/bulk-action" class="bulkdock" aria-live="polite">${hid}
       <b id="selcount">0명 선택</b>
       <select name="op" id="bulkop" aria-label="처리 방법">

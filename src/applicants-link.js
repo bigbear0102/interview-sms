@@ -127,6 +127,10 @@ export async function latestStages(db, phones, user) {
       WHERE ca.phone IN (${list.map(() => '?').join(',')}) AND k.status!='cancelled'
         ${scoped ? `AND k.department_id IN (${deps.map(() => '?').join(',')})` : ''}
       ORDER BY ca.id DESC`, ...list, ...(scoped ? deps : []));
-  for (const r of rows) if (!out.has(r.phone)) out.set(r.phone, stageOf(r));
+  for (const r of rows) {
+    const cur = out.get(r.phone);
+    if (!cur) out.set(r.phone, { ...stageOf(r), times: 1, noshow: r.outcome === 'noshow' ? 1 : 0 });
+    else { cur.times++; if (r.outcome === 'noshow') cur.noshow++; }
+  }
   return out;
 }

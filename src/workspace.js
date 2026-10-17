@@ -2,14 +2,13 @@
 import { all, first } from './d1.js';
 import { icon } from './views.js';
 
-// 일의 순서대로(새 지원 → 지원자 → 공고 정리 → 면접 이력). 연결 설정은 오른쪽 끝.
+// 일의 순서대로(새 지원 → 지원자 → 공고 정리). 연결 설정은 오른쪽 끝. 면접 이력은 지원자 목록(진행 칸·노쇼 필터)에 합쳤다.
 export function peopleTabs(active, pending = 0, todo = 0) {
   const t = (key, href, label, cnt = 0, warn = false) =>
     `<a href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}${cnt ? `<span class="cnt${warn ? ' warn' : ''}" aria-label="${cnt}건">${cnt}</span>` : ''}</a>`;
   return `<nav class="wstabs" aria-label="지원자 관리 메뉴">${t('inbox', '/applicants/inbox', '새 지원', pending)}${
     t('list', '/applicants', '지원자')}${
-    t('postings', '/applicants/postings', '공고 정리', todo, true)}${
-    t('history', '/people', '면접 이력')}<a class="push" href="/applicants/inbox/connect"${active === 'connect' ? ' aria-current="page"' : ''}>${icon('settings', 16)}연결 설정</a></nav>`;
+    t('postings', '/applicants/postings', '공고 정리', todo, true)}<a class="push" href="/applicants/inbox/connect"${active === 'connect' ? ' aria-current="page"' : ''}>${icon('settings', 16)}연결 설정</a></nav>`;
 }
 
 // 자동 수집 연결 상태(서버가 아는 것만): 내 확장이 최근에 시스템에 접속했는지

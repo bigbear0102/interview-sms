@@ -37,10 +37,10 @@ export function outcomeSection(camp, oc = {}, resultTemplates = {}) {
     </div>` : '';
 
   const any = (oc.showed || 0) + (oc.noshow || 0) + (oc.passed || 0) + (oc.hired || 0) + (oc.rejected || 0);
+  // 결과가 아직 없으면(면접 전) 결과 칸은 보이지 않고 자동 문자 설정만 둔다
   if (!any) {
-    return `<section class="section"><div class="shead"><h2>면접 결과</h2></div>
-      <p class="muted">아직 기록된 결과가 없어요. 아래 "사람별 현황"에서 출석·노쇼·합격·입사를 골라 기록하면 여기에 모여요.</p>
-      ${autos}</section>`;
+    return `<section class="section">${autos}
+      <p class="muted" style="margin-top:10px;font-size:14px">면접 당일에는 <a href="/interviews/today">오늘 면접</a>에서 출석·노쇼를 기록해요. 기록하면 여기에 면접 결과가 모여요.</p></section>`;
   }
   return `<section class="section">
     <div class="shead"><h2>면접 결과</h2><span class="muted">사람별 표에서 결과를 골라 기록해요</span></div>
