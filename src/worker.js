@@ -31,6 +31,7 @@ import { getIntakeToken, ingestRaw, ownerForMailName, MAX_MAIL_BYTES } from './m
 import { getLinkSettings, flaggedInCampaign } from './applicants-link.js';
 import { renderLanding } from './landing.js';
 import { interviewsOn, renderToday, saveTodayOutcome } from './today.js';
+import { runGroupwareScan } from './groupware.js';
 import { OUTCOMES, setOutcome, queueAutoReminders, queueFollowups, queueResultMessages, RESULT_TEMPLATES, parseInterviewAt } from './reminders.js';
 import { phoneApiUrl, isPublicCloud } from './admin.js';
 import { monitorPhones, recordError } from './monitor.js';
@@ -645,6 +646,16 @@ async function handle(request, env, ctx) {
   return html(pg('없음', '<p>페이지를 찾을 수 없습니다.</p>'), 404);
 }
 
+// 그룹웨어 메일 직접 가져오기(1분마다, 계정 하나씩 차례로). wrangler.jsonc triggers 의 두 번째 예약과 같아야 한다
+export const GW_CRON = '*/1 * * * *';
+export async function runGroupwareCron(env, whenMs = Date.now()) {
+  try {
+    if (await rateLimit(env.DB, 'gw:scan', 1, 50000)) await runGroupwareScan(env, { now: whenMs });
+  } catch (e) {
+    await recordError(env, 'cron', e, 'groupwareScan');
+  }
+}
+
 // 주기 작업: 발송 큐 처리 + 매 시 정각 파기/세션 정리 (Workers Cron, Node 서버 공용)
 export async function runScheduled(env, whenMs = Date.now()) {
   try {
@@ -725,6 +736,8 @@ export default {
   },
   // Cloudflare Cron Trigger (Workers 배포 시)
   scheduled(event, env, ctx) {
-    ctx.waitUntil(runScheduled(env, event.scheduledTime));
+    // 그룹웨어 메일 확인은 따로 정한 예약(GW_CRON)으로 돌린다: 문자 발송과 같은 호출에 넣으면 외부 요청 한도(50)를 넘을 수 있다
+    if (event.cron === GW_CRON) ctx.waitUntil(runGroupwareCron(env, event.scheduledTime));
+    else ctx.waitUntil(runScheduled(env, event.scheduledTime));
   }
 };

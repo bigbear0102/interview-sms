@@ -7,6 +7,7 @@ import { esc, icon, fmtTime } from './views.js';
 import { fmtPhone, fmtWhen, pageHeader, tableWrap, emptyState } from './ui.js';
 import { getLinkSettings, linkSettingsPanel } from './applicants-link.js';
 import { listAccounts, saveAccount, setAccountActive, deleteAccount, MULTI_ACCOUNT_ENABLED } from './albamon-accounts.js';
+import { listGwAccounts, saveGwAccount, deleteGwAccount, scanGwAccount } from './groupware.js';
 import { peopleTabs, connState, unclassifiedPostings, suggestForTitles, agentIdle, stalledText } from './workspace.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import {
@@ -221,14 +222,33 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
   const autoOn = isSuper ? await getAutoRegister(db) : false;
   const pending = await pendingInboxCount(db, viewer);
   const todo = await unclassifiedPostings(db).catch(() => 0);
-  const FLASH = { am_saved: '알바몬 계정을 저장했어요. 관리자 PC의 확장이 다음 확인 때(1분 안) 새 계정을 받아요.', am_deleted: '알바몬 계정을 지웠어요.', am_toggled: '알바몬 계정 사용 여부를 바꿨어요.', auto: '자동 등록 설정을 저장했어요.', addr: '내 수신 주소를 바꿨어요. 메일 전달 규칙을 걸어 두셨다면 새 주소로 바꿔 주세요.', token: '공용 수신 주소를 새로 만들었어요. 메일 전달 설정도 새 주소로 바꿔 주세요.' };
-  const ERR = { am_need: '알바몬 계정 이름과 아이디를 적어 주세요.', am_pw: '알바몬 비밀번호를 적어 주세요.', am_gone: '알바몬 계정을 찾을 수 없어요.', am_dup: '이미 등록된 알바몬 아이디예요.', addr_invalid: '주소 이름은 영문 소문자·숫자·-만 쓸 수 있고 3~30자예요.', addr_taken: '이미 다른 사람이 쓰고 있는 이름이에요. 다른 이름을 써 주세요.' };
+  const FLASH = { gw_saved: '그룹웨어를 연결했어요. 아래 결과를 확인해 주세요.', gw_checked: '그룹웨어를 확인했어요.', gw_deleted: '그룹웨어 연결을 지웠어요.', am_saved: '알바몬 계정을 저장했어요. 관리자 PC의 확장이 다음 확인 때(1분 안) 새 계정을 받아요.', am_deleted: '알바몬 계정을 지웠어요.', am_toggled: '알바몬 계정 사용 여부를 바꿨어요.', auto: '자동 등록 설정을 저장했어요.', addr: '내 수신 주소를 바꿨어요. 메일 전달 규칙을 걸어 두셨다면 새 주소로 바꿔 주세요.', token: '공용 수신 주소를 새로 만들었어요. 메일 전달 설정도 새 주소로 바꿔 주세요.' };
+  const ERR = { gw_need: '그룹웨어 아이디와 비밀번호를 적어 주세요.', am_need: '알바몬 계정 이름과 아이디를 적어 주세요.', am_pw: '알바몬 비밀번호를 적어 주세요.', am_gone: '알바몬 계정을 찾을 수 없어요.', am_dup: '이미 등록된 알바몬 아이디예요.', addr_invalid: '주소 이름은 영문 소문자·숫자·-만 쓸 수 있고 3~30자예요.', addr_taken: '이미 다른 사람이 쓰고 있는 이름이에요. 다른 이름을 써 주세요.' };
   const notices = [];
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
   if (ERR[err]) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div>${esc(ERR[err])}</div></div>`);
 
   const myName = viewer ? await getUserMailName(db, viewer.id) : '';
   const myAddr = myName ? intakeAddress(myName, env) : '';
+  // 1단계: 서버가 그룹웨어에 직접 접속해 1분마다 알바몬 지원 메일을 가져온다(PC 불필요)
+  const gwList = viewer ? await listGwAccounts(db, isSuper ? null : viewer.id) : [];
+  const gwRow = (g) => `<li class="amrow"><div><b>${esc(g.login_id)}</b>${isSuper && g.owner ? ` <span class="muted">· ${esc(g.owner)} 담당</span>` : ''}
+      ${g.blocked ? ' <span class="badge no">쉬는 중</span>' : g.last_ok_at ? ' <span class="badge ok">연결됨</span>' : ' <span class="badge wait">확인 전</span>'}
+      <div class="muted" style="font-size:13px">${g.last_error ? `<span style="color:var(--red-t)">${esc(g.last_error)}</span>` : g.last_ok_at ? `마지막 확인 ${esc(fmtWhen(g.last_check_at))} · 방금 새 지원 ${g.last_added}건` : '아직 확인하지 않았어요. [지금 확인]을 눌러 보세요.'}</div>
+      ${isSuper && g.diag ? `<details style="margin-top:4px"><summary class="lk" style="font-size:13px">진단 기록</summary><pre style="white-space:pre-wrap;font-size:12px;margin:6px 0 0">${esc(g.diag)}</pre></details>` : ''}</div>
+    <div class="amacts"><form method="post" action="/applicants/inbox/gw/${g.id}/check" class="inline"><button class="small">지금 확인</button></form>
+      <form method="post" action="/applicants/inbox/gw/${g.id}/delete" class="inline" data-confirm="이 그룹웨어 연결을 지울까요? 저장한 비밀번호도 지워져요."><button class="lk" style="color:var(--red-t)">지우기</button></form></div></li>`;
+  const gwCard = `<style>.amlist{list-style:none;margin:8px 0 12px;padding:0}.amrow{display:flex;gap:12px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;padding:12px 0;border-top:1px solid var(--line-soft)}.amrow:first-child{border-top:0}.amacts{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.amform{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));margin-top:8px}</style>
+      <section class="cstep${gwList.some((g) => g.last_ok_at && !g.blocked) ? ' done' : ''}"><h2>지원 메일 받기: 그룹웨어 직접 연결</h2>
+        <p class="muted" style="font-size:15px">그룹웨어 아이디·비밀번호를 넣으면 <b>시스템이 1분마다</b> 그 메일함에서 알바몬 지원 메일을 가져와 <b>내 새 지원</b>에 넣어요. <b>PC가 꺼져 있어도</b> 들어와요. 비밀번호는 암호화해 저장하고 다시 보여 주지 않아요.</p>
+        <div class="stack">
+          ${gwList.length ? `<ul class="amlist">${gwList.map(gwRow).join('')}</ul>` : ''}
+          <form method="post" action="/applicants/inbox/gw" class="amform" autocomplete="off">
+            <input name="login_id" maxlength="80" required placeholder="그룹웨어 아이디 (예: bigbear)" autocomplete="off" aria-label="그룹웨어 아이디">
+            <input name="pw" type="password" maxlength="100" required placeholder="그룹웨어 비밀번호" autocomplete="new-password" aria-label="그룹웨어 비밀번호">
+            <button class="btn small">${gwList.length ? '추가·비밀번호 바꾸기' : '연결하기'}</button></form>
+          <p class="muted" style="font-size:13px;margin:0">비밀번호가 틀리면 계정이 잠기지 않게 다시 저장할 때까지 쉬어요. 확장 프로그램의 그룹웨어 계정과 같이 써도 같은 지원은 한 번만 들어와요.</p>
+        </div></section>`;
   let sharedCard = '';
   if (isSuper) {
     const token = await ensureIntakeToken(db);
@@ -278,18 +298,7 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
     ${notices.join('')}
     <div class="hero"><span class="conn ${cs.cls}"><i></i>${esc(cs.text)}</span><span class="muted" style="font-size:14px">${esc(cs.hint)}</span></div>
     <div class="csteps">
-      <section class="cstep"><h2>지원 메일 받기: 그룹웨어 자동 전달</h2>
-        <p class="muted" style="font-size:15px">알바몬 지원 알림 메일이 오면 그룹웨어가 아래 주소로 <b>자동 전달</b>하게 규칙을 한 번 만들어요. 전달된 메일은 <b>내 새 지원</b>에 바로 들어와요. 비밀번호를 저장할 필요가 없어요.</p>
-        <div class="stack">
-          ${myAddr ? `<div class="copybox"><div class="copylabel">자동 전달할 주소 (내 메일 주소가 아니에요)</div><div class="copyvalue">${esc(myAddr)}</div>
-            <button type="button" class="btn secondary small" data-copy="${esc(myAddr)}">복사</button></div>` : ''}
-          <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
-            <li>그룹웨어 메일 → <b>환경설정</b> → <b>메일 자동 분류(규칙)</b> 또는 <b>자동 전달</b>을 열어요.</li>
-            <li>조건: <b>보낸 사람</b>이 <code>mailmaster@albamon.com</code> 인 메일.</li>
-            <li>동작: <b>전달</b> → 위 주소를 붙여 넣고 저장해요. (원본은 내 메일함에도 남겨 두세요)</li>
-            <li>시험: 알바몬에서 지원 알림이 오면 몇 분 안에 <a href="/applicants/inbox">새 지원</a>에 보여요.</li>
-          </ol>
-        </div></section>
+      ${gwCard}
       <section class="cstep${agent.lastUsedAt ? ' done' : ''}"><h2>연락처 가져오기: 크롬 확장 프로그램 설치</h2>
         <p class="muted" style="font-size:15px">알바몬 메일에는 연락처가 없어요. 내 PC 크롬이 이력서를 열어 연락처를 채워 줘요. 한 번만 설치하면 돼요. (그 PC의 크롬이 켜져 있을 때 처리돼요)</p>
         <div class="stack">
@@ -308,6 +317,18 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
     ${isSuper && MULTI_ACCOUNT_ENABLED ? await albamonAccountsCard(db) : ''}
     ${isSuper ? linkSettingsPanel(await getLinkSettings(db), true) : ''}
     <details class="advanced"><summary>고급 설정 · 다른 방법</summary>
+      <section class="card" style="margin-top:12px"><h2 style="font-size:18px">다른 방법: 그룹웨어 자동 전달 <small class="muted" style="font-weight:400">비밀번호를 저장하고 싶지 않을 때</small></h2>
+        <p class="muted" style="font-size:15px">알바몬 지원 알림 메일이 오면 그룹웨어가 아래 주소로 <b>자동 전달</b>하게 규칙을 한 번 만들어요. 전달된 메일은 <b>내 새 지원</b>에 바로 들어와요. 비밀번호를 저장할 필요가 없어요.</p>
+        <div class="stack">
+          ${myAddr ? `<div class="copybox"><div class="copylabel">자동 전달할 주소 (내 메일 주소가 아니에요)</div><div class="copyvalue">${esc(myAddr)}</div>
+            <button type="button" class="btn secondary small" data-copy="${esc(myAddr)}">복사</button></div>` : ''}
+          <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
+            <li>그룹웨어 메일 → <b>환경설정</b> → <b>메일 자동 분류(규칙)</b> 또는 <b>자동 전달</b>을 열어요.</li>
+            <li>조건: <b>보낸 사람</b>이 <code>mailmaster@albamon.com</code> 인 메일.</li>
+            <li>동작: <b>전달</b> → 위 주소를 붙여 넣고 저장해요. (원본은 내 메일함에도 남겨 두세요)</li>
+            <li>시험: 알바몬에서 지원 알림이 오면 몇 분 안에 <a href="/applicants/inbox">새 지원</a>에 보여요.</li>
+          </ol>
+        </div></section>
       ${myAddrCard}${keyCard}${sharedCard}
       <section class="card" style="margin-top:12px"><h2 style="font-size:18px">다른 방법: 그룹웨어 계정으로 가져오기 <small class="muted" style="font-weight:400">자동 전달을 쓸 수 없을 때만</small></h2>
         <p class="muted" style="font-size:15px">메일 주소(또는 아이디)와 비밀번호를 넣으면 그 메일함에서 알바몬 지원 메일을 5분마다 가져와요. 비밀번호는 <b>이 PC 크롬의 확장에만</b> 저장되고 시스템(서버)으로는 보내지 않아요. 계정은 <b>최대 5개</b>까지 등록할 수 있어요.</p>
@@ -560,6 +581,28 @@ export async function handleInbox(c, deps) {
     await audit(db, user, 'applicant.agent_token', 'auto');
     return new Response(JSON.stringify({ token }), { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
   }
+  // 그룹웨어 직접 연결(내 계정, 관리자는 모두)
+  if (path.startsWith('/applicants/inbox/gw') && method === 'POST') {
+    const f = Object.fromEntries(new URLSearchParams(await request.text()));
+    const m = path.match(/^\/applicants\/inbox\/gw\/(\d+)\/(check|delete)$/);
+    if (m) {
+      const a = await first(db, `SELECT * FROM gw_accounts WHERE id=?`, Number(m[1]));
+      if (!a || (user.role !== 'super' && a.user_id !== user.id)) return redirect('/applicants/inbox/connect');
+      if (m[2] === 'delete') { await deleteGwAccount(db, a.id, user.id, user.role === 'super'); await audit(db, user, 'gw.delete', `id=${a.id}`); return redirect('/applicants/inbox/connect?ok=gw_deleted'); }
+      await scanGwAccount(env, a);
+      await audit(db, user, 'gw.check', `id=${a.id}`);
+      return redirect('/applicants/inbox/connect?ok=gw_checked');
+    }
+    if (path !== '/applicants/inbox/gw') return redirect('/applicants/inbox/connect');
+    const r = await saveGwAccount(db, env, user.id, f.login_id, f.pw);
+    if (r.error) return redirect(`/applicants/inbox/connect?err=${r.error}`);
+    await audit(db, user, 'gw.save', `id=${r.id}`);
+    // 저장하자마자 한 번 확인해서 결과를 바로 보여 준다
+    const a = await first(db, `SELECT * FROM gw_accounts WHERE id=?`, r.id);
+    await scanGwAccount(env, a);
+    return redirect('/applicants/inbox/connect?ok=gw_saved');
+  }
+
   // 알바몬 계정(관리자)
   if (path.startsWith('/applicants/inbox/albamon-account') && method === 'POST') {
     if (!MULTI_ACCOUNT_ENABLED) return redirect('/applicants/inbox/connect');

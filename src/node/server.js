@@ -2,7 +2,7 @@
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { openSqliteD1 } from './d1-sqlite.js';
-import { handleRequest, runScheduled } from '../worker.js';
+import { handleRequest, runScheduled, runGroupwareCron } from '../worker.js';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -70,6 +70,7 @@ setInterval(async () => {
     const when = hourKey !== lastHour ? Math.floor(Date.now() / 3600000) * 3600000 : Date.now();
     lastHour = hourKey;
     await runScheduled(env, when);
+    await runGroupwareCron(env, when);   // 그룹웨어 메일 직접 가져오기(같은 1분 주기)
   } catch (e) { console.error('scheduled error', e); } finally { busy = false; }
 }, 10_000);
 
