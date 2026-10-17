@@ -68,6 +68,20 @@ for (const [no, nm] of [['2', '박서준'], ['3', '이도현'], ['4', '최유나
 await inb('5', '정민재', '', '', ''); await inb('6', '한소희', '', '', '');
 await db.prepare(`INSERT INTO agent_tokens (user_id, token_hash, created_at, last_used_at) VALUES (1,'h',1,?)`).bind(Date.now() - 3 * 3600e3).run();
 
+// 오늘 면접: 오늘 날짜 면접일시로 참석 3명(1명 출석 기록), 무응답 1명
+{
+  const d = new Date(Date.now() + 9 * 3600e3); const md = `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+  const t = await createCampaign(db, { departmentId: 1, gatewayId: 1, name: `면접 안내 ${md}`, userId: 1, candidates: [
+    { site: '1001 강남점', name: '서지훈', phone: '010-3100-0001', interview_at: `${md} 10:00` },
+    { site: '1001 강남점', name: '문채원', phone: '010-3100-0002', interview_at: `${md} 11:30` },
+    { site: '1002 서초점', name: '권나라', phone: '010-3100-0003', interview_at: `${md} 14:00` },
+    { site: '1002 서초점', name: '배수지', phone: '010-3100-0004', interview_at: `${md} 15:00` }] });
+  await db.prepare(`UPDATE campaigns SET status='done' WHERE id=?`).bind(t.campaignId).run();
+  await db.prepare(`UPDATE candidates SET status='attending', sent_at=? WHERE campaign_id=? AND name!='배수지'`).bind(Date.now() - 86400e3, t.campaignId).run();
+  await db.prepare(`UPDATE candidates SET status='sent', sent_at=? WHERE campaign_id=? AND name='배수지'`).bind(Date.now() - 86400e3, t.campaignId).run();
+  await db.prepare(`UPDATE candidates SET outcome='showed' WHERE campaign_id=? AND name='서지훈'`).bind(t.campaignId).run();
+}
+
 // ---- 화면 렌더링 ----
 const pages = {
   login: ['/login', false],
@@ -84,6 +98,7 @@ const pages = {
   campaign_new_prefill: [`/campaigns/new?ids=${appIds.join(',')}`, true],
   applicants: ['/applicants', true],
   inbox: ['/applicants/inbox', true],
+  today: ['/interviews/today', true],
   inbox_connect: ['/applicants/inbox/connect', true],
   postings: ['/applicants/postings', true],
   applicant_detail: [`/applicants/${appIds[0]}`, true],

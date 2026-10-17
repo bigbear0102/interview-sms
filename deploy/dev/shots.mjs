@@ -23,6 +23,7 @@ const SHOTS = [
 if (process.env.SHOTS_ALL === '1') {
   for (const f of readdirSync(src).filter((x) => x.endsWith('.html')).map((x) => x.slice(0, -5)).sort()) if (!SHOTS.some(([n, a]) => n === f && !a)) SHOTS.push([f]);
 }
+const overflow = [];
 const browser = await chromium.launch();
 for (const [w, tag] of [[1280, 'pc'], [390, 'm']]) {
   const page = await browser.newPage({ viewport: { width: w, height: 900 }, deviceScaleFactor: 1 });
@@ -30,6 +31,9 @@ for (const [w, tag] of [[1280, 'pc'], [390, 'm']]) {
     await page.goto('file://' + resolve(src, name + '.html'));
     await page.waitForTimeout(300);
     if (act) await act(page);
+    // 가로 넘침 검사: 화면 폭보다 넓으면 실패로 남긴다
+    const sw = await page.evaluate(() => document.documentElement.scrollWidth);
+    if (sw > w) { overflow.push(`${tag}-${name}${suffix ? '-' + suffix : ''}: ${sw}px > ${w}px`); }
     const file = `${out}/${tag}-${name}${suffix ? '-' + suffix : ''}.png`;
     await page.screenshot({ path: file, fullPage: true });
     console.log(file);
@@ -37,3 +41,4 @@ for (const [w, tag] of [[1280, 'pc'], [390, 'm']]) {
   await page.close();
 }
 await browser.close();
+if (overflow.length) { console.error('가로 넘침:\n' + overflow.join('\n')); process.exitCode = 1; }

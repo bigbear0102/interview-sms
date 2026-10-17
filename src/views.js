@@ -106,6 +106,7 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
 .tabbar a{position:relative}
 
 .phead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:24px;flex-wrap:wrap}
+.phead>*{min-width:0;max-width:100%}
 .phead .desc{color:var(--muted);margin-top:6px;font-size:16px}
 .phead .back{display:inline-block;font-size:14px;margin-bottom:6px}
 .pactions{display:flex;gap:8px;flex-wrap:wrap}
@@ -186,7 +187,9 @@ table.cand td.c-outcome select{width:auto;min-width:96px}
 .resch input{width:110px;min-width:0;min-height:36px;padding:6px 10px}
 .slotsum{display:grid;gap:8px;margin:0;padding:0;list-style:none}
 .slotsum li{display:flex;justify-content:space-between;gap:12px;padding:10px 14px;background:var(--surface-2);border-radius:var(--r-s)}
-.tgl-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.tgl-row{display:flex;gap:12px;align-items:flex-start;margin-top:14px}
+.tgl-row>span{min-width:0;flex:1;line-height:1.45}
+.tgl-row .tgl{margin-top:1px}
 .tgl{position:relative;flex:none;width:48px;height:28px;min-height:0;border-radius:999px;border:0;padding:0;background:var(--line);cursor:pointer}
 .tgl::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .15s}
 .tgl.on{background:var(--green)}
@@ -267,8 +270,8 @@ table.sample th,table.sample td{white-space:nowrap}
 .wstabs .cnt{min-width:22px;height:22px;padding:0 7px;border-radius:999px;font-size:12px;line-height:22px;text-align:center;font-weight:700;background:var(--blue-bg);color:var(--blue-t)}
 .wstabs .cnt.warn{background:var(--amber-bg);color:var(--amber-t)}
 .wstabs .push{margin-left:auto;font-weight:500;font-size:14px}
-.conn{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;font-size:14px;font-weight:600;background:var(--chip);color:var(--muted);white-space:nowrap}
-.conn i{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.conn{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;font-size:14px;font-weight:600;background:var(--chip);color:var(--muted);max-width:100%;white-space:normal;line-height:1.4}
+.conn i{flex:none;width:9px;height:9px;border-radius:50%;background:var(--muted)}
 .conn.on{background:var(--green-bg);color:var(--green-t)}.conn.on i{background:var(--green)}
 .conn.idle{background:var(--amber-bg);color:var(--amber-t)}.conn.idle i{background:var(--amber-bar)}
 a.conn:hover{text-decoration:none;filter:brightness(.96)}
@@ -333,13 +336,14 @@ dialog.sheet>.dlgbox>form{display:flex;flex-direction:column;gap:14px}
 dialog.sheet h2{margin:0}
 .dlg-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:4px}
 @media (max-width:640px){dialog.sheet{margin:auto 0 0;max-width:100vw;border-radius:22px 22px 0 0}dialog.sheet>form,dialog.sheet>.dlgbox{padding:20px 16px 24px}}
-.pd{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:20px;align-items:start}
-@media (max-width:900px){.pd{grid-template-columns:1fr}.pd aside{order:-1}}
+.pd{display:grid;grid-template-columns:minmax(0,1fr) 320px;grid-template-areas:"main side" "main manage";grid-template-rows:auto 1fr;gap:20px;align-items:start}
+.pd-main{grid-area:main;min-width:0}.pd-side{grid-area:side}.pd-manage{grid-area:manage}
+@media (max-width:900px){.pd{grid-template-columns:1fr;grid-template-areas:"side" "main" "manage";grid-template-rows:auto}}
 .pd-hero{display:flex;gap:16px;align-items:center;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);padding:20px;margin-bottom:20px}
 .pd-hero .nm{font-size:26px;font-weight:700;letter-spacing:-.02em;margin:0}
 .pd-hero .ph{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:var(--muted);font-variant-numeric:tabular-nums}
 .pd-hero .acts{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
-@media (max-width:640px){.pd-hero .acts{margin-left:0;width:100%}.pd-hero .acts>*{flex:1}}
+@media (max-width:640px){.pd-hero .acts{margin-left:0;width:100%;display:grid;grid-template-columns:1fr 1fr}.pd-hero .acts>*{white-space:nowrap;justify-content:center}.pd-hero .acts>:first-child{grid-column:1/-1}}
 .avatar{width:64px;height:64px;border-radius:50%;background:var(--blue-bg);color:var(--blue-t);display:grid;place-items:center;font-size:24px;font-weight:700;flex:none}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);padding:18px 20px;margin-bottom:14px;overflow:hidden}
 .panel h2{font-size:17px;margin-bottom:10px;display:flex;align-items:center;gap:6px}
@@ -467,12 +471,12 @@ const HEAD_ASSETS = `<meta name="color-scheme" content="light dark">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">`;
 
 // nav 항목 (표시 이름은 한곳에서 관리)
+// 일의 순서대로: 홈 → 지원자(새 지원·등록) → 면접(안내·오늘 면접) → 문자함(답장·직접 문자). 문자 보내기는 문자함의 "새 문자"
 export const NAV = [
   { key: 'home', href: '/', label: '홈', icon: 'home' },
-  { key: 'send', href: '/send', label: '문자 보내기', short: '보내기', icon: 'send' },
+  { key: 'applicants', href: '/applicants/inbox', label: '지원자', icon: 'user' },
+  { key: 'interview', href: '/campaigns', label: '면접', icon: 'clipboard' },
   { key: 'inbox', href: '/messages', label: '문자함', icon: 'inbox' },
-  { key: 'interview', href: '/campaigns', label: '면접 안내', short: '면접', icon: 'clipboard' },
-  { key: 'applicants', href: '/applicants', label: '지원자 관리', short: '지원자', icon: 'user', noTab: true },
   { key: 'settings', href: '/admin', label: '설정', icon: 'settings', superOnly: true }
 ];
 
@@ -483,11 +487,11 @@ export function page(user, title, body, nav = '', badges = {}) {
 
   const items = NAV.filter((n) => !n.superOnly || user.role === 'super');
   // 일반 관리자는 설정 대신 "내 계정" 탭
-  // 하단 탭은 5칸: 홈 · 보내기 · 문자함 · 면접 + 더보기(지원자 관리, 설정, 내 계정 ...)
+  // 하단 탭은 5칸: 홈 · 지원자 · 면접 · 문자함 + 더보기(문자 보내기, 설정, 내 계정 ...)
   const tabItems = items.filter((n) => !n.noTab && n.key !== 'settings');
-  const moreCurrent = ['settings', 'applicants', 'account'].includes(nav);
+  const moreCurrent = ['settings', 'account', 'send'].includes(nav);
   const moreLinks = [
-    { key: 'applicants', href: '/applicants', label: '지원자 관리', icon: 'user' },
+    { key: 'send', href: '/send', label: '문자 보내기', icon: 'send' },
     ...(user.role === 'super' ? [{ key: 'settings', href: '/admin', label: '설정', icon: 'settings' }] : []),
     { key: 'account', href: '/password', label: '내 계정', icon: 'user' },
     { key: 'help', href: '/help/phone', label: '폰 설치 안내', icon: 'phone' },
@@ -503,7 +507,6 @@ export function page(user, title, body, nav = '', badges = {}) {
     <summary>${icon('user', 18)}<span class="label">${esc(user.name || user.username)}</span></summary>
     <div class="menu">
       <div class="who">${esc(user.name || user.username)}${user.email ? `<br>${esc(user.email)}` : ''}<br>${user.role === 'super' ? '관리자' : '일반 사용자'}</div>
-      <a href="/applicants">지원자 관리</a>
       <a href="/password">내 계정</a>
       <a href="/help/phone">폰 설치 안내</a>
       ${user.role === 'super' ? '<a href="/audit">기록 보기</a>' : ''}

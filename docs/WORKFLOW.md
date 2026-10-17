@@ -74,6 +74,11 @@
 ```
 하단 탭(모바일): 홈 · 지원자 · 면접 · 문자함 · 더보기(설정·내 계정·폰 안내·기록).
 
+## 진행 상태 (2026-10-17)
+- **P0-1~6, P1-1~6 반영**(브랜치 `ux-fixes` → main). P1-7(시스템 이름)은 사용자 결정 대기.
+- 구현 위치: 오늘 면접 `src/today.js`(`/interviews/today`, `/interviews/outcome`), 메뉴 `src/views.js` `NAV`, 상세 순서·상태별 버튼 `renderCampaignDetail`, 문자함 이름 `namesForPhones`, 홈 `renderHome`, 면접 이력 통합 `renderApplicantSheet`(진행 칸·노쇼 필터·미등록 안내), 연결 설정 `renderConnect`.
+- CI `UI shots` 가 모든 화면을 찍고 **가로 넘침이면 실패**한다.
+
 ## 5. 배포 전 확인 목록 (P0 반영 후)
 
 - [ ] 모든 화면 캡처 폭 = 1280 / 390(가로 넘침 없음), 스크립트 문법 오류 없음(테스트)

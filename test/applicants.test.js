@@ -124,7 +124,7 @@ test('삭제는 관리자만, 내보내기, 메뉴 노출', async () => {
   assert.ok(csv.includes('홍길동'));
   assert.ok(csv.includes('01012345678'));
   const home = await (await staff.call('/')).text();
-  assert.ok(home.includes('href="/applicants"'));
+  assert.ok(home.includes('href="/applicants/inbox"'));
   const del = await admin.post(loc + '/delete', {});
   assert.equal(del.status, 303);
   const n = await db.prepare(`SELECT COUNT(*) n FROM applicants`).first();

@@ -245,7 +245,7 @@ test('문자 보내기: 예약 → 예약 목록 → 취소 → 시간이 되면
   assert.equal((await db.prepare(`SELECT status FROM messages WHERE phone='01033334444'`).first()).status, 'sent');
 });
 
-test('홈: 오늘 보낸/받은 문자 요약과 빠른 실행', async () => {
+test('홈: 할 일 중심, 주 버튼은 면접 안내 만들기', async () => {
   const { db, call } = await setup();
   await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
   await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'폰','u',?, 't')`)
@@ -253,9 +253,11 @@ test('홈: 오늘 보낸/받은 문자 요약과 빠른 실행', async () => {
   await db.prepare(`INSERT INTO messages (gateway_id,phone,text,status,at) VALUES (1,'01011112222','안녕','sent',?)`).bind(Date.now()).run();
   await db.prepare(`INSERT INTO inbound (gateway_id,sender,message,received_at,result) VALUES (1,'01011112222','네',?, 'unmatched')`).bind(Date.now()).run();
   const home = await (await call('/')).text();
-  assert.match(home, /<b>1<\/b><span>오늘 보낸 문자<\/span>/);
-  assert.match(home, /<b>1<\/b><span>오늘 받은 문자<\/span>/);
-  for (const href of ['/send', '/messages', '/messages?dir=scheduled', '/campaigns']) assert.ok(home.includes(`href="${href}"`), href);
+  // 홈은 할 일 중심: 주 버튼은 면접 안내 만들기, 문자 숫자 요약·최근 문자 목록은 문자함으로 옮겼다
+  assert.match(home, /class="btn" href="\/campaigns\/new"/);
+  assert.ok(home.includes('href="/applicants/inbox"'));
+  assert.ok(home.includes('href="/messages"'));
+  assert.doesNotMatch(home, /오늘의 숫자|최근 받은 문자/);
   const camps = await call('/campaigns');
   assert.equal(camps.status, 200);
 });

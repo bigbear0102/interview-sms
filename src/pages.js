@@ -6,6 +6,7 @@ import { OUTCOMES } from './reminders.js';
 import { unreadCount } from './delivery.js';
 import { inboxBreakdown, agentStatus } from './mail-intake.js';
 import { agentIdle, stalledText } from './workspace.js';
+import { todayTodo } from './today.js';
 import { outcomeSection } from './outcome-view.js';
 import { monthStats, renderSavingsCard } from './savings.js';
 import { phoneWaitBadge, colHead, colCount, fmtPhone, fmtWhen, badge, messageBadge, responseBar, pageHeader, tableWrap, stat, emptyState } from './ui.js';
@@ -114,8 +115,8 @@ export function renderAudit(rows) {
 export async function renderHome(db, user, deps) {
   const depIds = deps.map((d) => d.id);
   const today = kstDayStart();
-  let sentToday = 0, recvToday = 0, scheduled = 0, review = 0, gwCount = 0;
-  let recent = [], camps = [], phones = [];
+  let scheduled = 0, review = 0, gwCount = 0, reviewHref = '/campaigns', noreplyHref = '/campaigns';
+  let phones = [];
   let noreply7 = 0;
   const unread = await unreadCount(db, user).catch(() => 0);
   const inbox = await inboxBreakdown(db, { id: user.id, isSuper: user.role === 'super' }).catch(() => ({ pending: 0, ready: 0, waiting: 0 }));
@@ -129,32 +130,21 @@ export async function renderHome(db, user, deps) {
     phones = await all(db, `SELECT name, health, health_note, last_seen_at FROM gateways WHERE active=1 AND department_id IN (${dph})`, ...depIds);
     if (gwIds.length) {
       const g = idList(gwIds);
-      const m = await first(db, `SELECT COUNT(*) n FROM messages WHERE gateway_id IN (${g}) AND status='sent' AND at>=?`, ...gwIds, today);
-      const c = await first(db,
-        `SELECT COUNT(*) n FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
-         WHERE k.gateway_id IN (${g}) AND ca.sent_at>=? AND ca.status IN ('sent','attending','absent','unclear')`, ...gwIds, today);
-      sentToday = m.n + c.n;
-      recvToday = (await first(db, `SELECT COUNT(*) n FROM inbound WHERE gateway_id IN (${g}) AND received_at>=?`, ...gwIds, today)).n;
       const ms = (await first(db, `SELECT COUNT(*) n FROM messages WHERE gateway_id IN (${g}) AND status IN ('scheduled','sending')`, ...gwIds)).n;
       const cs = (await first(db, `SELECT COUNT(*) n FROM campaigns WHERE gateway_id IN (${g}) AND status='scheduled'`, ...gwIds)).n;
       scheduled = ms + cs;
-      recent = await all(db, `SELECT sender, message, received_at FROM inbound WHERE gateway_id IN (${g}) ORDER BY id DESC LIMIT 5`, ...gwIds);
     }
-    review = (await first(db,
-      `SELECT COUNT(*) n FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
-       WHERE k.department_id IN (${dph}) AND ca.status='unclear'`, ...depIds)).n;
-    noreply7 = (await first(db,
-      `SELECT COUNT(*) n FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
-        WHERE k.department_id IN (${dph}) AND ca.status='sent' AND ca.sent_at>=?`, ...depIds, Date.now() - 7 * DAY)).n;
-    camps = await all(db,
-      `SELECT k.id, k.name, k.status, k.purged_at, k.scheduled_at,
-         (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id) total,
-         (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='attending') attending,
-         (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='absent') absent,
-         (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='unclear') unclear,
-         (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='sent') noreply,
-         (SELECT COALESCE(NULLIF(name,''), username) FROM users WHERE id=k.created_by) author
-       FROM campaigns k WHERE k.department_id IN (${dph}) ORDER BY k.id DESC LIMIT 3`, ...depIds);
+    // 확인 필요(일정 변경 요청 포함): 한 안내에만 있으면 그 안내의 확인 필요 목록으로 바로 보낸다
+    const rv = await all(db,
+      `SELECT ca.campaign_id id, COUNT(*) n FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
+       WHERE k.department_id IN (${dph}) AND k.purged_at IS NULL AND ca.status='unclear' GROUP BY ca.campaign_id`, ...depIds);
+    review = rv.reduce((a, r) => a + r.n, 0);
+    reviewHref = rv.length === 1 ? `/campaigns/${rv[0].id}?status=unclear` : '/campaigns';
+    const nr = await all(db,
+      `SELECT ca.campaign_id id, COUNT(*) n FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
+        WHERE k.department_id IN (${dph}) AND ca.status='sent' AND ca.sent_at>=? GROUP BY ca.campaign_id`, ...depIds, Date.now() - 7 * DAY);
+    noreplyHref = nr.length === 1 ? `/campaigns/${nr[0].id}?status=sent` : '/campaigns';
+    noreply7 = nr.reduce((a, r) => a + r.n, 0);
   }
 
   const savings = renderSavingsCard(await monthStats(db, depIds));
@@ -186,13 +176,15 @@ export async function renderHome(db, user, deps) {
     : `<div class="notice warn" role="alert">${icon('alert')}<div><b>문자를 보낼 폰이 아직 연결되지 않았어요.</b><br>${
       user.role === 'super' ? '<a href="/admin">설정에서 폰을 연결하세요.</a> · <a href="/help/phone">폰 설치 안내</a>' : '관리자에게 폰 연결을 부탁하세요. · <a href="/help/phone">폰 설치 안내</a>'}</div></div>`;
 
+  const td = await todayTodo(db, user).catch(() => ({ total: 0, left: 0 }));
   const todoItems = [
-    review ? `<li><a href="/campaigns"><span class="n review">${review}</span><span class="t">확인이 필요한 답장<small>참석인지 불참인지 애매해서 사람이 봐야 해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
+    td.total ? `<li><a href="/interviews/today"><span class="n ${td.left ? 'ok' : 'mute'}">${td.total}</span><span class="t">오늘 면접<small>${td.left ? `출석·노쇼 기록이 ${td.left}명 남았어요` : '모두 기록했어요'}</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
+    review ? `<li><a href="${reviewHref}"><span class="n review">${review}</span><span class="t">확인이 필요한 답장<small>참석인지 불참인지 애매해서 사람이 봐야 해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
     inbox.ready ? `<li><a href="/applicants/inbox?f=ready"><span class="n ok">${inbox.ready}</span><span class="t">등록할 수 있는 새 지원<small>연락처가 채워졌어요. 확인하고 지원자로 등록해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
     stalled ? `<li><a href="/applicants/inbox/connect"><span class="n wait">${inbox.waiting}</span><span class="t">연락처를 기다리는 새 지원<small>${esc(stalledText(agent))}</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
     inbox.pending - inbox.ready - (stalled ? inbox.waiting : 0) > 0 ? `<li><a href="/applicants/inbox"><span class="n info">${inbox.pending - inbox.ready - (stalled ? inbox.waiting : 0)}</span><span class="t">${inbox.ready || stalled ? '그 밖의 새 지원' : '새 지원이 도착했어요'}<small>원가중심점을 정하면 연락처를 자동으로 가져와요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
     unread ? `<li><a href="/messages?dir=in"><span class="n info">${unread}</span><span class="t">안 읽은 받은 문자<small>문자함에서 확인해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
-    noreply7 ? `<li><a href="/campaigns"><span class="n wait">${noreply7}</span><span class="t">아직 답이 없는 사람 (최근 7일)<small>면접 안내에서 "답 없는 사람에게 다시 보내기"를 쓸 수 있어요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
+    noreply7 ? `<li><a href="${noreplyHref}"><span class="n wait">${noreply7}</span><span class="t">아직 답이 없는 사람 (최근 7일)<small>면접 안내에서 "답 없는 사람에게 다시 보내기"를 쓸 수 있어요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
     scheduled ? `<li><a href="/messages?dir=scheduled"><span class="n mute">${scheduled}</span><span class="t">예약 대기 중인 발송<small>정해 둔 시간에 나가요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : ''
   ].filter(Boolean);
   const todoHtml = todoItems.length
@@ -200,7 +192,7 @@ export async function renderHome(db, user, deps) {
     : `<div class="todo-done">${icon('check', 20)}<span>지금 처리할 일이 없어요.</span></div>`;
 
   return `${pageHeader({ title: '홈', desc: `${kstDateLabel()} 현황이에요.`,
-    actions: `<a class="btn" href="/send">${icon('send', 18)}문자 보내기</a><a class="btn secondary" href="/campaigns/new">${icon('clipboard', 18)}면접 안내 만들기</a>` })}
+    actions: `<a class="btn" href="/campaigns/new">${icon('clipboard', 18)}면접 안내 만들기</a><a class="btn secondary" href="/applicants/inbox">${icon('user', 18)}새 지원 보기</a>` })}
     ${phoneNotice}
     ${phoneHealthNotices(phones)}
 
@@ -212,37 +204,6 @@ export async function renderHome(db, user, deps) {
     <section class="section">
       <div class="shead"><h2>면접 안내 현황</h2><span class="muted">최근 30일 · 사업장·보낸 날별</span></div>
       <div class="card" style="padding:0">${boardHtml}</div>
-    </section>
-
-    <section class="section">
-      <div class="shead"><h2>면접 안내</h2><a href="/campaigns">전체 보기</a></div>
-      <div class="card" style="padding:0">
-        ${camps.length ? camps.map((r) => campaignCard(r)).join('')
-          : emptyState({ title: '아직 면접 안내가 없어요', desc: '대상자 명단을 올리면 안내 문자를 한꺼번에 보내고 참석 여부를 모아 볼 수 있어요.',
-              action: `<p style="margin-top:16px"><a class="btn" href="/campaigns/new">면접 안내 만들기</a></p>` })}
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="shead"><h2>최근 받은 문자</h2><a href="/messages?dir=in">전체 보기</a></div>
-      <div class="card" style="padding:0">
-        ${recent.length ? `<ul class="feed">${recent.map((r) => `<li>
-          <span class="who">${esc(fmtPhone(r.sender))}</span>
-          <span class="what">${esc(r.message)}</span>
-          <span class="when">${fmtWhen(r.received_at)}</span>
-          <a href="/send?to=${encodeURIComponent(r.sender)}" aria-label="${esc(fmtPhone(r.sender))}에게 답장">${icon('reply', 18)}</a></li>`).join('')}</ul>`
-          : emptyState({ title: '아직 받은 문자가 없어요', desc: '문자가 오면 여기에 바로 보여요.' })}
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="shead"><h2>오늘의 숫자</h2></div>
-      <div class="stats">
-        ${stat({ value: sentToday, label: '오늘 보낸 문자' })}
-        ${stat({ value: recvToday, label: '오늘 받은 문자', href: '/messages?dir=in' })}
-        ${stat({ value: scheduled, label: '예약 대기', href: '/messages?dir=scheduled' })}
-        ${stat({ value: review, label: '확인이 필요한 답장', tone: review ? 'review' : '', href: '/campaigns' })}
-      </div>
     </section>
 
     ${savings}`;
@@ -287,7 +248,7 @@ export async function renderCampaignList(db, user, deps) {
         FROM campaigns k WHERE k.department_id IN (${idList(depIds)}) ORDER BY k.id DESC LIMIT 200`, ...depIds)
     : [];
   return `${pageHeader({ title: '면접 안내', desc: '대상자 명단으로 안내 문자를 한꺼번에 보내고, 참석·불참 답장을 사업장별로 모아 봐요.',
-    actions: `<a class="btn" href="/campaigns/new">${icon('plus', 18)}새 면접 안내</a>` })}
+    actions: `<a class="btn" href="/campaigns/new">${icon('plus', 18)}새 면접 안내</a><a class="btn secondary" href="/interviews/today">${icon('calendar', 18)}오늘 면접</a>` })}
     <div class="card" style="padding:0">
       ${rows.length ? rows.map((r) => campaignCard(r)).join('')
         : emptyState({ title: '아직 만든 면접 안내가 없어요', desc: '오른쪽 위 버튼으로 시작해 보세요.' })}
@@ -454,21 +415,23 @@ export function renderCampaignDetail(d) {
   ].join('');
   const slotCard = slots.length ? `<section class="section"><div class="shead"><h2>일정별 확정 인원</h2><span class="muted">답장한 번호로 정해진 사람 수</span></div>
       <ul class="slotsum">${slots.map((x, i) => `<li><span><b>${i + 1})</b> ${esc(x)}</span><b>${(d.slotCounts && d.slotCounts[x]) || 0}명</b></li>`).join('')}</ul></section>` : '';
+  // 상태마다 필요한 동작만 앞에 둔다: 확인 필요 → 참석/불참(일정 고르기면 일정 정하기), 변경 요청 → 일정 다시 안내.
+  // 그 밖(참석·불참·답 없음)은 "바꾸기" 안에 접어 둔다(전화로 확인한 경우 등).
   const rowActions = (c) => {
     if (!live) return '';
     const hid = `<input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(d.backQuery)}">`;
-    const set = slots.length
-      ? `<form method="post" action="/campaigns/${camp.id}/slot" class="inline">${hid}
-          <select name="slot" aria-label="일정 정하기" onchange="this.form.submit()"><option value="">일정 정하기</option>${slots.map((x, i) => `<option value="${i + 1}"${c.status === 'attending' && c.interview_at === x ? ' selected' : ''}>${i + 1}) ${esc(x)}</option>`).join('')}</select></form>
-        <form method="post" action="/campaigns/${camp.id}/set" class="inline">${hid}<button name="status" value="absent">불참</button></form>`
-      : `<form method="post" action="/campaigns/${camp.id}/set" class="inline">${hid}
-          <button name="status" value="attending">참석</button> <button name="status" value="absent">불참</button></form>`;
-    // 다시 안내는 답장을 보낸 사람(변경 요청·불참·확인 필요·참석)에게만. 답 없는 사람은 "답 없는 사람에게 다시 보내기"를 쓴다.
-    const resch = (c.reply_kind === 'reschedule' || ['attending', 'absent', 'unclear'].includes(c.status)) && camp.status !== 'draft' && camp.status !== 'scheduled'
+    const slotSel = slots.length ? `<form method="post" action="/campaigns/${camp.id}/slot" class="inline">${hid}
+          <select name="slot" aria-label="일정 정하기" onchange="this.form.submit()"><option value="">일정 정하기</option>${slots.map((x, i) => `<option value="${i + 1}"${c.status === 'attending' && c.interview_at === x ? ' selected' : ''}>${i + 1}) ${esc(x)}</option>`).join('')}</select></form>` : '';
+    const setBtns = (statuses) => `<form method="post" action="/campaigns/${camp.id}/set" class="inline">${hid}${statuses.map((st) =>
+      `<button name="status" value="${st}">${st === 'attending' ? '참석' : '불참'}</button>`).join(' ')}</form>`;
+    const sent = camp.status !== 'draft' && camp.status !== 'scheduled';
+    const resch = sent && (c.reply_kind === 'reschedule' || ['attending', 'absent', 'unclear'].includes(c.status))
       ? `<details class="resch"${c.reply_kind === 'reschedule' ? ' open' : ''}><summary>일정 다시 안내</summary>
           <form method="post" action="/campaigns/${camp.id}/reschedule" data-confirm="이 사람에게 새 일정으로 안내 문자를 보낼까요?">${hid}
             <input name="when" required placeholder="10/24 14:00" aria-label="새 면접일시" autocomplete="off"><button class="small">보내기</button></form></details>` : '';
-    return set + resch;
+    if (c.status === 'unclear') return (slots.length ? slotSel + setBtns(['absent']) : setBtns(['attending', 'absent'])) + resch;
+    const others = c.status === 'attending' ? ['absent'] : c.status === 'absent' ? ['attending'] : ['attending', 'absent'];
+    return `<details class="resch"><summary>바꾸기</summary><div class="stack" style="gap:6px;margin-top:6px">${slots.length && c.status !== 'attending' ? slotSel : ''}${slots.length ? setBtns(['absent'].filter((x) => x !== c.status)) : setBtns(others)}</div></details>${resch}`;
   };
   const qs = (status) => `?${siteFilter ? `site=${encodeURIComponent(siteFilter)}&` : ''}${status ? `status=${status}` : ''}`.replace(/[?&]$/, '');
 
@@ -506,10 +469,10 @@ export function renderCampaignDetail(d) {
     ${stateNotice}
     ${sendCard}
     <div class="stats">
-      ${stat({ value: totals.attending || 0, label: '참석', tone: 'yes' })}
-      ${stat({ value: totals.absent || 0, label: '불참', tone: 'no' })}
-      ${stat({ value: totals.unclear || 0, label: '확인 필요', tone: 'review' })}
-      ${stat({ value: totals.sent || 0, label: '답 없음', tone: 'wait' })}
+      ${stat({ value: totals.attending || 0, label: '참석', tone: 'yes', href: qs('attending') + '#people' })}
+      ${stat({ value: totals.absent || 0, label: '불참', tone: 'no', href: qs('absent') + '#people' })}
+      ${stat({ value: totals.unclear || 0, label: '확인 필요', tone: 'review', href: qs('unclear') + '#people' })}
+      ${stat({ value: totals.sent || 0, label: '답 없음', tone: 'wait', href: qs('sent') + '#people' })}
     </div>
     ${delivered ? `<div class="card" style="margin-top:12px">
       ${responseBar({ attending: totals.attending || 0, absent: totals.absent || 0, unclear: totals.unclear || 0, noreply: totals.sent || 0 })}
@@ -518,18 +481,11 @@ export function renderCampaignDetail(d) {
         <span style="margin-left:auto">회신율 ${siteTotal.rate}</span></div></div>` : ''}
     ${d.delivery && delivered ? `<p class="muted" style="margin-top:10px">${icon('check', 14)} 전달 확인 ${d.delivery.delivered}명 / 보냄 ${delivered}명${d.delivery.retrying ? ` · 다시 시도 중 ${d.delivery.retrying}명` : ''}</p>` : ''}
     ${d.delivery && d.delivery.stuck ? `<div class="notice warn" style="margin-top:12px" role="alert">${icon('alert')}<div><b>${d.delivery.stuck}명은 폰이 아직 문자를 보내지 않았어요.</b><br>문자 서버는 받았지만 폰이 보내지 못하고 있어요. 폰이 켜져 있는지, SMSGate 앱에서 <b>Cloud server</b>가 켜져 있는지, 인터넷이 되는지 확인해 주세요. 폰이 다시 연결되면 자동으로 나가요.</div></div>` : ''}
-    ${slotCard}
-    ${outcomeSection(camp, d.outcomes, d.resultTemplates)}
     ${totals.failed ? `<div class="notice warn" style="margin-top:12px" role="alert">${icon('alert')}<div><b>${totals.failed}명에게 문자를 보내지 못했어요.</b> 위의 "답 없는 사람에게 다시 보내기"로 다시 시도할 수 있어요.</div></div>` : ''}
-
-    ${camp.template ? `<details class="card" style="margin-top:16px"><summary><b>보낸(보낼) 문자 보기</b></summary><div class="preview" style="margin-top:12px">${esc(previewText)}</div></details>` : ''}
-
-    <section class="section">
-      <div class="shead"><h2>사업장(원가중심점)별 회신 현황</h2></div>
-      ${siteRows.length ? siteTable : emptyState({ title: '아직 집계할 내용이 없어요' })}
-    </section>
-
-    <section class="section">
+    ${live && !statusFilter && ((totals.unclear || 0) + (oc.reschedule || 0)) ? `<div class="notice info" style="margin-top:16px">${icon('info')}<div><b>사람이 확인할 답장이 있어요.</b>
+      ${totals.unclear ? `<a href="${esc(qs('unclear'))}">확인 필요 ${totals.unclear}명</a>` : ''}${oc.reschedule ? ` · <a href="${esc(qs('reschedule'))}">일정 변경 요청 ${oc.reschedule}명</a>` : ''} — 아래 표에서 참석·불참을 정하거나 일정을 다시 안내해요.</div></div>` : ''}
+    ${slotCard}
+    <section class="section" id="people">
       <div class="shead"><h2>사람별 현황${siteFilter ? ` · ${esc(siteFilter)}` : ''}</h2>${siteFilter ? `<a href="${esc(qs(statusFilter).replace(/site=[^&]*&?/, '').replace(/\?$/, '') || `/campaigns/${camp.id}`)}">사업장 필터 해제</a>` : ''}</div>
       <div class="tabs" role="tablist">${FILTERS.map(([key, label, n]) =>
         `<a href="${esc(qs(key))}"${(statusFilter || '') === key ? ' aria-current="page"' : ''}>${label} <span class="n">${n}</span></a>`).join('')}</div>
@@ -538,14 +494,20 @@ export function renderCampaignDetail(d) {
           <td class="c-site">${esc(c.site)}</td><td class="c-name nowrap">${esc(c.name)}</td><td class="c-phone nowrap">${esc(fmtPhone(c.phone))}${c.interview_at ? `<small class="muted" style="display:block">면접 ${esc(c.interview_at)}</small>` : ''}</td>
           <td class="c-status">${c.status === 'sent' && c.delivery === 'queued' ? phoneWaitBadge(c.sent_at) : badge(c.status, slots.length && c.status === 'attending' && !c.template_override ? '일정 정함' : '')}${c.reply_kind === 'reschedule' ? ' <span class="badge review">일정 변경 요청</span>' : ''}${c.followed_at ? ' <small title="답이 없어 자동으로 한 번 더 보냈어요">(한 번 더 보냄)</small>' : ''}${d.flagged && d.flagged.has(c.phone) ? ' <span class="badge no" title="지원자 관리: 블랙리스트 (참고용, 발송은 막지 않아요)">블랙리스트</span>' : ''}${c.manual ? ' <small>(직접)</small>' : ''}${c.delivery === 'delivered' ? ' <small title="상대 휴대폰에 전달됨">✓ 전달</small>' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
           <td class="c-reply msg">${esc(c.reply_text)}</td>
-          <td class="c-outcome">${camp.purged_at ? esc(OUTCOMES[c.outcome] || '') : `<form method="post" action="/campaigns/${camp.id}/outcome" class="inline">
+          <td class="c-outcome">${camp.purged_at || (c.status !== 'attending' && !c.outcome) ? esc(OUTCOMES[c.outcome] || '') : `<form method="post" action="/campaigns/${camp.id}/outcome" class="inline">
             <input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(d.backQuery)}">
             <select name="outcome" aria-label="면접 결과" onchange="this.form.submit()"><option value="">결과 기록</option>${Object.entries(OUTCOMES).map(([k, v]) => `<option value="${k}"${c.outcome === k ? ' selected' : ''}>${v}</option>`).join('')}</select></form>`}</td>
           <td class="actions">${rowActions(c)}</td></tr>`).join('')
           : `<tr><td colspan="7">${emptyState({ title: '해당하는 사람이 없어요' })}</td></tr>`}
         </tbody></table>`)}
       ${cands.length >= 500 ? '<p class="muted" style="margin-top:8px">최대 500명까지 보여요. 사업장이나 상태로 걸러서 보세요.</p>' : ''}
-    </section>`;
+    </section>
+    <section class="section">
+      <div class="shead"><h2>사업장(원가중심점)별 회신 현황</h2></div>
+      ${siteRows.length ? siteTable : emptyState({ title: '아직 집계할 내용이 없어요' })}
+    </section>
+    ${outcomeSection(camp, d.outcomes, d.resultTemplates)}
+    ${camp.template ? `<details class="card" style="margin-top:16px"><summary><b>보낸(보낼) 문자 보기</b></summary><div class="preview" style="margin-top:12px">${esc(previewText)}</div></details>` : ''}`;
 }
 
 // ---------------- 문자 보내기 ----------------
@@ -594,6 +556,21 @@ export function renderSend({ gws, deps, gwSel, toPhone = '', text = '', notice =
 }
 
 // ---------------- 문자함 (받은/보낸/예약) ----------------
+// 번호 → { name, campaignId, camp }: 이 폰들로 보낸 가장 최근 면접 안내 대상자, 없으면 지원자 이름
+export async function namesForPhones(db, phones, gatewayIds) {
+  const out = new Map();
+  const list = phones.filter(Boolean).slice(0, 200);
+  if (!list.length) return out;
+  const p = idList(list);
+  const cands = gatewayIds.length ? await all(db,
+    `SELECT ca.phone, ca.name, ca.campaign_id, k.name camp FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
+      WHERE ca.phone IN (${p}) AND ca.name!='' AND k.gateway_id IN (${idList(gatewayIds)}) AND k.purged_at IS NULL ORDER BY ca.id DESC`, ...list, ...gatewayIds) : [];
+  for (const c of cands) if (!out.has(c.phone)) out.set(c.phone, { name: c.name, campaignId: c.campaign_id, camp: c.camp });
+  const apps = await all(db, `SELECT phone, name FROM applicants WHERE phone IN (${p})`, ...list);
+  for (const a of apps) if (!out.has(a.phone)) out.set(a.phone, { name: a.name });
+  return out;
+}
+
 export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice = '' }) {
   const ids = gws.map((g) => g.id);
   const ph = idList(ids);
@@ -620,6 +597,9 @@ export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice =
        ) WHERE (? = '' OR dir = ?) ORDER BY at DESC LIMIT 100`, ...ids, ...pArgs, ...ids, ...pArgs, dirFilter, dirFilter);
   }
 
+  // 번호만으로는 누군지 알 수 없어서, 면접 안내 대상자(가장 최근)·지원자 이름을 붙인다
+  const who = await namesForPhones(db, [...new Set(rows.map((r) => r.phone))], ids);
+
   const campSched = dirFilter === 'scheduled'
     ? await all(db, `SELECT id, name, scheduled_at FROM campaigns WHERE gateway_id IN (${ph}) AND status='scheduled' ORDER BY scheduled_at`, ...ids)
     : [];
@@ -637,16 +617,17 @@ export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice =
     <div class="card" style="padding:0">
       ${rows.length ? `<ul class="mlist">${rows.map((r) => `<li class="mrow">
         <div class="mtop">
-          <a href="/messages?phone=${encodeURIComponent(r.phone)}"><b>${esc(fmtPhone(r.phone))}</b></a>
-          ${r.dir === 'in' ? '<span class="badge info">받음</span>' : '<span class="badge">보냄</span>'}
-          ${messageBadge(r.dir, r.result, r.delivery, r.at)}
+          <a href="/messages?phone=${encodeURIComponent(r.phone)}">${who.has(r.phone) ? `<b>${esc(who.get(r.phone).name)}</b> <span class="muted">${esc(fmtPhone(r.phone))}</span>` : `<b>${esc(fmtPhone(r.phone))}</b>`}</a>
+          ${r.dir === 'in' ? '<span class="badge info">받음</span>' : `<span class="badge">${r.author ? '보냄' : '자동'}</span>`}
+          ${r.dir === 'out' && (r.result === 'sending' || (r.result === 'scheduled' && r.at <= Date.now() + 60000)) ? '<span class="badge mute">곧 보냄</span>' : messageBadge(r.dir, r.result, r.delivery, r.at)}
           <span class="when">${fmtWhen(r.at)}</span>
           ${r.dir === 'out' && r.result === 'scheduled' ? '' : `<a class="rbtn" href="/send?to=${encodeURIComponent(r.phone)}&gw=${r.gateway_id}" aria-label="${esc(fmtPhone(r.phone))}에게 답장" title="답장">${icon('reply', 18)}</a>`}
         </div>
         <div class="mtext">${esc(r.text)}</div>
+        ${who.has(r.phone) && who.get(r.phone).campaignId ? `<div class="muted" style="font-size:13px;margin-top:4px"><a href="/campaigns/${who.get(r.phone).campaignId}">${esc(who.get(r.phone).camp)}</a></div>` : ''}
         ${r.dir === 'out' && r.error && ['failed', 'scheduled', 'sending'].includes(r.result) || (r.dir === 'out' && r.delivery === 'failed') ? `<div class="muted" style="font-size:13px;margin-top:4px;color:var(--red-t)">${esc(r.error || '전달에 실패했어요')}</div>` : ''}
         ${r.author ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(r.author)} 님이 보냄</div>` : ''}
-        ${r.dir === 'out' && r.result === 'scheduled' ? `<div class="mact">${`<form method="post" action="/messages/cancel" class="inline" data-confirm="이 예약을 취소할까요?"><input type="hidden" name="id" value="${r.id}"><button class="btn danger small">예약 취소</button></form>`}</div>` : ''}
+        ${r.dir === 'out' && r.result === 'scheduled' && r.at > Date.now() + 60000 ? `<div class="mact">${`<form method="post" action="/messages/cancel" class="inline" data-confirm="이 예약을 취소할까요?"><input type="hidden" name="id" value="${r.id}"><button class="btn danger small">예약 취소</button></form>`}</div>` : ''}
       </li>`).join('')}</ul>` : emptyState({ title: empty })}
     </div>`;
 }
