@@ -63,7 +63,7 @@ export function renderToday(list, { day = Date.now(), now = Date.now() } = {}) {
     return `<li class="trow${r.outcome ? ' rec' : ''}" id="c${r.id}">
       <div class="tm">${esc(hhmm(r.at))}</div>
       <div class="who"><b>${esc(r.name || '-')}</b>${r.status !== 'attending' ? ` <span class="badge ${r.status === 'unclear' ? 'review' : 'wait'}">${r.status === 'unclear' ? '확인 필요' : '답 없음'}</span>` : ''}
-        <span class="sub">${tel} · ${esc(r.site)} · <a class="camp" href="/campaigns/${r.campaign_id}">${esc(r.camp)}</a></span></div>
+        <span class="sub">${tel} · ${esc(r.site)} · <a class="tcamp" href="/campaigns/${r.campaign_id}">${esc(r.camp)}</a></span></div>
       <form method="post" action="/interviews/outcome" class="ob">
         <input type="hidden" name="id" value="${r.id}"><input type="hidden" name="d" value="${dayKey(start)}">
         ${btn('showed', '출석', 'yes')}${btn('noshow', '노쇼', 'no')}
@@ -81,7 +81,7 @@ export function renderToday(list, { day = Date.now(), now = Date.now() } = {}) {
 .trow .tm{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
 .trow .who b{font-size:17px}
 .trow .sub{display:block;color:var(--muted);font-size:14px}
-.trow .camp{color:var(--muted)}
+.trow .tcamp{color:var(--muted)}
 .ob{display:flex;gap:8px;align-items:center}
 .obtn{min-width:76px;min-height:48px;border-radius:12px;font-size:16px;font-weight:700;background:var(--chip);color:var(--ink);border:2px solid transparent;display:inline-flex;gap:4px;align-items:center;justify-content:center}
 .obtn.yes.on{background:var(--green-bg);color:var(--green-t);border-color:var(--green)}
