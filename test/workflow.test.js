@@ -516,3 +516,71 @@ test('알바몬 계정 여러 개(켰을 때): 관리자 등록(암호화), 관�
   await agent(adminKey, '/api/agent/albamon-status', { method: 'POST', body: JSON.stringify({ account_id: 1, error: '알바몬 로그인 실패(아이디·비밀번호 확인)' }) });
   assert.match(visible(await (await call('/applicants/inbox/connect')).text()), /현장HR corpA 알바몬 로그인 실패/);
 });
+
+test('그룹웨어 직접 연결: 가짜 그룹웨어로 로그인→메일 세션→알바몬 메일만 새 지원으로, 세션 재사용, 틀린 비밀번호는 쉼', async () => {
+  const http = await import('node:http');
+  const { scanGwAccount, saveGwAccount, CookieJar } = await import('../src/groupware.js');
+  const { db, env, call } = await setup();
+  const html = (name, apply) => `<table><tr><th>공고번호</th><td>555</td></tr><tr><th>이름</th><td>${name}</td></tr><tr><th>근무회사명</th><td>회사</td></tr></table><a href="https://www.albamon.com/email-apply-url-route?recruitNo=555&amp;applyNo=${apply}">이력서 보기</a>`;
+  const mails = [{ mailId: 'm1', mailboxId: 'b', body: html('김하나', 9001) }, { mailId: 'm2', mailboxId: 'b', body: html('이두리', 9002) }];
+  const log = { logins: 0, views: 0 };
+  const srv = http.createServer((req, res) => {
+    const u = new URL(req.url, 'http://x'); const ck = req.headers.cookie || '';
+    let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => {
+      const j = (o, extra = {}) => { res.writeHead(200, { 'Content-Type': 'application/json', ...extra }); res.end(JSON.stringify(o)); };
+      if (u.pathname === '/gw/sub/common/login/cmmLogin.do') { res.writeHead(200, { 'Set-Cookie': 'JSESSIONID=gwpre; Path=/gw' }); return res.end('login'); }
+      if (u.pathname === '/gw/data/common/login/selectDepartmentList.do') return j([{ deptId: 'D1', reprsntDeptYn: 'Y' }]);
+      if (u.pathname === '/gw/data/common/login/selectLoginFlag.do') {
+        const p = JSON.parse(b);
+        if (p.userId === 'bigbear' && p.pwd === 'Gw!Secret#771' && p.deptId === 'D1') { log.logins++; return j({ resultCode: 0, mainUrl: '/main.do' }, { 'Set-Cookie': 'SSO=tok; Path=/' }); }
+        return j({ resultCode: -20, nowErrorCnt: 1, limitErrorCnt: 5 });
+      }
+      if (u.pathname === '/gw/main.do') { res.writeHead(200); return res.end('main'); }
+      if (u.pathname === '/mail/link/emlMail/emlMailMain.do') {
+        if (!ck.includes('SSO=tok')) { res.writeHead(302, { Location: '/gw/sub/common/login/cmmLogin.do' }); return res.end(); }
+        res.writeHead(200, { 'Set-Cookie': 'JSESSIONID=mail1; Path=/mail' }); return res.end('mail');
+      }
+      if (!ck.includes('JSESSIONID=mail1')) { res.writeHead(302, { Location: '/gw/sub/common/login/cmmLogin.do' }); return res.end(); }
+      if (u.pathname === '/mail/data/emlMail/selectMailList.do') { const p = JSON.parse(b); return j({ totalCount: mails.length, mailList: p.keyword === 'mailmaster@albamon.com' ? mails.map(({ mailId, mailboxId }) => ({ mailId, mailboxId })) : [] }); }
+      if (u.pathname === '/mail/data/emlMail/selectMailView.do') { log.views++; const m = mails.find((x) => x.mailId === u.searchParams.get('mailId')); return j({ mailList: [{ emlMessageVo: { content: m.body } }] }); }
+      res.writeHead(404); res.end();
+    });
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const opt = { gw: base, mail: base };
+  try {
+    const { id } = await saveGwAccount(db, env, 1, 'bigbear@willvi.co.kr', 'Gw!Secret#771');
+    let a = await db.prepare(`SELECT * FROM gw_accounts WHERE id=?`).bind(id).first();
+    assert.match(a.pw_enc, /^enc\$/);
+    let r = await scanGwAccount(env, a, opt);
+    assert.deepEqual([r.ok, r.added, log.logins, log.views], [true, 2, 1, 2]);
+    assert.deepEqual((await db.prepare(`SELECT name, owner_user_id, mail_account FROM applicant_inbox ORDER BY id`).all()).results.map((x) => [x.name, x.owner_user_id, x.mail_account]), [['김하나', 1, 'bigbear'], ['이두리', 1, 'bigbear']]);
+    // 새 메일 1통 → 세션 재사용(로그인 안 함), 새 메일 본문만 받음
+    mails.unshift({ mailId: 'm3', mailboxId: 'b', body: html('박세리', 9003) });
+    a = await db.prepare(`SELECT * FROM gw_accounts WHERE id=?`).bind(id).first();
+    assert.ok(a.session_enc.startsWith('enc$'));
+    r = await scanGwAccount(env, a, opt);
+    assert.deepEqual([r.ok, r.added, log.logins, log.views], [true, 1, 1, 3]);
+    // 화면: 연결됨 + 진단 기록(비밀번호 없음)
+    const page = await (await call('/applicants/inbox/connect')).text();
+    assert.match(visible(page), /bigbear · 김관리 담당 연결됨/);
+    assert.match(page, /알바몬 메일 3통 확인, 새로 읽음 1, 새 지원 1/);   // 두 번째는 세션 재사용이라 로그인 단계가 없다
+    assert.doesNotMatch(page, /Gw!Secret#771/);
+    // 틀린 비밀번호: 쉼(blocked), 다시 시도 안 함
+    const w = await saveGwAccount(db, env, 1, 'bigbear', 'wrong');
+    a = await db.prepare(`SELECT * FROM gw_accounts WHERE id=?`).bind(w.id).first();
+    r = await scanGwAccount(env, a, opt);
+    a = await db.prepare(`SELECT * FROM gw_accounts WHERE id=?`).bind(w.id).first();
+    assert.equal(a.blocked, 1);
+    assert.match(a.last_error, /틀린 횟수 1\/5/);
+    const { runGroupwareScan } = await import('../src/groupware.js');
+    const before = log.logins;
+    await runGroupwareScan(env, opt);
+    assert.equal(log.logins, before);                       // 쉬는 계정은 건너뜀
+    // 쿠키 보관함: 경로·도메인 규칙
+    const jar = new CookieJar([{ name: 'A', value: '1', domain: 'willvi.co.kr', host: false, path: '/' }, { name: 'B', value: '2', domain: 'gw.willvi.co.kr', host: true, path: '/gw' }]);
+    assert.equal(jar.header('https://mail.willvi.co.kr/mail/x'), 'A=1');
+    assert.equal(jar.header('https://gw.willvi.co.kr/gw/y'), 'A=1; B=2');
+  } finally { srv.close(); }
+});

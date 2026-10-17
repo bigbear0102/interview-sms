@@ -15,7 +15,8 @@
   // 운영 주소. DNS 레코드는 기존 그대로 두고 Worker 경로(route)가 요청을 가로챈다.
   "routes": [{ "pattern": "interview.bigbears.me/*", "zone_name": "bigbears.me" }],
   // 매 분 발송 큐 처리, 정각에 파기/세션 정리
-  "triggers": { "crons": ["* * * * *"] },
+  // 두 번째는 그룹웨어 메일 직접 가져오기(worker.js GW_CRON 과 같게). 문자 발송과 다른 호출로 돌려 외부 요청 한도를 나눈다
+  "triggers": { "crons": ["* * * * *", "*/1 * * * *"] },
   "vars": {
     "PUBLIC_BASE_URL": "https://interview.bigbears.me",
     // SMS 게이트웨이 3rd-party API 주소. 공개 클라우드(api.sms-gate.app) 사용 중.
