@@ -417,7 +417,7 @@ export async function renderAdmin(db, env, publicBase, result = null) {
         <form method="post" class="inline"><input type="hidden" name="do" value="user_active"><input type="hidden" name="user_id" value="${u.id}">
           <input type="hidden" name="active" value="${u.active ? 0 : 1}"><button class="btn secondary small">${u.active ? '쓰지 못하게' : '다시 쓰게'}</button></form>
         <form method="post" class="inline" data-confirm="${esc(u.name || u.email || u.username)} 계정을 지울까요? 되돌릴 수 없어요."><input type="hidden" name="do" value="user_delete"><input type="hidden" name="user_id" value="${u.id}">
-          <button class="btn danger small">삭제</button></form>
+          <button class="lk" style="color:var(--red-t)">삭제</button></form>
       </div></div>`;
   };
 

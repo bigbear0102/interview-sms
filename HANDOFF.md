@@ -147,6 +147,10 @@
 - 사용자 결정 대기: 시스템 이름(P2-1), 자동 등록 기본값(P2-3).
 - 구현: 묶음 A~E 반영(브랜치 ux-v2 → main), 시험 218개 통과. 화면 캡처 검토와 배포 결과는 아래 커밋 기록을 참고하세요.
 
+## 줄바꿈·정렬 재검토 — 배포 (2026-10-18)
+- 사용자 피드백("줄 맞춤·줄바뀜 불편")으로 전체에 한국어 낱말 단위 줄바꿈을 적용했어요. 시각·숫자·뱃지는 줄바꿈 금지, 모바일 카드 정렬, 빈 칸 "-" 제거. 규칙은 `docs/UX.md` 11장.
+- UX v2 묶음 A~E와 함께 배포했어요.
+
 ## 작업 방법 메모
 - 배포는 `npm run deploy`(테스트→마이그레이션→배포→/healthz). 이 환경(Termux PRoot)에서도 wrangler 로그인·배포·D1 원격 조회가 된다.
 - 라이브 코드 비교: `GET /accounts/{id}/workers/scripts/interview-sms/content/v2` 결과의 worker.js ↔ `npx wrangler deploy --dry-run --outdir <dir>`.
