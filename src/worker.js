@@ -31,7 +31,7 @@ import { getIntakeToken, ingestRaw, ownerForMailName, MAX_MAIL_BYTES } from './m
 import { getLinkSettings, flaggedInCampaign } from './applicants-link.js';
 import { renderLanding } from './landing.js';
 import { interviewsOn, renderToday, saveTodayOutcome } from './today.js';
-import { OUTCOMES, setOutcome, queueAutoReminders, queueFollowups, queueResultMessages, RESULT_TEMPLATES } from './reminders.js';
+import { OUTCOMES, setOutcome, queueAutoReminders, queueFollowups, queueResultMessages, RESULT_TEMPLATES, parseInterviewAt } from './reminders.js';
 import { phoneApiUrl, isPublicCloud } from './admin.js';
 import { monitorPhones, recordError } from './monitor.js';
 import { applyDeliveryEvent, pollDelivery, notifyNewReply, unreadCount, markAllRead } from './delivery.js';
@@ -348,6 +348,14 @@ async function handle(request, env, ctx) {
         await audit(db, user, 'campaign.schedule', `campaign=${r.campaignId} at=${new Date(at).toISOString()}`);
       }
     }
+    // 면접일시를 읽을 수 없으면 전날·당일 알림과 오늘 면접에서 빠진다 → 올린 직후 알려 준다
+    let whenWarn = '';
+    if (f.remind_prev === '1' || f.auto_remind === '1') {
+      const bad = slots.length
+        ? slots.filter((x) => !Number.isFinite(parseInterviewAt(x)))
+        : parsed.candidates.filter((c) => !Number.isFinite(parseInterviewAt(c.interview_at || ''))).map((c) => c.name || c.phone);
+      if (bad.length) whenWarn = `<div class="notice warn" role="alert">${icon('alert')}<div><b>${slots.length ? `일정 ${bad.length}개` : `${bad.length}명`}은 면접일시를 읽을 수 없어 자동 알림이 가지 않아요.</b> "10/20 14:00"처럼 날짜와 시간을 함께 적어 주세요.${slots.length ? ` (${bad.slice(0, 5).map(esc).join(', ')})` : ` (${bad.slice(0, 10).map(esc).join(', ')}${bad.length > 10 ? ' 외' : ''})`}</div></div>`;
+    }
     const rej = r.rejected.length
       ? `<div class="notice warn" role="alert">${icon('alert')}<div><b>${r.rejected.length}명은 올리지 못했어요.</b> 아래 이유를 고쳐서 다시 올리거나, 그대로 두셔도 돼요.<ul style="margin:8px 0 0;padding-left:20px">${r.rejected.slice(0, 50).map((x) => `<li>${x.row}번째 줄: ${esc(x.reason)}</li>`).join('')}</ul></div></div>` : '';
     const nextStep = scheduledAt
@@ -356,7 +364,7 @@ async function handle(request, env, ctx) {
     return html(pg('올리기 완료', `<header class="phead"><div><h1>명단을 올렸어요</h1></div></header>
       <div class="col">
         <div class="notice ok">${icon('check')}<div><b>${r.accepted}명을 불러왔어요.</b></div></div>
-        ${rej}${linkNotice}${nextStep}
+        ${rej}${whenWarn}${linkNotice}${nextStep}
         <a class="btn big" href="/campaigns/${r.campaignId}">${scheduledAt ? '예약 내용 확인하기' : '다음: 보내기 화면으로'}</a>
       </div>`, 'interview'));
   }
@@ -403,6 +411,8 @@ async function handle(request, env, ctx) {
           await audit(db, user, 'candidate.slot', `campaign=${camp.id} candidate=${cand.id} slot=${Number(f.slot)}`);
         }
       } else if (action === 'reschedule') {
+        // 새 일시는 알림·오늘 면접에 쓰이므로 읽을 수 있는 형식만 받는다
+        if (!Number.isFinite(parseInterviewAt(f.when))) return redirect(`/campaigns/${camp.id}?err=when#people`);
         const r = await rescheduleCandidate(db, camp, Number(f.id), f.when);
         await audit(db, user, 'candidate.reschedule', `campaign=${camp.id} candidate=${Number(f.id)} result=${r}`);
         if (r === 'queued') ctx.waitUntil(processQueue(env).catch(console.error));
@@ -678,7 +688,10 @@ export async function handleRequest(request, env, ctx) {
     let p = '';
     try { p = new URL(request.url).pathname; } catch { /* ignore */ }
     await recordError(env, 'request', e, p);
-    return html('internal error', 500);
+    // 초보자도 다음 행동을 알 수 있게(규칙 8). 오류 내용은 관리자에게만(시스템 상태·알림 메일)
+    return html(page(null, '잠시 문제가 생겼어요', `<h1>잠시 문제가 생겼어요</h1>
+      <p class="muted" style="margin:12px 0 20px">방금 한 일이 처리되지 않았을 수 있어요. 잠시 뒤 <b>다시 시도</b>해 주세요. 계속되면 관리자에게 알려 주세요(오류는 자동으로 기록돼 관리자에게 알림이 가요).</p>
+      <p style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="javascript:history.back()">돌아가기</a><a class="btn secondary" href="/">홈으로</a></p>`), 500);
   }
 }
 

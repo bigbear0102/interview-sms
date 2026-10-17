@@ -409,3 +409,49 @@ test('직접 정한 사람의 취소·변경 답장은 확인 필요로 올라�
   assert.equal(c.status, 'unclear');
   assert.equal(c.manual, 0);
 });
+
+test('QC: 일괄 등록은 한 번에 100명(나머지는 다시), 읽을 수 없는 면접일시는 올린 직후 경고, 다시 안내 일시 검사', async () => {
+  const { db, call, post } = await setup();
+  const ids = [];
+  for (let i = 0; i < 120; i++) {
+    const r = await db.prepare(`INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, received_at, status, phone, owner_user_id)
+      VALUES ('albamon',?, '1','회사','공고',?,?,'pending',?,1)`).bind(String(i), '지원' + i, Date.now(), '0105' + String(1000000 + i).slice(1)).run();
+    ids.push(Number(r.meta.last_row_id));
+  }
+  const reg = await post('/applicants/inbox/bulk', { op: 'register', ids });
+  assert.match(reg.headers.get('location'), /n=100&s=0&later=20$/);
+  assert.match(visible(await (await call(reg.headers.get('location'))).text()), /남은 20명은 한 번 더 눌러 주세요/);
+  const reg2 = await post('/applicants/inbox/bulk', { op: 'register', ids });
+  assert.match(reg2.headers.get('location'), /n=20/);
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicant_inbox WHERE status='registered'`).first()).n, 120);
+
+  const made = visible(await (await post('/campaigns/new', { mode: 'many', csv: '사업장\t이름\t전화번호\t면접일시\nA\t가\t01011110001\t10/21 14:00\nA\t나\t01011110002\t다음 주 화요일', kind: 'fixed', template: '{이름}', gateway_id: '1', send_mode: 'manual', auto_remind: '1' })).text());
+  assert.match(made, /1명은 면접일시를 읽을 수 없어 자동 알림이 가지 않아요[\s\S]*나/);
+  const slot = visible(await (await post('/campaigns/new', { mode: 'many', csv: '사업장\t이름\t전화번호\nA\t가\t01011110001', kind: 'slots', slots: '10/22 14:00\n화요일 오후', template: '', gateway_id: '1', send_mode: 'manual', remind_prev: '1' })).text());
+  assert.match(slot, /일정 1개은 면접일시를 읽을 수 없어/);
+
+  const k = await db.prepare(`SELECT id FROM campaigns ORDER BY id LIMIT 1`).first();
+  await db.prepare(`UPDATE campaigns SET status='done' WHERE id=?`).bind(k.id).run();
+  await db.prepare(`UPDATE candidates SET status='unclear', sent_at=? WHERE campaign_id=?`).bind(Date.now(), k.id).run();
+  const c = await db.prepare(`SELECT id FROM candidates WHERE campaign_id=? LIMIT 1`).bind(k.id).first();
+  const bad = await post(`/campaigns/${k.id}/reschedule`, { id: c.id, when: '다음 주쯤' });
+  assert.match(bad.headers.get('location'), /err=when/);
+  assert.equal((await db.prepare(`SELECT status FROM candidates WHERE id=?`).bind(c.id).first()).status, 'unclear');
+  assert.match(visible(await (await call(`/campaigns/${k.id}?err=when`)).text()), /새 면접일시를 읽을 수 없어요/);
+});
+
+test('QC: 발송 처리 중(sending)에 온 아주 빠른 답장도 반영되고, 발송 완료 기록이 덮어쓰지 않는다', async () => {
+  const { db, env } = await setup();
+  await createCampaign(db, { departmentId: 1, gatewayId: 1, name: 'fast', template: '{이름}', userId: 1,
+    candidates: [{ site: 's', name: '빠름', phone: '01011110001', interview_at: '10/21 14:00' }] });
+  await db.prepare(`UPDATE campaigns SET status='scheduled', scheduled_at=?`).bind(Date.now() - 1000).run();
+  await processQueue(env, { send: async () => {
+    // 보내는 도중(배치 기록 전) 답장 도착
+    const r = await handleInbound(db, 1, { sender: '01011110001', message: '참석합니다' });
+    assert.equal(r.result, 'attending');
+    return { id: 'g1' };
+  } });
+  const c = await cand(db, '01011110001');
+  assert.equal(c.status, 'attending');
+  assert.equal(c.gw_msg_id, 'g1');
+});

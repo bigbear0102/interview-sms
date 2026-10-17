@@ -148,7 +148,8 @@ export async function processQueue(env, { batchSize = Number(env.SEND_BATCH || 2
         try {
           const resp = await send(gw, c.phone, text);
           updates.push(stmt(db,
-            `UPDATE candidates SET status='sent', sent_at=?, message_text=?, error='', gw_msg_id=?, delivery='queued', next_retry_at=NULL WHERE id=?`,
+            // 보내는 사이에 벌써 답장이 와서 상태가 바뀌었으면 그 상태를 지킨다(아주 빠른 답장)
+            `UPDATE candidates SET status=CASE WHEN status='sending' THEN 'sent' ELSE status END, sent_at=?, message_text=?, error='', gw_msg_id=?, delivery='queued', next_retry_at=NULL WHERE id=?`,
             Date.now(), text, String(resp?.id || ''), c.id));
         } catch (e) {
           const attempts = (c.attempts || 0) + 1;
@@ -229,7 +230,7 @@ export async function handleInbound(db, gatewayId, { sender, message }) {
   }
   const cand = await first(db,
     `SELECT c.*, k.slots camp_slots, k.gateway_id camp_gateway FROM candidates c JOIN campaigns k ON k.id=c.campaign_id
-     WHERE k.gateway_id=? AND c.phone=? AND c.status IN ('sent','attending','absent','unclear') AND k.purged_at IS NULL
+     WHERE k.gateway_id=? AND c.phone=? AND c.status IN ('sending','sent','attending','absent','unclear') AND k.purged_at IS NULL
      ORDER BY c.sent_at DESC LIMIT 1`, gatewayId, phone);
   if (!cand) {
     await run(db, `INSERT INTO inbound (gateway_id,sender,message,received_at,result) VALUES (?,?,?,?,?)`,
