@@ -93,7 +93,7 @@ test('지원자 목록: 위쪽 탭(일의 순서), 행 누르면 상세, 추가�
   await post('/applicants/new', { name: '홍길동', phone: '010-1111-0001', applied_to: 'A', job: '현장' });
   const html = await (await call('/applicants')).text();
   // 탭: 새 지원 → 지원자 → 공고 정리 → 면접 이력, 연결 설정은 오른쪽 끝
-  assert.match(html, /<nav class="wstabs"[^>]*><a href="\/applicants\/inbox">새 지원<\/a><a href="\/applicants" aria-current="page">지원자<\/a><a href="\/applicants\/postings">공고 정리<\/a><a href="\/applicants\/ask">AI 찾기<\/a><a class="push" href="\/applicants\/inbox\/connect">/);
+  assert.match(html, /<nav class="wstabs"[^>]*><a href="\/applicants\/inbox">새 지원<\/a><a href="\/applicants" aria-current="page">지원자<\/a><a href="\/applicants\/postings">공고 정리<\/a><a class="push" href="\/applicants\/inbox\/connect">/);
   assert.match(html, /data-dialog="dlg-add"/);
   assert.match(html, /data-dialog="dlg-import"/);
   assert.match(html, /<tr data-href="\/applicants\/\d+">/);

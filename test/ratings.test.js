@@ -165,3 +165,30 @@ test('AI 찾기: 별점 기준·인원수, 아무 조건도 없으면 다시 물
   assert.equal(r.rows[0].name, '일번');
   assert.deepEqual(await searchApplicants(db, { areas: [], jobs: [], keywords: [], minStars: null, includeBlacklist: false, ageMin: null, ageMax: null, gender: null, limit: null, ignored: [] }), { rows: [], total: 0 });
 });
+
+test('검색창 하나: 낱말 두 개 이상이면 조건 찾기로, 이름·번호는 그대로', async () => {
+  const { users } = await setup();
+  const r = await users.boss.call('/applicants?q=' + encodeURIComponent('안양 사무 20대'), { redirect: 'manual' });
+  assert.equal(r.status, 303);
+  assert.equal(r.headers.get('location'), '/applicants/ask?q=' + encodeURIComponent('안양 사무 20대'));
+  assert.equal((await users.boss.call('/applicants?q=' + encodeURIComponent('홍길동'), { redirect: 'manual' })).status, 200);
+  assert.equal((await users.boss.call('/applicants?q=' + encodeURIComponent('010 1234 5678'), { redirect: 'manual' })).status, 200);
+});
+
+test('오늘 면접에서 바로 별점: 지원자로 등록된 사람만, 누르면 오늘 면접으로 돌아옴', async () => {
+  const { db, users, add } = await setup();
+  const a = await add('면접생', '01020009999', 'A', '주차');
+  await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
+  await db.prepare(`INSERT INTO gateways (department_id,name,username,password,hook_token) VALUES (1,'폰','u','p','t')`).run();
+  const d = new Date(Date.now() + 9 * 3600e3); const md = `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+  const day = d.toISOString().slice(0, 10);
+  await db.prepare(`INSERT INTO campaigns (department_id,gateway_id,name,template,created_at,status) VALUES (1,1,'안내','x',?,'done')`).bind(Date.now()).run();
+  await db.prepare(`INSERT INTO candidates (campaign_id,site,name,phone,status,interview_at,sent_at) VALUES (1,'A','면접생','01020009999','attending',?,?),(1,'A','미등록','01020008888','attending',?,?)`).bind(`${md} 15:00`, Date.now(), `${md} 16:00`, Date.now()).run();
+  let page = await (await users.boss.call('/interviews/today')).text();
+  assert.match(page, new RegExp(`action="/applicants/${a}/rate" class="tstars"`));
+  assert.equal((page.match(/class="tstars"/g) || []).length, 1);   // 미등록 사람은 별점 없음
+  const r = await users.boss.post(`/applicants/${a}/rate`, { stars: '4', back: `/interviews/today?d=${day}` });
+  assert.equal(r.headers.get('location'), `/interviews/today?d=${day}&ok=rated`);
+  page = await (await users.boss.call(`/interviews/today?d=${day}`)).text();
+  assert.equal((page.match(/class="starbtn on"/g) || []).length, 4);
+});

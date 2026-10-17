@@ -358,7 +358,7 @@ dialog.sheet h2{margin:0}
 @media (max-width:640px){dialog.sheet{margin:auto 0 0;max-width:100vw;border-radius:22px 22px 0 0}dialog.sheet>form,dialog.sheet>.dlgbox{padding:20px 16px 24px}}
 .pd{display:grid;grid-template-columns:minmax(0,1fr) 320px;grid-template-areas:"main side" "main manage";grid-template-rows:auto 1fr;gap:20px;align-items:start}
 .pd-main{grid-area:main;min-width:0}.pd-side{grid-area:side}.pd-manage{grid-area:manage}
-@media (max-width:900px){.pd{grid-template-columns:1fr;grid-template-areas:"side" "main" "manage";grid-template-rows:auto}}
+@media (max-width:900px){.pd{grid-template-columns:1fr;grid-template-areas:"main" "side" "manage";grid-template-rows:auto}}
 .pd-hero{display:flex;gap:16px;align-items:center;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);padding:20px;margin-bottom:20px}
 .pd-hero .nm{font-size:26px;font-weight:700;letter-spacing:-.02em;margin:0}
 .pd-hero .ph{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:var(--muted);font-variant-numeric:tabular-nums}

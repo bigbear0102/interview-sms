@@ -200,7 +200,7 @@ export function renderAsk({ q = '', f = null, result = null, pending = 0, todo =
 .asklist .who{min-width:0;flex:1}
 .asklist .facts{font-size:14px;margin-top:4px}
 </style>
-  ${pageHeader({ title: 'AI로 지원자 찾기', desc: '찾는 조건을 말하듯 적으면, 맞는 지원자를 담당자 별점 높은 순으로 보여 줘요.' })}
+  ${pageHeader({ title: '지원자 찾기', back: { href: '/applicants', label: '지원자' }, desc: '조건을 말하듯 적으면 맞는 지원자를 별점 높은 순으로 보여 줘요.' })}
   ${peopleTabs('ask', pending, todo)}
   <form method="get" action="/applicants/ask" class="askbox" role="search" data-busy="AI로 지원자 찾는 중">
     <input name="q" value="${esc(q)}" placeholder="예: 안양 사무 추천해줘" maxlength="200" aria-label="찾는 조건" autocomplete="off" ${q ? '' : 'autofocus'}>

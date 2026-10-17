@@ -520,7 +520,11 @@ async function handle(request, env, ctx) {
     }
 
     const siteFilter = url.searchParams.get('site') || '';
-    const statusFilter = url.searchParams.get('status') || '';
+    // 처리할 답장(확인 필요·일정 변경 요청)이 있으면 그 목록을 먼저 보여 준다. "전체"는 status=all
+    const needN = camp.purged_at || camp.status === 'cancelled' ? 0
+      : (await first(db, `SELECT COUNT(*) n FROM candidates WHERE campaign_id=? AND status='unclear'`, camp.id)).n;
+    const rawStatus = url.searchParams.get('status');
+    const statusFilter = rawStatus === null ? (needN ? 'unclear' : '') : rawStatus === 'all' ? '' : rawStatus;
     const stats = await campaignStats(db, camp.id);
     const siteRows = stats.map((s) => {
       const attending = s.attending || 0, absent = s.absent || 0, unclear = s.unclear || 0, noreply = s.sent || 0;
@@ -564,11 +568,11 @@ async function handle(request, env, ctx) {
       draft: ['info', '아직 문자를 보내지 않았어요. 아래에서 지금 보내거나 예약할 수 있어요.'],
       scheduled: ['ok', `${fmtTime(camp.scheduled_at)}에 보낼 예정이에요.`],
       sending: ['info', `문자를 보내는 중이에요. (${totals.total - waiting}/${totals.total}명 보냄) 잠시 후 새로고침해 보세요.`],
-      done: ['ok', '모두 보냈어요. 답장이 오면 아래 숫자가 바뀌어요.'],
+      done: null,   // 다 보냈으면 안내하지 않는다(숫자 막대로 충분)
       cancelled: ['warn', '보내기를 취소했어요.']
     };
-    const [tone, stateText] = camp.purged_at ? ['info', '개인정보 보관 기간이 지나 이름과 전화번호를 지웠어요. 숫자만 남아 있어요.'] : (STATE[camp.status] || ['info', camp.status]);
-    const stateNotice = `<div class="notice ${tone}">${icon(tone === 'ok' ? 'check' : tone === 'warn' ? 'alert' : 'info')}<div>${esc(stateText)}</div></div>`;
+    const [tone, stateText] = camp.purged_at ? ['info', '개인정보 보관 기간이 지나 이름과 전화번호를 지웠어요. 숫자만 남아 있어요.'] : (STATE[camp.status] === null ? ['ok', ''] : (STATE[camp.status] || ['info', camp.status]));
+    const stateNotice = !stateText ? '' : `<div class="notice ${tone}">${icon(tone === 'ok' ? 'check' : tone === 'warn' ? 'alert' : 'info')}<div>${esc(stateText)}</div></div>`;
     const canSend = !camp.purged_at && ['draft', 'scheduled'].includes(camp.status);
     const flagged = (await getLinkSettings(db).catch(() => ({ flag: false }))).flag
       ? await flaggedInCampaign(db, camp.id).catch(() => new Map()) : new Map();

@@ -277,11 +277,14 @@ export async function renderCampaignList(db, user, deps) {
     // 안내마다 하위 조회를 여러 번 하지 않고 한 번에 모아 센다(D1 읽기 절약)
     ? await all(db, `SELECT k.id, k.name, k.status, k.purged_at, k.scheduled_at, COALESCE(NULLIF(u.name,''), u.username) author,
           COUNT(ca.id) total, COALESCE(SUM(ca.status='attending'),0) attending, COALESCE(SUM(ca.status='absent'),0) absent,
-          COALESCE(SUM(ca.status='unclear'),0) unclear, COALESCE(SUM(ca.status='sent'),0) noreply
+          COALESCE(SUM(ca.status='unclear'),0) unclear, COALESCE(SUM(ca.status='sent'),0) noreply, COALESCE(SUM(ca.reply_kind='reschedule'),0) resch
         FROM campaigns k LEFT JOIN candidates ca ON ca.campaign_id=k.id LEFT JOIN users u ON u.id=k.created_by
         WHERE k.department_id IN (${idList(depIds)}) GROUP BY k.id ORDER BY k.id DESC LIMIT 200`, ...depIds)
     : [];
-  return `${pageHeader({ title: '면접 안내', desc: '대상자 명단으로 안내 문자를 한꺼번에 보내고, 참석·불참 답장을 사업장별로 모아 봐요.',
+  // 처리할 답장이 있는 안내 → 보내는 중·예약 → 나머지(최근 순) → 취소·파기
+  const rank = (r) => (r.purged_at || r.status === 'cancelled' ? 3 : r.unclear || r.resch ? 0 : ['sending', 'scheduled', 'draft'].includes(r.status) ? 1 : 2);
+  rows.sort((a, b) => rank(a) - rank(b) || (rank(a) === 0 ? (b.unclear + b.resch) - (a.unclear + a.resch) : 0) || b.id - a.id);
+  return `${pageHeader({ title: '면접 안내', desc: '처리할 답장이 있는 안내가 위에 와요.',
     actions: `<a class="btn" href="/campaigns/new">${icon('plus', 18)}새 면접 안내</a><a class="btn secondary" href="/interviews/today">${icon('calendar', 18)}오늘 면접</a>` })}
     <div class="card" style="padding:0">
       ${rows.length ? rows.map((r) => campaignCard(r)).join('')
@@ -441,7 +444,7 @@ export function renderCampaignDetail(d) {
   const delivered = replied + (totals.sent || 0);
   const oc = d.outcomes || {};
   const slots = d.slots || [];
-  const FILTERS = [['', '전체', totals.total || 0], ['attending', slots.length ? '일정 정함' : '참석', totals.attending || 0], ['absent', '불참', totals.absent || 0],
+  const FILTERS = [['all', '전체', totals.total || 0], ['attending', slots.length ? '일정 정함' : '참석', totals.attending || 0], ['absent', '불참', totals.absent || 0],
     ['unclear', '확인 필요', totals.unclear || 0], ['sent', '답 없음', totals.sent || 0], ['failed', '못 보냄', totals.failed || 0]];
   if (oc.reschedule) FILTERS.splice(4, 0, ['reschedule', '일정 변경 요청', oc.reschedule]);
   const live = !camp.purged_at && camp.status !== 'cancelled';
@@ -509,12 +512,6 @@ export function renderCampaignDetail(d) {
     ${flashHtml}
     ${stateNotice}
     ${sendCard}
-    <div class="stats">
-      ${stat({ value: totals.attending || 0, label: '참석', tone: 'yes', href: qs('attending') + '#people' })}
-      ${stat({ value: totals.absent || 0, label: '불참', tone: 'no', href: qs('absent') + '#people' })}
-      ${stat({ value: totals.unclear || 0, label: '확인 필요', tone: 'review', href: qs('unclear') + '#people' })}
-      ${stat({ value: totals.sent || 0, label: '답 없음', tone: 'wait', href: qs('sent') + '#people' })}
-    </div>
     ${delivered ? `<div class="card" style="margin-top:12px">
       ${responseBar({ attending: totals.attending || 0, absent: totals.absent || 0, unclear: totals.unclear || 0, noreply: totals.sent || 0 })}
       <div class="legend"><span><i style="background:var(--green)"></i>참석 ${totals.attending || 0}</span><span><i style="background:var(--red)"></i>불참 ${totals.absent || 0}</span>
@@ -529,7 +526,7 @@ export function renderCampaignDetail(d) {
     <section class="section" id="people">
       <div class="shead"><h2>사람별 현황${siteFilter ? ` · ${esc(siteFilter)}` : ''}</h2>${siteFilter ? `<a href="${esc(qs(statusFilter).replace(/site=[^&]*&?/, '').replace(/\?$/, '') || `/campaigns/${camp.id}`)}">사업장 필터 해제</a>` : ''}</div>
       <div class="tabs" role="tablist">${FILTERS.map(([key, label, n]) =>
-        `<a href="${esc(qs(key))}"${(statusFilter || '') === key ? ' aria-current="page"' : ''}>${label} <span class="n">${n}</span></a>`).join('')}</div>
+        `<a href="${esc(qs(key))}"${(statusFilter || 'all') === key ? ' aria-current="page"' : ''}>${label} <span class="n">${n}</span></a>`).join('')}</div>
       ${tableWrap(`<table class="cards cand"><thead><tr><th>사업장</th><th>이름</th><th>전화번호 · 면접일시</th><th>상태</th><th>받은 답장</th><th>면접 결과</th><th></th></tr></thead><tbody>
         ${cands.length ? cands.map((c) => `<tr>
           <td class="c-site">${esc(c.site)}</td><td class="c-name nowrap">${esc(c.name)}</td><td class="c-phone nowrap">${esc(fmtPhone(c.phone))}${c.interview_at ? `<small class="muted" style="display:block">면접 ${esc(c.interview_at)}</small>` : ''}</td>

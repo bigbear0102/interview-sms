@@ -20,11 +20,13 @@ export async function interviewsOn(db, user, day = Date.now()) {
   const deps = user.departments || [];
   if (scoped && !deps.length) return [];
   const rows = await all(db,
-    `SELECT ca.id, ca.campaign_id, ca.site, ca.name, ca.phone, ca.interview_at, ca.status, ca.outcome, k.name camp
+    `SELECT ca.id, ca.campaign_id, ca.site, ca.name, ca.phone, ca.interview_at, ca.status, ca.outcome, k.name camp,
+        (SELECT id FROM applicants WHERE phone=ca.phone) applicant_id,
+        (SELECT rr.stars FROM applicant_ratings rr JOIN applicants ap ON ap.id=rr.applicant_id WHERE ap.phone=ca.phone AND rr.user_id=?) my_stars
        FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
       WHERE ca.interview_at!='' AND ca.status IN ('attending','unclear','sent') AND k.purged_at IS NULL AND k.status!='cancelled'
         AND k.created_at > ? ${scoped ? `AND k.department_id IN (${deps.map(() => '?').join(',')})` : ''}
-      ORDER BY ca.id`, start - 120 * DAY, ...(scoped ? deps : []));
+      ORDER BY ca.id`, user.id ?? 0, start - 120 * DAY, ...(scoped ? deps : []));
   const out = [];
   for (const r of rows) {
     const at = parseInterviewAt(r.interview_at, start + 12 * 3600000);
@@ -68,7 +70,9 @@ export function renderToday(list, { day = Date.now(), now = Date.now() } = {}) {
         <input type="hidden" name="id" value="${r.id}"><input type="hidden" name="d" value="${dayKey(start)}">
         ${btn('showed', '출석', 'yes')}${btn('noshow', '노쇼', 'no')}
         ${r.outcome && !['showed', 'noshow'].includes(r.outcome) ? `<span class="badge ok">${esc(OUTCOMES[r.outcome])}</span>` : ''}
-      </form></li>`;
+      </form>
+      ${r.applicant_id && r.outcome !== 'noshow' ? `<form method="post" action="/applicants/${r.applicant_id}/rate" class="tstars" aria-label="${esc(r.name)} 내 별점">
+        <input type="hidden" name="back" value="${esc(q(start))}">${[1, 2, 3, 4, 5].map((s) => `<button name="stars" value="${s}" class="starbtn${r.my_stars && s <= r.my_stars ? ' on' : ''}" aria-label="${s}점" title="별점 ${s}점">★</button>`).join('')}</form>` : ''}</li>`;
   };
 
   return `<style>
@@ -82,6 +86,10 @@ export function renderToday(list, { day = Date.now(), now = Date.now() } = {}) {
 .trow .who b{font-size:17px}
 .trow .sub{display:block;color:var(--muted);font-size:14px}
 .trow .tcamp{color:var(--muted)}
+.tstars{grid-column:2/-1;display:flex;gap:0;margin-top:-4px}
+.tstars .starbtn{background:none;border:0;padding:0 3px;min-height:32px;min-width:30px;font-size:20px;line-height:1;color:var(--line);cursor:pointer}
+.tstars .starbtn.on{color:#f5a623}
+.tstars:hover .starbtn{color:#f5a623}.tstars .starbtn:hover~.starbtn{color:var(--line)}
 .ob{display:flex;gap:8px;align-items:center}
 .obtn{min-width:76px;min-height:48px;border-radius:12px;font-size:16px;font-weight:700;background:var(--chip);color:var(--ink);border:2px solid transparent;display:inline-flex;gap:4px;align-items:center;justify-content:center}
 .obtn.yes.on{background:var(--green-bg);color:var(--green-t);border-color:var(--green)}

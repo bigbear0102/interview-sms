@@ -530,7 +530,7 @@ const FLASH_ERR = {
 // 안전한 되돌아가기 주소(지원자 관리 화면만 허용)
 export function safeBack(b) {
   const s = String(b || '');
-  return /^\/applicants(\?[^#\s]*)?$/.test(s) ? s : '';
+  return /^\/applicants(\?[^#\s]*)?$/.test(s) || /^\/interviews\/today\?d=\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
 }
 export const withParam = (url, key, val) => `${url}${url.includes('?') ? '&' : '?'}${key}=${encodeURIComponent(val)}`;
 
@@ -665,6 +665,14 @@ const SHEET_JS = `<script>
 </script>`;
 
 // 첫 화면: 빠른 조회 + 입력 줄 + CSV 업로드 + 필터 + 표 + 쪽 넘기기
+// 목록용 이력서 요약 한 줄(희망 근무지 · 경력)
+function resumeSub(json) {
+  let p = null; try { p = json ? JSON.parse(json) : null; } catch { p = null; }
+  if (!p) return '';
+  const t = [p.hopeArea ? '희망 ' + p.hopeArea : '', p.career ? '경력 ' + p.career : ''].filter(Boolean).join(' · ');
+  return t ? `<span class="sub">${esc(t.slice(0, 50))}</span>` : '';
+}
+
 export async function renderApplicantSheet(db, opts = {}) {
   const { params = paramsFrom(new URLSearchParams()), flash = '', err = '', bulk = null, extra = {}, lookup = '', link = null, isSuper = false, user = null } = opts;
   const back = opts.back || listUrl(params);
@@ -698,7 +706,8 @@ export async function renderApplicantSheet(db, opts = {}) {
         EXISTS (SELECT 1 FROM applicant_applications WHERE applicant_id=a.id AND applied_to='' AND recruit_no != '') unclassified,
         (SELECT COUNT(*) FROM applicant_applications WHERE applicant_id=a.id) apps,
         (SELECT ROUND(AVG(stars), 1) FROM applicant_ratings WHERE applicant_id=a.id) avg_stars,
-        (SELECT COUNT(*) FROM applicant_ratings WHERE applicant_id=a.id) n_stars
+        (SELECT COUNT(*) FROM applicant_ratings WHERE applicant_id=a.id) n_stars,
+        (SELECT r.parsed FROM applicant_resumes r JOIN applicant_inbox i ON i.id=r.inbox_id WHERE i.applicant_id=a.id ORDER BY r.fetched_at DESC LIMIT 1) resume_parsed
        ${base} ${W} ORDER BY ${order} LIMIT ${PAGE_SIZE} OFFSET ${(pageNo - 1) * PAGE_SIZE}`, ...args);
   const stages = await latestStages(db, rows.map((r) => r.phone), user || { role: isSuper ? 'super' : '', departments: [] }).catch(() => new Map());
   const c = await first(db,
@@ -771,13 +780,12 @@ export async function renderApplicantSheet(db, opts = {}) {
 
   const hid = `<input type="hidden" name="back" value="${esc(back)}">`;
   const relDate = (ms) => fmtWhen(ms).replace(/ \d\d:\d\d$/, '');
-  const table = rows.length ? `<div class="plistwrap"><table class="plist"><thead><tr><th class="sel"><input type="checkbox" id="chkall" aria-label="이 화면 전체 선택"></th><th scope="col">이름</th><th scope="col">원가중심점 · 직무</th><th scope="col">진행</th><th scope="col">상태</th><th scope="col">등록</th><th class="go"></th></tr></thead><tbody>
+  const table = rows.length ? `<div class="plistwrap"><table class="plist"><thead><tr><th class="sel"><input type="checkbox" id="chkall" aria-label="이 화면 전체 선택"></th><th scope="col">이름</th><th scope="col">원가중심점 · 직무</th><th scope="col">진행</th><th scope="col">등록</th><th class="go"></th></tr></thead><tbody>
     ${rows.map((r) => `<tr data-href="/applicants/${r.id}">
       <td class="sel"><input type="checkbox" class="rowchk" name="ids" value="${r.id}" form="bulkform" aria-label="${esc(r.name)} 선택"></td>
-      <td class="who"><a class="pname" href="/applicants/${r.id}">${esc(r.name)}</a><span class="sub">${esc(fmtPhone(r.phone))}${r.n_stars ? ` · ${starBadge(r.avg_stars, r.n_stars)}` : ''}</span></td>
-      <td class="what">${r.applied_to ? `<span class="cc">${esc(r.applied_to)}</span>` : (r.unclassified ? '<span class="badge wait">정리 필요</span>' : '<span class="muted">-</span>')}${r.job ? `<span class="sub">${esc(r.job)}</span>` : ''}${r.apps > 1 ? `<span class="sub">지원 ${r.apps}건</span>` : ''}</td>
+      <td class="who"><a class="pname" href="/applicants/${r.id}">${esc(r.name)}${r.bl_id ? ` <span class="badge no" title="${esc(reasonLabel(r.reason_code, r.reason_text))}">블랙리스트</span>` : ''}</a><span class="sub">${esc(fmtPhone(r.phone))}${r.n_stars ? ` · ${starBadge(r.avg_stars, r.n_stars)}` : ''}</span></td>
+      <td class="what">${r.applied_to ? `<span class="cc">${esc(r.applied_to)}</span>` : (r.unclassified ? '<span class="badge wait">정리 필요</span>' : '<span class="muted">-</span>')}${r.job ? `<span class="sub">${esc(r.job)}</span>` : ''}${r.apps > 1 ? `<span class="sub">지원 ${r.apps}건</span>` : ''}${resumeSub(r.resume_parsed)}</td>
       <td class="stage">${stageCell(stages.get(r.phone))}</td>
-      <td class="st">${r.bl_id ? statusBadge(r.bl_id) : ''}${r.bl_id ? `<span class="sub">${esc(reasonLabel(r.reason_code, r.reason_text))}</span>` : ''}</td>
       <td class="when">${esc(relDate(r.created_at))}</td>
       <td class="go" aria-hidden="true">›</td></tr>`).join('')}
     </tbody></table></div>`
@@ -825,7 +833,7 @@ export async function renderApplicantSheet(db, opts = {}) {
         </tbody></table>`)}</div></details>` : ''}
     <form method="get" action="/applicants" class="searchbar">
       ${params.status ? `<input type="hidden" name="status" value="${esc(params.status)}">` : ''}
-      <input name="q" value="${esc(params.q)}" placeholder="이름 · 전화번호 · 원가중심점 · 직무로 찾기" aria-label="검색" type="search">
+      <input name="q" value="${esc(params.q)}" placeholder="이름·번호, 또는 '안양 사무 20대'처럼 조건" aria-label="검색" type="search">
       <button class="btn">찾기</button>
       <details class="filterbox"${filterActive ? ' open' : ''}><summary class="btn secondary">필터${filterActive ? ' ●' : ''}</summary>
         <div class="filters">
@@ -944,6 +952,9 @@ export async function handleApplicants(c) {
 
   if (path === '/applicants' && method === 'GET') {
     const sp = url.searchParams;
+    // 검색창 하나: 낱말 두 개 이상(전화번호 아님)이면 조건 찾기(AI)로
+    const qWords = String(sp.get('q') || '').trim();
+    if (/\S\s+\S/.test(qWords) && !isValidMobile(normalizePhone(qWords))) return redirect(`/applicants/ask?q=${encodeURIComponent(qWords.slice(0, 200))}`);
     const params = paramsFrom(sp);
     const qRaw = String(sp.get('q') || '').trim().slice(0, 30);
     const lookup = String(sp.get('lookup') || (isValidMobile(normalizePhone(qRaw)) ? qRaw : '')).trim().slice(0, 30);
