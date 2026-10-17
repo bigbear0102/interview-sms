@@ -697,7 +697,7 @@ async function run(force = false) {
   running = true;
   runningSince = Date.now();
   try {
-    const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry', 'gwMailUrl', 'gwCookieDomain', 'gwLimit']);
+    const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry', 'gwMailUrl', 'gwCookieDomain', 'gwLimit', 'amLoginUrl', 'amCookieDomain']);
     if (!cfg.agentToken) { await setStatus('연결 키가 없어요. 문자 관리 시스템의 수신함을 한 번 열면 자동으로 연결돼요.', 'error'); return; }
     cfg.serverUrl = (cfg.serverUrl || 'https://interview.bigbears.me').replace(/\/+$/, '');
     const parts = [];
