@@ -35,6 +35,7 @@ import { runGroupwareScan, runProbe } from './groupware.js';
 import { OUTCOMES, setOutcome, queueAutoReminders, queueFollowups, queueResultMessages, RESULT_TEMPLATES, parseInterviewAt } from './reminders.js';
 import { phoneApiUrl, isPublicCloud } from './admin.js';
 import { monitorPhones, recordError } from './monitor.js';
+import { aiReviewReply, needsAi } from './reply-ai.js';
 import { applyDeliveryEvent, pollDelivery, notifyNewReply, unreadCount, markAllRead } from './delivery.js';
 import { rateLimit } from './accounts.js';
 
@@ -120,6 +121,12 @@ async function handle(request, env, ctx) {
         message: evt.payload.message ?? ''
       });
       note = r.matched ? `matched result=${r.result}` : 'unmatched';
+      // 규칙으로 판단하지 못한 답장은 AI 로 한 번 더 본다(응답을 늦추지 않게 뒤에서, 키가 있을 때만)
+      if (r.matched && env.NVIDIA_API_KEY && needsAi(r.result, evt.payload.message)) {
+        ctx.waitUntil(aiReviewReply(env, { candidateId: r.candidateId, message: evt.payload.message ?? '', at: r.at })
+          .then((a) => audit(db, null, 'reply.ai', `gateway=${gw.id} candidate=${r.candidateId} ${a.applied ? `applied result=${a.result}${a.kind ? ' kind=' + a.kind : ''}` : `kept${a.error ? ' error=' + a.error : ''}`}`))
+          .catch((e) => recordError(env, 'reply-ai', e, 'aiReviewReply')));
+      }
       ctx.waitUntil(notifyNewReply(env, gw.id).catch((e) => recordError(env, 'notify', e, 'notifyNewReply')));
     } else if (['sms:sent', 'sms:delivered', 'sms:failed'].includes(evt.event) && evt.payload) {
       const ev = evt.event.slice(4);

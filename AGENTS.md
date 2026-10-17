@@ -28,6 +28,7 @@ npm start                # Node 서버 (회사 서버 이전용, .env 필요)
 | `deploy/` | `setup.mjs`(비밀값 생성), `gateway/`(docker compose), `tunnel/`, `windows/`(자동 시작) |
 | `src/core.js` | 캠페인 생성, 발송 큐, 답장 매칭, 파기, 통계 (**비즈니스 로직**) |
 | `src/parser.js` | 답장 해석(`parseReply`), 전화번호 정규화 |
+| `src/reply-ai.js` | 규칙으로 애매한 답장을 NVIDIA AI로 다시 해석(`aiReviewReply`, 웹훅 뒤 `waitUntil`) |
 | `src/gateway.js` | 게이트웨이 API 호출, 웹훅 등록, HMAC 서명 검증 |
 | `src/auth.js` / `src/crypto.js` | 세션/권한, PBKDF2·AES-GCM·HMAC (WebCrypto) |
 | `src/csv.js` / `src/views.js` / `src/d1.js` | CSV, HTML·KST 시각, D1 헬퍼 |
