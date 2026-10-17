@@ -4,7 +4,8 @@ import { all, first } from './d1.js';
 import { esc, fmtTime, icon } from './views.js';
 import { OUTCOMES } from './reminders.js';
 import { unreadCount } from './delivery.js';
-import { pendingInboxCount } from './mail-intake.js';
+import { inboxBreakdown, agentStatus } from './mail-intake.js';
+import { agentIdle, stalledText } from './workspace.js';
 import { outcomeSection } from './outcome-view.js';
 import { monthStats, renderSavingsCard } from './savings.js';
 import { phoneWaitBadge, colHead, colCount, fmtPhone, fmtWhen, badge, messageBadge, responseBar, pageHeader, tableWrap, stat, emptyState } from './ui.js';
@@ -117,7 +118,9 @@ export async function renderHome(db, user, deps) {
   let recent = [], camps = [], phones = [];
   let noreply7 = 0;
   const unread = await unreadCount(db, user).catch(() => 0);
-  const inboxPending = await pendingInboxCount(db, { id: user.id, isSuper: user.role === 'super' }).catch(() => 0);
+  const inbox = await inboxBreakdown(db, { id: user.id, isSuper: user.role === 'super' }).catch(() => ({ pending: 0, ready: 0, waiting: 0 }));
+  const agent = inbox.waiting ? await agentStatus(db, user.id).catch(() => ({ hasKey: true, lastUsedAt: Date.now() })) : null;
+  const stalled = !!(agent && agentIdle(agent));
 
   if (depIds.length) {
     const dph = idList(depIds);
@@ -185,7 +188,9 @@ export async function renderHome(db, user, deps) {
 
   const todoItems = [
     review ? `<li><a href="/campaigns"><span class="n review">${review}</span><span class="t">확인이 필요한 답장<small>참석인지 불참인지 애매해서 사람이 봐야 해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
-    inboxPending ? `<li><a href="/applicants/inbox"><span class="n info">${inboxPending}</span><span class="t">새 지원이 도착했어요<small>이력서를 확인하고 지원자로 등록해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
+    inbox.ready ? `<li><a href="/applicants/inbox?f=ready"><span class="n ok">${inbox.ready}</span><span class="t">등록할 수 있는 새 지원<small>연락처가 채워졌어요. 확인하고 지원자로 등록해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
+    stalled ? `<li><a href="/applicants/inbox/connect"><span class="n wait">${inbox.waiting}</span><span class="t">연락처를 기다리는 새 지원<small>${esc(stalledText(agent))}</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
+    inbox.pending - inbox.ready - (stalled ? inbox.waiting : 0) > 0 ? `<li><a href="/applicants/inbox"><span class="n info">${inbox.pending - inbox.ready - (stalled ? inbox.waiting : 0)}</span><span class="t">${inbox.ready || stalled ? '그 밖의 새 지원' : '새 지원이 도착했어요'}<small>원가중심점을 정하면 연락처를 자동으로 가져와요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
     unread ? `<li><a href="/messages?dir=in"><span class="n info">${unread}</span><span class="t">안 읽은 받은 문자<small>문자함에서 확인해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
     noreply7 ? `<li><a href="/campaigns"><span class="n wait">${noreply7}</span><span class="t">아직 답이 없는 사람 (최근 7일)<small>면접 안내에서 "답 없는 사람에게 다시 보내기"를 쓸 수 있어요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
     scheduled ? `<li><a href="/messages?dir=scheduled"><span class="n mute">${scheduled}</span><span class="t">예약 대기 중인 발송<small>정해 둔 시간에 나가요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : ''

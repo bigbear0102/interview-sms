@@ -250,6 +250,16 @@ export async function pendingInboxCount(db, viewer = null) {
   return r ? r.n : 0;
 }
 
+// 새 지원 대기 건의 상태별 수: 등록할 수 있음(연락처 있음) / 연락처를 기다림(요청함) / 분류 필요
+export async function inboxBreakdown(db, viewer = null) {
+  const sc = inboxScope(viewer);
+  const r = await first(db,
+    `SELECT COUNT(*) pending, COALESCE(SUM(phone!=''),0) ready, COALESCE(SUM(phone='' AND fetch_state='requested'),0) waiting,
+            COALESCE(SUM(cost_center=''),0) needClass
+       FROM applicant_inbox WHERE status='pending' AND ${sc.sql}`, ...sc.args);
+  return r || { pending: 0, ready: 0, waiting: 0, needClass: 0 };
+}
+
 export async function listInbox(db, status = 'pending', limit = 200, viewer = null) {
   const where = status === 'done' ? `status IN ('registered','ignored')` : `status='pending'`;
   const sc = inboxScope(viewer);

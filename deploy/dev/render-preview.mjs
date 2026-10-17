@@ -60,6 +60,14 @@ for (const [i, site] of [[0, '아마노코리아(현장HR)'], [1, '아마노코�
   appIds.push((await saveApplicant(db, { name: names[i], phone: cands[i].phone, applied_to: site, job: site ? '주차관리' : '' }, 1, 'manual')).id);
 }
 
+// 새 지원(알바몬 메일): 연락처 있음 1, PC 꺼져 요청 대기 3, 분류 필요 2
+const inb = (no, name, phone, state, cc) => db.prepare(`INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, received_at, status, phone, fetch_state, cost_center, resume_url, owner_user_id)
+  VALUES ('albamon',?,?, '㈜윌앤비전-아마노코리아㈜','[아마노코리아] 주차관리 직원 모집',?,'남',?,'서울 강남구',?,'pending',?,?,?,'https://www.albamon.com/x',1)`).bind(no, cc ? '900' : '901', name, 20 + Number(no), Date.now() - Number(no) * 3600e3, phone, state, cc).run();
+await inb('1', '김하늘', '01030001111', 'done', '아마노코리아(현장HR)');
+for (const [no, nm] of [['2', '박서준'], ['3', '이도현'], ['4', '최유나']]) await inb(no, nm, '', 'requested', '아마노코리아(현장HR)');
+await inb('5', '정민재', '', '', ''); await inb('6', '한소희', '', '', '');
+await db.prepare(`INSERT INTO agent_tokens (user_id, token_hash, created_at, last_used_at) VALUES (1,'h',1,?)`).bind(Date.now() - 3 * 3600e3).run();
+
 // ---- 화면 렌더링 ----
 const pages = {
   login: ['/login', false],
@@ -75,6 +83,7 @@ const pages = {
   campaign_slots: [`/campaigns/${camp3.campaignId}`, true],
   campaign_new_prefill: [`/campaigns/new?ids=${appIds.join(',')}`, true],
   applicants: ['/applicants', true],
+  inbox: ['/applicants/inbox', true],
   applicant_detail: [`/applicants/${appIds[0]}`, true],
   admin: ['/admin', true],
   password: ['/password', true],

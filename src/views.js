@@ -157,6 +157,7 @@ a.stat:hover{background:var(--surface-2);text-decoration:none}
 .todo .n.info{background:var(--blue-bg);color:var(--blue-t)}
 .todo .n.wait{background:var(--amber-bg);color:var(--amber-t)}
 .todo .n.mute{background:var(--chip);color:var(--muted)}
+.todo .n.ok{background:var(--green-bg);color:var(--green-t)}
 .todo .t{flex:1;min-width:0;font-weight:600}
 .todo .t small{display:block;font-weight:400;color:var(--muted)}
 .todo .go{flex:none;color:var(--muted)}
