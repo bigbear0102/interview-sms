@@ -176,6 +176,10 @@ dialog.cdlg p{margin:0 0 20px;font-size:17px;font-weight:600;line-height:1.5;wor
 .rbtn{position:absolute;right:10px;bottom:8px;display:inline-grid;place-items:center;width:40px;height:40px;border-radius:999px;color:var(--blue)}
 .mrow .mtext{padding-right:44px}
 .rbtn:hover{background:var(--blue-bg)}
+table.cand td.actions{min-width:200px}
+table.cand td.actions select{width:100%;min-height:38px}
+table.cand td.c-outcome select{min-width:88px}
+table.cand td.c-site{min-width:84px}
 .resch>summary{cursor:pointer;color:var(--blue);font-size:14px;margin-top:6px}
 .resch form{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .resch input{width:auto;min-width:130px;min-height:36px;padding:6px 10px}
@@ -204,7 +208,7 @@ input,select,textarea{font:inherit;font-size:16px;width:100%;min-width:0;max-wid
 textarea{min-height:120px;resize:vertical;line-height:1.55}
 input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
 input:focus,select:focus,textarea:focus{outline:2px solid var(--focus);outline-offset:0;border-color:transparent}
-input[type=radio],input[type=checkbox]{width:20px;height:20px;min-height:0;padding:0;accent-color:var(--blue)}
+input[type=radio],input[type=checkbox]{width:20px;height:20px;min-height:0;padding:0;accent-color:var(--blue);flex:none}
 input[type=file]{padding:10px}
 fieldset{border:1px solid var(--line);border-radius:var(--r-m);padding:14px 16px;min-width:0;margin:0}
 legend{font-weight:600;padding:0 6px;font-size:15px}
