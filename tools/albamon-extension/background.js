@@ -2,6 +2,7 @@
 //  - 수신함에서 [연락처 가져오기]를 누른 건만 처리한다.
 //  - 이 크롬의 알바몬 로그인 상태를 그대로 쓴다. 알바몬 아이디·비밀번호는 읽지도 저장하지도 않는다.
 //  - 이용권 차감·결제 확인 창이 보이면 누르지 않고 멈춘다.
+//  - (v1.7) 관리자가 시스템에 알바몬 계정을 여러 개 등록하면, 관리자 확장이 계정을 바꿔 가며 모든 담당자의 요청을 처리한다.
 const ALARM = 'albamon-poll';
 const MAX_PER_RUN = 5;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -137,42 +138,47 @@ const NOTES = {
   deduct: '결제·이용권 확인 창이 떠서 멈췄어요. 알바몬 화면에서 직접 확인해 주세요.'
 };
 
-async function processItem(cfg, item) {
+// 이력서 한 건을 열어 읽는다(결과는 보내지 않는다). 반환: pageRead 결과 { state, phone?, labels? } 또는 { state:'error', note }
+async function readItem(cfg, item) {
   const tab = await chrome.tabs.create({ url: item.resume_url, active: false });
   try {
-    let res;
-    try {
-      // 화면 안의 번호·버튼은 pageRead 가 "보일 때까지" 기다리므로, 모든 자원(이미지 등)이 끝나길 기다리지 않고 최대 3초만 기다린 뒤 바로 읽기 시작한다.
-      // 이동(리다이렉트)이 아직 진행 중이라 화면이 바뀌면서 읽기가 끊기면 조금 뒤 다시 시도한다.
-      await waitLoaded(tab.id, 3000);
-      const started = Date.now();
-      for (;;) {
-        try {
-          [res] = await withTimeout(chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pageRead, args: [{ name: item.name, apply_no: item.apply_no }, !!cfg.dry] }), Math.max(ITEM_TIMEOUT - (Date.now() - started), 1000), 'timeout');
-          break;
-        } catch (e) {
-          if (e.message === 'timeout' || Date.now() - started > ITEM_TIMEOUT - 5000) throw e;
-          await sleep(250);
-        }
+    // 화면 안의 번호·버튼은 pageRead 가 "보일 때까지" 기다리므로, 모든 자원(이미지 등)이 끝나길 기다리지 않고 최대 3초만 기다린 뒤 바로 읽기 시작한다.
+    // 이동(리다이렉트)이 아직 진행 중이라 화면이 바뀌면서 읽기가 끊기면 조금 뒤 다시 시도한다.
+    await waitLoaded(tab.id, 3000);
+    const started = Date.now();
+    for (;;) {
+      try {
+        const [res] = await withTimeout(chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pageRead, args: [{ name: item.name, apply_no: item.apply_no }, !!cfg.dry] }), Math.max(ITEM_TIMEOUT - (Date.now() - started), 1000), 'timeout');
+        return (res && res.result) || { state: 'nobutton' };
+      } catch (e) {
+        if (e.message === 'timeout' || Date.now() - started > ITEM_TIMEOUT - 5000) throw e;
+        await sleep(250);
       }
-    } catch (e) {
-      if (cfg.dry) return { dry: false, failed: true };
-      await api(cfg, `/api/agent/inbox/${item.id}/result`, { method: 'POST', body: JSON.stringify({ ok: false, phone: '', note: '이력서 화면을 읽지 못했어요(' + (e.message === 'timeout' ? '시간 초과' : '화면 접근 오류') + ').' }) });
-      return { failed: true };
     }
-    const r = (res && res.result) || { state: 'nobutton' };
-    if (r.state === 'login') return { stop: 'login' };
-    if (r.state === 'dry') return { dry: true };
-    if (r.state === 'ok') {
-      await api(cfg, `/api/agent/inbox/${item.id}/result`, { method: 'POST', body: JSON.stringify({ ok: true, phone: r.phone, note: '' }) });
-      return { ok: true };
-    }
-    const hint = r.labels && r.labels.length ? ` (화면 버튼: ${r.labels.join(', ')})` : '';
-    await api(cfg, `/api/agent/inbox/${item.id}/result`, { method: 'POST', body: JSON.stringify({ ok: false, phone: '', note: ((NOTES[r.state] || '알 수 없는 이유로 실패했어요.') + hint).slice(0, 190) }) });
-    return { stop: r.state === 'deduct' ? 'deduct' : '', failed: true };
+  } catch (e) {
+    return { state: 'error', note: '이력서 화면을 읽지 못했어요(' + (e.message === 'timeout' ? '시간 초과' : '화면 접근 오류') + ').' };
   } finally {
     chrome.tabs.remove(tab.id).catch(() => {});
   }
+}
+
+// 결과를 시스템에 보낸다. acct: 어느 알바몬 계정으로 열었는지(여러 계정일 때, 공고→계정 학습용)
+async function reportItem(cfg, item, r, acct = null, prefix = '') {
+  if (r.state === 'ok') {
+    await api(cfg, `/api/agent/inbox/${item.id}/result`, { method: 'POST', body: JSON.stringify({ ok: true, phone: r.phone, note: '', account_id: acct ? acct.id : undefined }) });
+    return { ok: true };
+  }
+  const hint = r.labels && r.labels.length ? ` (화면 버튼: ${r.labels.join(', ')})` : '';
+  await api(cfg, `/api/agent/inbox/${item.id}/result`, { method: 'POST', body: JSON.stringify({ ok: false, phone: '', note: (prefix + (r.note || NOTES[r.state] || '알 수 없는 이유로 실패했어요.') + hint).slice(0, 190) }) });
+  return { stop: r.state === 'deduct' ? 'deduct' : '', failed: true };
+}
+
+async function processItem(cfg, item) {
+  const r = await readItem(cfg, item);
+  if (r.state === 'login') return { stop: 'login' };
+  if (r.state === 'dry') return { dry: true };
+  if (cfg.dry && r.state === 'error') return { dry: false, failed: true };
+  return reportItem(cfg, item, r);
 }
 
 // ---------------- 그룹웨어 계정(여러 개) ----------------
@@ -506,8 +512,158 @@ async function scanGroupware(cfg, force) {
   return { level, text: results.map((r) => r.text).join(' '), added: results.reduce((n, r) => n + (r.added || 0), 0) };
 }
 
+// ---------------- 알바몬 계정 여러 개 (관리자가 시스템에 등록) ----------------
+// 관리자 확장만 계정 목록(비밀번호 포함)을 받는다. 계정마다 로그인 쿠키를 보관해 두었다가 바꿔 끼우고(매번 로그인하지 않게),
+// 처음 보는 공고는 계정을 차례로 시도해 열리는 계정을 찾는다(시스템이 공고→계정을 기억해 다음부터 힌트로 준다).
+// 처리하는 동안 이 크롬의 내 알바몬 로그인을 보관했다가 끝나면 되돌린다.
+const AM_TRY_NEXT = new Set(['gone', 'nobutton', 'mismatch', 'nophone']);   // 다른 계정 공고일 때 보이는 상태
+async function amCookieDomain(cfg) { return cfg.amCookieDomain || 'albamon.com'; }
+async function recoverAmSwap() {
+  try {
+    const s = await chrome.storage.session.get('amSwap');
+    if (s.amSwap) { await restoreGwCookies(s.amSwap.domain, s.amSwap.snap); await chrome.storage.session.remove('amSwap'); }
+  } catch { /* ignore */ }
+}
+recoverAmSwap();
+
+// 알바몬 로그인 화면에 아이디·비밀번호를 넣고 로그인을 누른다(화면 안에서 실행). 반환: 'submitted' | 'noform'
+function pageAlbamonLogin(id, pw) {
+  const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const tab = [...document.querySelectorAll('a,button,li,span,label,div')].find((e) => (e.innerText || '').trim() === '기업회원' && vis(e));
+  if (tab) tab.click();
+  const inputs = [...document.querySelectorAll('input')].filter(vis);
+  const pwEl = inputs.find((e) => (e.type || '').toLowerCase() === 'password');
+  const idEl = inputs.find((e) => ['text', 'email', 'tel', ''].includes((e.type || '').toLowerCase()) && e !== pwEl);
+  if (!idEl || !pwEl) return 'noform';
+  // React 등 화면 프레임워크가 값을 알아채도록 원래 setter 로 넣고 input 이벤트를 보낸다
+  const set = (el, v) => { const d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value'); el.focus(); d.set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); };
+  set(idEl, id); set(pwEl, pw);
+  const btn = [...document.querySelectorAll('button,input[type=submit],a')].filter(vis).find((e) => /^로그인$/.test((e.innerText || e.value || '').trim()));
+  if (btn) btn.click(); else if (pwEl.form) pwEl.form.requestSubmit ? pwEl.form.requestSubmit() : pwEl.form.submit();
+  return 'submitted';
+}
+function pageIsLogin() {
+  const pw = document.querySelector('input[type=password]');
+  const r = pw && pw.getBoundingClientRect();
+  return !!(r && r.width > 0) || /user-account\/login|\/login/i.test(location.href);
+}
+
+// 이 계정으로 로그인한다(보관한 쿠키가 없거나 만료됐을 때). 반환: true/false
+async function amLogin(cfg, acct) {
+  const url = cfg.amLoginUrl || 'https://www.albamon.com/user-account/login?memberType=CORPORATION';
+  await clearGwCookies(await amCookieDomain(cfg));
+  const tab = await openTab(url);
+  try {
+    const sub = await exec(tab.id, pageAlbamonLogin, [acct.login_id, acct.pw]);
+    if (sub !== 'submitted') return false;
+    for (let i = 0; i < 40; i++) {
+      await sleep(500);
+      const t = await chrome.tabs.get(tab.id).catch(() => null);
+      if (!t) return false;
+      if (t.status !== 'complete') continue;
+      const still = await exec(tab.id, pageIsLogin).catch(() => true);
+      if (!still) {
+        const sess = (await chrome.storage.local.get('amSess')).amSess || {};
+        sess[acct.id] = await chrome.cookies.getAll({ domain: await amCookieDomain(cfg) });
+        await chrome.storage.local.set({ amSess: sess });
+        return true;
+      }
+    }
+    return false;
+  } finally {
+    chrome.tabs.remove(tab.id).catch(() => {});
+  }
+}
+
+// 이 계정의 보관 쿠키로 바꿔 끼운다(없으면 로그인)
+async function amSwitch(cfg, acct) {
+  const sess = (await chrome.storage.local.get('amSess')).amSess || {};
+  if (sess[acct.id] && sess[acct.id].length) { await restoreGwCookies(await amCookieDomain(cfg), sess[acct.id]); return true; }
+  return amLogin(cfg, acct);
+}
+
+// 여러 계정으로 연락처 가져오기. 반환: 상태 { level, text } 또는 null
+async function runContactsMulti(cfg, accounts) {
+  const t0 = Date.now();
+  const domain = await amCookieDomain(cfg);
+  const blocked = (await chrome.storage.local.get('amBlocked')).amBlocked || {};
+  const usable = accounts.filter((a) => blocked[a.id] !== a.updated_at);   // 로그인 실패한 계정은 비밀번호를 바꿀 때까지 쉬게(잠김 방지)
+  const notes = [];
+  if (usable.length < accounts.length) notes.push({ level: 'error', text: `알바몬 계정 ${accounts.length - usable.length}개는 로그인이 안 돼서 쉬고 있어요. 시스템 연결 설정에서 비밀번호를 고쳐 주세요.` });
+  if (!usable.length) return notes[0];
+  let ok = 0, fail = 0, stop = null;
+  const mine = await chrome.cookies.getAll({ domain });   // 내 알바몬 로그인 보관
+  await chrome.storage.session.set({ amSwap: { domain, snap: mine } });
+  try {
+    for (let round = 0; round < 10 && !stop; round++) {
+      const q = await (await api(cfg, '/api/agent/inbox?limit=20&all=1')).json();
+      const items = q.items || [];
+      if (!items.length) break;
+      const known = new Set(usable.map((a) => a.id));
+      const groups = new Map();
+      let unknown = [];
+      for (const it of items) {
+        if (it.account_id && known.has(it.account_id)) { if (!groups.has(it.account_id)) groups.set(it.account_id, []); groups.get(it.account_id).push(it); }
+        else unknown.push(it);
+      }
+      const order = [...usable].sort((a, b) => (groups.has(b.id) ? 1 : 0) - (groups.has(a.id) ? 1 : 0));
+      const lastState = new Map();
+      for (const acct of order) {
+        if (stop) break;
+        const work = [...(groups.get(acct.id) || []), ...unknown];
+        if (!work.length) continue;
+        await setStatus(`연락처 가져오는 중… (알바몬 계정 ${acct.label})`);
+        if (!(await amSwitch(cfg, acct))) {
+          blocked[acct.id] = acct.updated_at;
+          await chrome.storage.local.set({ amBlocked: blocked });
+          await api(cfg, '/api/agent/albamon-status', { method: 'POST', body: JSON.stringify({ account_id: acct.id, error: '알바몬 로그인 실패(아이디·비밀번호 확인)' }) }).catch(() => {});
+          notes.push({ level: 'error', text: `알바몬 계정 "${acct.label}" 로그인이 안 돼요. 시스템 연결 설정에서 아이디·비밀번호를 확인해 주세요.` });
+          unknown = work;   // 이 계정 몫은 다른 계정으로 시도
+          continue;
+        }
+        const retry = [];
+        let next = 0, relogged = false;
+        const worker = async () => {
+          while (!stop && next < work.length) {
+            const it = work[next++];
+            let r = await readItem(cfg, it);
+            if (r.state === 'login' && !relogged) { relogged = true; if (await amLogin(cfg, acct)) r = await readItem(cfg, it); }
+            if (r.state === 'ok') { await reportItem(cfg, it, r, acct); ok++; continue; }
+            if (r.state === 'deduct') { await reportItem(cfg, it, r); fail++; stop = { level: 'error', text: '결제·이용권 확인 창이 떠서 멈췄어요. 알바몬 화면에서 직접 확인해 주세요.' }; return; }
+            if (AM_TRY_NEXT.has(r.state) || r.state === 'login') { lastState.set(it.id, r); retry.push(it); continue; }
+            await reportItem(cfg, it, r); fail++;
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(CONTACT_CONCURRENCY, work.length) }, worker));
+        // 쿠키가 갱신됐을 수 있으니 이 계정 보관본을 새로 저장
+        const sess = (await chrome.storage.local.get('amSess')).amSess || {};
+        sess[acct.id] = await chrome.cookies.getAll({ domain });
+        await chrome.storage.local.set({ amSess: sess });
+        unknown = retry;
+      }
+      // 모든 계정으로 열어 봐도 안 된 건
+      for (const it of stop ? [] : unknown) {
+        await reportItem(cfg, it, lastState.get(it.id) || { state: 'nobutton' }, null, `등록된 알바몬 계정 ${usable.length}개로 모두 열어 봤지만 안 됐어요: `);
+        fail++;
+      }
+    }
+  } finally {
+    await restoreGwCookies(domain, mine);
+    await chrome.storage.session.remove('amSwap');
+  }
+  if (stop) notes.push(stop);
+  if (ok || fail) notes.push({ level: fail ? (ok ? 'warn' : 'error') : 'ok', text: `연락처 ${ok}건 채웠어요(알바몬 계정 ${usable.length}개, ${((Date.now() - t0) / 1000).toFixed(1)}초)${fail ? `, ${fail}건은 못 채웠어요(이유는 새 지원 카드에)` : ''}.` });
+  if (!notes.length) return null;
+  return { level: notes.reduce((w, n) => worst(w, n.level), 'ok'), text: notes.map((n) => n.text).join(' ') };
+}
+
 const CONTACT_CONCURRENCY = 4;   // 이력서 탭을 동시에 몇 개까지 열어 읽을지
 async function runContacts(cfg) {
+  // 관리자 확장이고 시스템에 알바몬 계정이 등록돼 있으면 여러 계정 방식으로(모든 담당자 요청)
+  try {
+    const am = await (await api(cfg, '/api/agent/albamon-accounts')).json();
+    if (am.allowed && am.accounts && am.accounts.length && !cfg.dry) return runContactsMulti(cfg, am.accounts);
+  } catch { /* 예전 시스템이거나 일시 오류면 기존 방식 */ }
   const t0 = Date.now();
   let ok = 0, fail = 0, dry = 0, done = 0, stop = null;
   // 요청이 있으면 20건씩 받아 4건씩 동시에 처리하고, 큐가 빌 때까지 이어서 한다(한 번에 최대 10번 = 200건)
@@ -541,7 +697,7 @@ async function run(force = false) {
   running = true;
   runningSince = Date.now();
   try {
-    const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry', 'gwMailUrl', 'gwCookieDomain', 'gwLimit']);
+    const cfg = await chrome.storage.local.get(['serverUrl', 'agentToken', 'dry', 'gwMailUrl', 'gwCookieDomain', 'gwLimit', 'amLoginUrl', 'amCookieDomain']);
     if (!cfg.agentToken) { await setStatus('연결 키가 없어요. 문자 관리 시스템의 수신함을 한 번 열면 자동으로 연결돼요.', 'error'); return; }
     cfg.serverUrl = (cfg.serverUrl || 'https://interview.bigbears.me').replace(/\/+$/, '');
     const parts = [];

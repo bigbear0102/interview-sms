@@ -4,7 +4,10 @@
 //  - POST /api/agent/inbox/:id/result      { ok, phone, note } 결과 저장
 //  - GET  /api/agent/me                    이 키의 주인
 //  - POST /api/agent/mail                  { html } 그룹웨어 메일 본문을 해석해 내 수신함에 저장
+//  - GET  /api/agent/albamon-accounts      등록된 알바몬 계정(관리자 키·공용 키만, 비밀번호 포함)
+//  - POST /api/agent/albamon-status        { account_id, error } 계정 로그인 실패 등 기록
 import { first, run } from './d1.js';
+import { accountsForAgent, noteAccountResult } from './albamon-accounts.js';
 import { verifyAgentToken, agentQueue, saveFetchResult, getAutoRegister, parseAlbamonApply, saveParsed } from './mail-intake.js';
 
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), {
@@ -24,7 +27,26 @@ export async function handleAgentApi(request, env, url, deps) {
   const method = request.method;
 
   if (path === '/api/agent/inbox' && method === 'GET') {
-    return json({ items: await agentQueue(db, Number(url.searchParams.get('limit')) || 5, uid) });
+    // 알바몬 계정이 등록돼 있고 관리자 확장이면 모든 담당자의 요청을 처리한다(계정을 바꿔 가며 열 수 있으므로)
+    let everyone = false;
+    if (uid != null && url.searchParams.get('all') === '1') {
+      const role = (await first(db, `SELECT role FROM users WHERE id=? AND active=1`, uid))?.role;
+      everyone = role === 'super' && !!(await first(db, `SELECT 1 x FROM albamon_accounts WHERE active=1 LIMIT 1`));
+    }
+    return json({ items: await agentQueue(db, Number(url.searchParams.get('limit')) || 5, uid, { all: everyone }) });
+  }
+
+  if (path === '/api/agent/albamon-accounts' && method === 'GET') {
+    // 비밀번호가 들어 있으므로 관리자에게 연결된 확장(또는 공용 키)만 받는다
+    const role = uid == null ? 'super' : (await first(db, `SELECT role FROM users WHERE id=? AND active=1`, uid))?.role;
+    if (role !== 'super') return json({ accounts: [], allowed: false });
+    return json({ accounts: await accountsForAgent(db, env), allowed: true });
+  }
+  if (path === '/api/agent/albamon-status' && method === 'POST') {
+    let body = {};
+    try { body = await request.json(); } catch { return json({ error: 'bad_json' }, 400); }
+    await noteAccountResult(db, body.account_id, { ok: false, error: String(body.error || '').slice(0, 190) });
+    return json({ ok: true });
   }
 
   if (path === '/api/agent/me' && method === 'GET') {
@@ -50,8 +72,15 @@ export async function handleAgentApi(request, env, url, deps) {
     const id = Number(m[1]);
     let body = {};
     try { body = await request.json(); } catch { return json({ error: 'bad_json' }, 400); }
-    const r = await saveFetchResult(db, id, { ok: !!body.ok, phone: body.phone, note: body.note }, Date.now(), uid);
+    // 관리자 확장(여러 알바몬 계정으로 모든 담당자 건을 처리)은 다른 담당자 건의 결과도 저장할 수 있다
+    const isAdmin = uid != null && (await first(db, `SELECT role FROM users WHERE id=? AND active=1`, uid))?.role === 'super';
+    const r = await saveFetchResult(db, id, { ok: !!body.ok, phone: body.phone, note: body.note }, Date.now(), isAdmin ? null : uid);
     if (!r.ok && r.reason === 'gone') return json({ error: 'gone' }, 404);
+    // 어느 알바몬 계정으로 열었는지: 성공이면 그 공고를 그 계정 것으로 배운다
+    if (r.ok && body.account_id) {
+      const it = await first(db, `SELECT recruit_no FROM applicant_inbox WHERE id=?`, id);
+      await noteAccountResult(db, body.account_id, { ok: true, recruitNo: it ? it.recruit_no : '' });
+    }
     let registered = false;
     if (r.ok && (await getAutoRegister(db))) {
       const item = await first(db, `SELECT * FROM applicant_inbox WHERE id=?`, id);

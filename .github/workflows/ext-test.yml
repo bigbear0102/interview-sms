@@ -1,0 +1,20 @@
+name: Extension test
+# 크롬 확장을 실제 크롬에 올려 가짜 알바몬(계정 여러 개)으로 시험한다. 확장·에이전트 코드가 바뀔 때만.
+on:
+  push:
+    paths: ['tools/albamon-extension/**', 'tools/albamon-agent/**', 'src/agent-api.js', 'src/albamon-accounts.js', '.github/workflows/ext-test.yml']
+  workflow_dispatch:
+
+jobs:
+  multi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: cd tools/albamon-agent && npm ci
+      - run: xvfb-run -a node tools/albamon-extension/mock-multi.mjs
+      - name: 기존 시험(계정 1개·그룹웨어)
+        run: xvfb-run -a node tools/albamon-extension/mock-ext.mjs
