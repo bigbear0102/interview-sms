@@ -196,8 +196,6 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
 
   const myName = viewer ? await getUserMailName(db, viewer.id) : '';
   const myAddr = myName ? intakeAddress(myName, env) : '';
-  // 내 수신함에 메일로 들어온 지원이 한 번이라도 있으면 1단계는 끝난 것으로 본다
-  const mailIn = viewer ? !!(await first(db, `SELECT 1 x FROM applicant_inbox WHERE owner_user_id=? LIMIT 1`, viewer.id).catch(() => null)) : false;
   let sharedCard = '';
   if (isSuper) {
     const token = await ensureIntakeToken(db);
@@ -249,7 +247,7 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
     ${notices.join('')}
     <div class="hero"><span class="conn ${cs.cls}"><i></i>${esc(cs.text)}</span><span class="muted" style="font-size:14px">${esc(cs.hint)}</span></div>
     <div class="csteps">
-      <section class="cstep${mailIn ? ' done' : ''}"><h2>지원 메일 받기: 그룹웨어 자동 전달</h2>
+      <section class="cstep"><h2>지원 메일 받기: 그룹웨어 자동 전달</h2>
         <p class="muted" style="font-size:15px">알바몬 지원 알림 메일이 오면 그룹웨어가 아래 주소로 <b>자동 전달</b>하게 규칙을 한 번 만들어요. 전달된 메일은 <b>내 새 지원</b>에 바로 들어와요. 비밀번호를 저장할 필요가 없어요.</p>
         <div class="stack">
           ${myAddr ? `<div class="copybox"><div class="copylabel">자동 전달할 주소 (내 메일 주소가 아니에요)</div><div class="copyvalue">${esc(myAddr)}</div>

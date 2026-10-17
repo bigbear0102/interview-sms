@@ -619,7 +619,7 @@ export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice =
         <div class="mtop">
           <a href="/messages?phone=${encodeURIComponent(r.phone)}">${who.has(r.phone) ? `<b>${esc(who.get(r.phone).name)}</b> <span class="muted">${esc(fmtPhone(r.phone))}</span>` : `<b>${esc(fmtPhone(r.phone))}</b>`}</a>
           ${r.dir === 'in' ? '<span class="badge info">받음</span>' : `<span class="badge">${r.author ? '보냄' : '자동'}</span>`}
-          ${r.dir === 'out' && !r.author && ['scheduled', 'sending'].includes(r.result) ? '<span class="badge mute">곧 보냄</span>' : messageBadge(r.dir, r.result, r.delivery, r.at)}
+          ${r.dir === 'out' && (r.result === 'sending' || (r.result === 'scheduled' && r.at <= Date.now() + 60000)) ? '<span class="badge mute">곧 보냄</span>' : messageBadge(r.dir, r.result, r.delivery, r.at)}
           <span class="when">${fmtWhen(r.at)}</span>
           ${r.dir === 'out' && r.result === 'scheduled' ? '' : `<a class="rbtn" href="/send?to=${encodeURIComponent(r.phone)}&gw=${r.gateway_id}" aria-label="${esc(fmtPhone(r.phone))}에게 답장" title="답장">${icon('reply', 18)}</a>`}
         </div>
@@ -627,7 +627,7 @@ export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice =
         ${who.has(r.phone) && who.get(r.phone).campaignId ? `<div class="muted" style="font-size:13px;margin-top:4px"><a href="/campaigns/${who.get(r.phone).campaignId}">${esc(who.get(r.phone).camp)}</a></div>` : ''}
         ${r.dir === 'out' && r.error && ['failed', 'scheduled', 'sending'].includes(r.result) || (r.dir === 'out' && r.delivery === 'failed') ? `<div class="muted" style="font-size:13px;margin-top:4px;color:var(--red-t)">${esc(r.error || '전달에 실패했어요')}</div>` : ''}
         ${r.author ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(r.author)} 님이 보냄</div>` : ''}
-        ${r.dir === 'out' && r.result === 'scheduled' && r.author ? `<div class="mact">${`<form method="post" action="/messages/cancel" class="inline" data-confirm="이 예약을 취소할까요?"><input type="hidden" name="id" value="${r.id}"><button class="btn danger small">예약 취소</button></form>`}</div>` : ''}
+        ${r.dir === 'out' && r.result === 'scheduled' && r.at > Date.now() + 60000 ? `<div class="mact">${`<form method="post" action="/messages/cancel" class="inline" data-confirm="이 예약을 취소할까요?"><input type="hidden" name="id" value="${r.id}"><button class="btn danger small">예약 취소</button></form>`}</div>` : ''}
       </li>`).join('')}</ul>` : emptyState({ title: empty })}
     </div>`;
 }
