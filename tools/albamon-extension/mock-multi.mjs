@@ -153,7 +153,8 @@ check(statusPosts.some((p) => p.account_id === 2 && /로그인 실패/.test(p.er
 check(/로그인이 안 돼요/.test(s), '상태 문구에 해야 할 일(비밀번호 확인)');
 const loginsB = logins.length;
 items = [mk(9, 'B2', 'RB')];
-await runAndWait();
+s = await runAndWait();
+console.log('  상태:', s, '| 로그인 기록:', logins.join(','), '| 마지막 열람:', JSON.stringify(views.slice(-3)));
 check(logins.length === loginsB && !views.slice(-3).some(([, a]) => a === 'B'), '같은 비밀번호로는 다시 로그인 시도하지 않음(계정 잠김 방지)');
 check(await myCookie() === 'MINE', '마지막에도 내 알바몬 로그인을 되돌림');
 
