@@ -408,6 +408,7 @@ export function renderCampaignDetail(d) {
   const live = !camp.purged_at && camp.status !== 'cancelled';
   const flashHtml = [
     d.flash === 'result' ? `<div class="notice ok">${icon('check')}<div><b>${d.flashN}명에게 결과 안내 문자를 보내요.</b> 보낸 문자는 문자함에서 볼 수 있어요.</div></div>` : '',
+    d.err === 'when' ? `<div class="notice warn" role="alert">${icon('alert')}<div>새 면접일시를 읽을 수 없어요. <b>"10/24 14:00"</b>처럼 날짜와 시간을 함께 적어 주세요.</div></div>` : '',
     d.err === 'reschedule' ? `<div class="notice warn" role="alert">${icon('alert')}<div>다시 안내하지 못했어요. 새 면접일시를 적었는지, 문자를 보내는 중인 사람이 아닌지 확인해 주세요.</div></div>` : ''
   ].join('');
   const slotCard = slots.length ? `<section class="section"><div class="shead"><h2>일정별 확정 인원</h2><span class="muted">답장한 번호로 정해진 사람 수</span></div>

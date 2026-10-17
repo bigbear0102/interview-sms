@@ -55,7 +55,7 @@ const STATUS_BADGE = {
 
 const SUBLINE = (r) => [r.gender, r.age ? r.age + '세' : '', r.address, r.career ? '경력 ' + r.career : ''].filter(Boolean).join(' · ');
 
-export async function renderInbox(db, env, { status = 'pending', isSuper = false, flash = '', err = '', origin = '', fetched = 0, viewer = null, filter = '', n = 0, skipped = 0, fr = 0 } = {}) {
+export async function renderInbox(db, env, { status = 'pending', isSuper = false, flash = '', err = '', origin = '', fetched = 0, viewer = null, filter = '', n = 0, skipped = 0, fr = 0, later = 0 } = {}) {
   const pending = await pendingInboxCount(db, viewer);
   const todo = await unclassifiedPostings(db).catch(() => 0);
   const all_ = await listInbox(db, status === 'done' ? 'done' : 'pending', 200, viewer);
@@ -70,7 +70,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
     fetchall: `${Number(fetched) || 0}건의 연락처 가져오기를 요청했어요. 확장 프로그램이 켜져 있으면 1분 안에 채워져요.`,
     registered: '지원자로 등록했어요.', cost: `원가중심점을 저장했어요.${Number(fr) ? ` 연락처 ${Number(fr)}건의 가져오기도 요청했어요. 확장 프로그램이 켜져 있으면 1분 안에 채워져요.` : ''}`, ignored: '무시로 처리했어요.', restored: '다시 대기로 돌렸어요.',
     restored2: '다시 대기로 돌렸어요. 이미 등록된 지원자는 지원자 목록에 그대로 있고, 다시 등록해도 중복으로 생기지 않아요.',
-    bulkreg: `${Number(n) || 0}명을 지원자로 등록했어요.${Number(skipped) ? ` 연락처가 없는 ${Number(skipped)}건은 건너뛰었어요.` : ''}`,
+    bulkreg: `${Number(n) || 0}명을 지원자로 등록했어요.${Number(skipped) ? ` 연락처가 없는 ${Number(skipped)}건은 건너뛰었어요.` : ''}${Number(later) ? ` 한 번에 ${BULK_REGISTER_MAX}명까지 등록해요. 남은 ${Number(later)}명은 한 번 더 눌러 주세요.` : ''}`,
     bulkign: `${Number(n) || 0}건을 무시로 처리했어요.`
   };
   const ERR = { invalid: '이름과 휴대폰 번호를 확인해 주세요. (예: 010-1234-5678)', gone: '이미 처리되었거나 찾을 수 없는 건이에요.', nopick: '먼저 지원자를 골라 주세요.', cclist: '원가중심점 목록에 없는 이름이에요. 입력하면 나오는 목록에서 골라 주세요.' };
@@ -160,6 +160,8 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
     <script>${AUTO_REFRESH_JS}</script>
     <script>${INBOX_JS}</script>`;
 }
+
+export const BULK_REGISTER_MAX = 100;
 
 // 선택한 건 수에 따라 아래쪽 처리 막대를 보여 준다
 const INBOX_JS = String.raw`
@@ -410,7 +412,7 @@ export async function handleInbox(c, deps) {
     const sp = url.searchParams;
     return page('새 지원', await renderInbox(db, env, {
       status: sp.get('status') === 'done' ? 'done' : 'pending', isSuper: user.role === 'super', viewer, filter: sp.get('f') || '',
-      flash: sp.get('ok') || '', err: sp.get('err') || '', origin: new URL(request.url).origin, fetched: sp.get('n') || 0, n: sp.get('n') || 0, skipped: sp.get('s') || 0, fr: sp.get('fr') || 0
+      flash: sp.get('ok') || '', err: sp.get('err') || '', origin: new URL(request.url).origin, fetched: sp.get('n') || 0, n: sp.get('n') || 0, skipped: sp.get('s') || 0, fr: sp.get('fr') || 0, later: sp.get('later') || 0
     }));
   }
   if (path === '/applicants/inbox/connect' && method === 'GET') {
@@ -491,8 +493,13 @@ export async function handleInbox(c, deps) {
       return redirect(`/applicants/inbox?ok=bulkign&n=${rows.length}`);
     }
     if (op === 'register') {
+      // 한 건 등록에 DB 호출이 7번쯤 든다. Workers 요청당 내부 호출 한도(1,000)를 넘지 않게 한 번에 100건까지만 하고 나머지는 다시 누르게 한다.
       let done = 0, skip = 0;
+      const withPhone = rows.filter((r) => r.phone && isValidMobile(r.phone));
+      const later = Math.max(0, withPhone.length - BULK_REGISTER_MAX);
+      const allowed = new Set(withPhone.slice(0, BULK_REGISTER_MAX).map((r) => r.id));
       for (const r of rows) {
+        if (r.phone && isValidMobile(r.phone) && !allowed.has(r.id)) continue;
         if (!r.phone || !isValidMobile(r.phone)) { skip++; continue; }
         const x = await deps.saveApplicant(db, { name: r.name, phone: r.phone, applied_to: r.cost_center, job: r.job, recruit_no: r.recruit_no, posting_title: r.job_title, company_raw: r.company }, user.id, 'mail');
         if (!x.ok) { skip++; continue; }
@@ -501,7 +508,7 @@ export async function handleInbox(c, deps) {
         done++;
       }
       await audit(db, user, 'applicant.inbox_register_bulk', `n=${done}`);
-      return redirect(`/applicants/inbox?ok=bulkreg&n=${done}&s=${skip + (ids.length - rows.length)}`);
+      return redirect(`/applicants/inbox?ok=bulkreg&n=${done}&s=${skip + (ids.length - rows.length)}${later ? `&later=${later}` : ''}`);
     }
     return redirect('/applicants/inbox');
   }
