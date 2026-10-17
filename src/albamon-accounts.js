@@ -4,6 +4,11 @@
 import { all, first, run } from './d1.js';
 import { encryptText, decryptText } from './crypto.js';
 
+// 꺼 둠(2026-10-17): 알바몬 기업회원 로그인에 문자 2차 인증이 있어 자동 로그인이 막힌다.
+// "직접 인증 도우미"(확장이 인증 화면을 띄우고 사람이 인증한 로그인 상태를 계정별로 보관)를 만든 뒤 true 로 켠다.
+// 꺼져 있으면 계정 화면·관리 주소·확장용 계정 목록이 모두 동작하지 않고, 확장은 크롬에 로그인된 계정으로만 가져온다.
+export const MULTI_ACCOUNT_ENABLED = false;
+
 export async function listAccounts(db) {
   return all(db,
     `SELECT a.id, a.label, a.login_id, a.active, a.updated_at, a.last_ok_at, a.last_error, a.last_error_at,

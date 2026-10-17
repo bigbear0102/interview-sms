@@ -456,7 +456,18 @@ test('QC: 발송 처리 중(sending)에 온 아주 빠른 답장도 반영되고
   assert.equal(c.gw_msg_id, 'g1');
 });
 
-test('알바몬 계정 여러 개: 관리자 등록(암호화), 관리자 확장만 비밀번호 받음, 요청 중복 방지, 공고→계정 학습', async () => {
+test('알바몬 계정 여러 개는 꺼져 있다(문자 2차 인증 때문에): 화면·관리 주소·확장용 목록 모두 동작 안 함', async () => {
+  const { db, env, call, post } = await setup();
+  const { createAgentToken } = await import('../src/mail-intake.js');
+  assert.doesNotMatch(visible(await (await call('/applicants/inbox/connect')).text()), /알바몬 계정 관리자/);
+  await post('/applicants/inbox/albamon-account', { label: 'x', login_id: 'corpA', pw: 'p' });
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM albamon_accounts`).first()).n, 0);
+  const key = await createAgentToken(db, 1);
+  const r = await (await handleRequest(new Request('https://example.test/api/agent/albamon-accounts', { headers: { authorization: 'Bearer ' + key } }), env, { waitUntil() {} })).json();
+  assert.equal(r.allowed, false);
+});
+
+test('알바몬 계정 여러 개(켰을 때): 관리자 등록(암호화), 관리자 확장만 비밀번호 받음, 요청 중복 방지, 공고→계정 학습', { skip: !(await import('../src/albamon-accounts.js')).MULTI_ACCOUNT_ENABLED }, async () => {
   const { db, env, call, post } = await setup();
   const { createAgentToken } = await import('../src/mail-intake.js');
   // 관리자 화면에서 계정 2개 등록
