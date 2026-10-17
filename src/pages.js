@@ -39,6 +39,36 @@ export const schedulePicker = (name = 'when', required = false) => `
     <small>한국 시간 기준이에요. 정해진 시간 <b>1분 안</b>에 나가요.</small>
   </div>`;
 
+// 안내 문구 AI 점검(면접 안내 만들기). 이 안에는 백틱과 달러 중괄호를 쓰지 않는다
+const AI_TEMPLATE_JS = '<script>' + String.raw`
+(function () {
+  var b = document.getElementById('aitpl'), out = document.getElementById('aitpl-out'), t = document.getElementById('template');
+  if (!b) return;
+  function el(tag, text) { var e = document.createElement(tag); if (text) e.textContent = text; return e; }
+  b.addEventListener('click', function () {
+    var k = document.querySelector('input[name=kind]:checked');
+    b.disabled = true; b.textContent = 'AI가 점검하는 중… (몇 초)';
+    var body = new URLSearchParams(); body.set('template', t.value); body.set('kind', k ? k.value : 'fixed');
+    fetch('/campaigns/ai-template', { method: 'POST', credentials: 'same-origin', body: body })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        out.hidden = false; out.textContent = '';
+        if (!j || j.error) { out.className = 'notice warn'; out.appendChild(el('div', j && j.error === 'placeholder' ? 'AI가 {이름} 같은 자리 표시를 바꿔서 결과를 쓰지 않았어요. 다시 눌러 보세요.' : 'AI 점검을 하지 못했어요. 잠시 뒤 다시 눌러 주세요.')); return; }
+        out.className = 'notice info';
+        var box = el('div');
+        if (j.issues && j.issues.length) { box.appendChild(el('b', '확인해 볼 점')); var ul = el('ul'); ul.style.margin = '4px 0 8px'; ul.style.paddingLeft = '20px'; j.issues.forEach(function (x) { ul.appendChild(el('li', x)); }); box.appendChild(ul); }
+        box.appendChild(el('b', '다듬은 문구'));
+        var pre = el('div', j.text); pre.className = 'preview'; pre.style.margin = '4px 0 8px'; box.appendChild(pre);
+        var use = el('button', '이 문구로 바꾸기'); use.type = 'button'; use.className = 'small';
+        use.addEventListener('click', function () { t.value = j.text; t.dispatchEvent(new Event('input')); out.hidden = true; t.focus(); });
+        box.appendChild(use); out.appendChild(box);
+      })
+      .catch(function () { out.hidden = false; out.className = 'notice warn'; out.textContent = 'AI 점검을 하지 못했어요. 잠시 뒤 다시 눌러 주세요.'; })
+      .then(function () { b.disabled = false; b.textContent = 'AI로 문구 점검하기'; });
+  });
+})();
+` + '</script>';
+
 export const SCHEDULE_JS = `<script>
 (function () {
   function fmt(d) { var p = function (n) { return String(n).padStart(2, '0'); };
@@ -253,7 +283,7 @@ export async function renderCampaignList(db, user, deps) {
 }
 
 // ---------------- 면접 안내 만들기 ----------------
-export function renderCampaignNew({ gws, deps, today, defaultTemplate, slotTemplate = '', prefill = null }) {
+export function renderCampaignNew({ gws, deps, today, defaultTemplate, slotTemplate = '', prefill = null, ai = false }) {
   const many = !!prefill;
   const prefillNotice = prefill ? `<div class="notice ok">${icon('check')}<div><b>지원자 관리에서 고른 ${prefill.count}명을 명단에 채웠어요.</b><br>
       면접일시가 모두 같으면 아래 <b>"모두 같은 면접일시"</b>에 한 번만 적으세요. 사람마다 다르면 명단의 마지막 칸에 적어요.${prefill.noSite ? `<br>${prefill.noSite}명은 원가중심점이 없어요. 아래 "사업장" 칸에 적으면 함께 적용돼요.` : ''}</div></div>
@@ -317,6 +347,8 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate, slotTempl
         <h3>보낼 문자</h3>
         <p class="muted" style="margin-bottom:12px">{이름}, {면접일시} 자리에는 사람마다 맞는 정보가 들어가요. 일정을 고르는 방식이면 {일정목록} 자리에 번호 붙은 일정이 들어가요. 줄바꿈은 그대로 반영돼요.</p>
         <textarea name="template" id="template" rows="8" aria-label="문자 내용">${esc(defaultTemplate)}</textarea>
+        ${ai ? `<div style="margin-top:8px"><button type="button" class="small secondary" id="aitpl">AI로 문구 점검하기</button> <small class="muted">빠진 정보와 더 쉬운 문장을 알려 줘요. 바꿀지는 직접 정해요.</small>
+          <div id="aitpl-out" class="notice info" hidden style="margin-top:8px"></div></div>${AI_TEMPLATE_JS}` : ''}
         <p style="margin:14px 0 6px"><b>미리보기</b> <small>홍길동님에게 갈 문자</small></p>
         <div id="preview" class="preview"></div>
       </div></div>
@@ -426,13 +458,13 @@ export function renderCampaignDetail(d) {
     const resch = sent && (c.reply_kind === 'reschedule' || ['attending', 'absent', 'unclear'].includes(c.status))
       ? `<details class="resch"${c.reply_kind === 'reschedule' ? ' open' : ''}><summary>일정 다시 안내</summary>
           <form method="post" action="/campaigns/${camp.id}/reschedule" data-confirm="이 사람에게 새 일정으로 안내 문자를 보낼까요?">${hid}
-            <input name="when" required placeholder="10/24 14:00" aria-label="새 면접일시" autocomplete="off"><button class="small">보내기</button></form></details>` : '';
+            <input name="when" required value="${esc(c.ai_wanted || '')}" placeholder="10/24 14:00" aria-label="새 면접일시" autocomplete="off"><button class="small">보내기</button></form></details>` : '';
     if (c.status === 'unclear') return (slots.length ? slotSel + setBtns(['absent']) : setBtns(['attending', 'absent'])) + resch;
     if (c.reply_kind === 'reschedule') return resch;
     // 그 밖은 접힌 "바꾸기" 하나에 상태 바꾸기·일정 다시 안내를 모은다(행마다 링크가 두 줄로 쌓이지 않게)
     const others = c.status === 'attending' ? ['absent'] : c.status === 'absent' ? ['attending'] : ['attending', 'absent'];
     const again = resch ? `<form method="post" action="/campaigns/${camp.id}/reschedule" class="inline" data-confirm="이 사람에게 새 일정으로 안내 문자를 보낼까요?">${hid}
-            <input name="when" required placeholder="새 일시 10/24 14:00" aria-label="새 면접일시" autocomplete="off"><button class="small">다시 안내</button></form>` : '';
+            <input name="when" required value="${esc(c.ai_wanted || '')}" placeholder="새 일시 10/24 14:00" aria-label="새 면접일시" autocomplete="off"><button class="small">다시 안내</button></form>` : '';
     return `<details class="resch"><summary>바꾸기</summary><div class="stack" style="gap:8px;margin-top:6px">${slots.length && c.status !== 'attending' ? slotSel : ''}${slots.length ? setBtns(['absent'].filter((x) => x !== c.status)) : setBtns(others)}${again}</div></details>`;
   };
   const qs = (status) => `?${siteFilter ? `site=${encodeURIComponent(siteFilter)}&` : ''}${status ? `status=${status}` : ''}`.replace(/[?&]$/, '');
@@ -495,7 +527,10 @@ export function renderCampaignDetail(d) {
         ${cands.length ? cands.map((c) => `<tr>
           <td class="c-site">${esc(c.site)}</td><td class="c-name nowrap">${esc(c.name)}</td><td class="c-phone nowrap">${esc(fmtPhone(c.phone))}${c.interview_at ? `<small class="muted" style="display:block">면접 ${esc(c.interview_at)}</small>` : ''}</td>
           <td class="c-status">${c.status === 'sent' && c.delivery === 'queued' ? phoneWaitBadge(c.sent_at) : badge(c.status, slots.length && c.status === 'attending' && !c.template_override ? '일정 정함' : '')}${c.reply_kind === 'reschedule' ? ' <span class="badge review">일정 변경 요청</span>' : ''}${c.followed_at ? ' <small title="답이 없어 자동으로 한 번 더 보냈어요">(한 번 더 보냄)</small>' : ''}${d.flagged && d.flagged.has(c.phone) ? ' <span class="badge no" title="지원자 관리: 블랙리스트 (참고용, 발송은 막지 않아요)">블랙리스트</span>' : ''}${c.manual ? ' <small>(직접)</small>' : ''}${c.delivery === 'delivered' ? ' <small title="상대 휴대폰에 전달됨">✓ 전달</small>' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
-          <td class="c-reply msg">${esc(c.reply_text)}${c.ai_note ? `<small class="muted" style="display:block" title="NVIDIA AI 가 답장을 해석한 결과예요. 틀리면 상태를 직접 바꿔 주세요">${esc(c.ai_note)}</small>` : ''}</td>
+          <td class="c-reply msg">${esc(c.reply_text)}${c.ai_note ? `<small class="muted" style="display:block" title="NVIDIA AI 가 답장을 해석한 결과예요. 틀리면 상태를 직접 바꿔 주세요">${esc(c.ai_note)}</small>` : ''}${c.ai_draft && !camp.purged_at ? `<details class="aidraft" open><summary>AI 답장 초안</summary>
+            <form method="post" action="/campaigns/${camp.id}/answer" data-confirm="이 답장을 보낼까요?"><input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(d.backQuery)}">
+              <textarea name="text" rows="3" maxlength="1000" aria-label="답장 내용">${esc(c.ai_draft)}</textarea><button class="small">이대로 보내기</button>
+              <small class="muted" style="display:block">보낸 안내 문자 내용으로 만든 초안이에요. 고쳐서 보내도 돼요.</small></form></details>` : ''}</td>
           <td class="c-outcome">${camp.purged_at || (c.status !== 'attending' && !c.outcome) ? esc(OUTCOMES[c.outcome] || '') : `<form method="post" action="/campaigns/${camp.id}/outcome" class="inline">
             <input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(d.backQuery)}">
             <select name="outcome" aria-label="면접 결과" onchange="this.form.submit()"><option value="">결과 기록</option>${Object.entries(OUTCOMES).map(([k, v]) => `<option value="${k}"${c.outcome === k ? ' selected' : ''}>${v}</option>`).join('')}</select></form>`}</td>
@@ -594,10 +629,10 @@ export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice =
     rows = await all(db,
       `SELECT * FROM (
          SELECT 'out' dir, id, phone, text, status result, COALESCE(CASE WHEN status='scheduled' THEN scheduled_at END, at) at, gateway_id, delivery, error, attempts,
-           (SELECT COALESCE(NULLIF(name,''), username) FROM users WHERE id=messages.user_id) author
+           (SELECT COALESCE(NULLIF(name,''), username) FROM users WHERE id=messages.user_id) author, '' ai_note
            FROM messages WHERE gateway_id IN (${ph}) AND status != 'cancelled'${phoneOut}
          UNION ALL
-         SELECT 'in' dir, id, sender phone, message text, result, received_at at, gateway_id, '' delivery, '' error, 0 attempts, NULL author FROM inbound WHERE gateway_id IN (${ph})${phoneIn}
+         SELECT 'in' dir, id, sender phone, message text, result, received_at at, gateway_id, '' delivery, '' error, 0 attempts, NULL author, ai_note FROM inbound WHERE gateway_id IN (${ph})${phoneIn}
        ) WHERE (? = '' OR dir = ?) ORDER BY at DESC LIMIT 100`, ...ids, ...pArgs, ...ids, ...pArgs, dirFilter, dirFilter);
   }
 
@@ -628,6 +663,7 @@ export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice =
           ${r.dir === 'out' && r.result === 'scheduled' ? '' : `<a class="rbtn" href="/send?to=${encodeURIComponent(r.phone)}&gw=${r.gateway_id}" aria-label="${esc(fmtPhone(r.phone))}에게 답장" title="답장">${icon('reply', 18)}</a>`}
         </div>
         <div class="mtext">${esc(r.text)}</div>
+        ${r.ai_note ? `<div class="muted" style="font-size:13px;margin-top:4px" title="NVIDIA AI 가 문자 종류를 정리한 결과예요">${esc(r.ai_note)}</div>` : ''}
         ${who.has(r.phone) && who.get(r.phone).campaignId ? `<div class="muted" style="font-size:13px;margin-top:4px"><a href="/campaigns/${who.get(r.phone).campaignId}">${esc(who.get(r.phone).camp)}</a></div>` : ''}
         ${r.dir === 'out' && r.error && ['failed', 'scheduled', 'sending'].includes(r.result) || (r.dir === 'out' && r.delivery === 'failed') ? `<div class="muted" style="font-size:13px;margin-top:4px;color:var(--red-t)">${esc(r.error || '전달에 실패했어요')}</div>` : ''}
         ${r.author ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(r.author)} 님이 보냄</div>` : ''}

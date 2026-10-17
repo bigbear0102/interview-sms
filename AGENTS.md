@@ -28,7 +28,9 @@ npm start                # Node 서버 (회사 서버 이전용, .env 필요)
 | `deploy/` | `setup.mjs`(비밀값 생성), `gateway/`(docker compose), `tunnel/`, `windows/`(자동 시작) |
 | `src/core.js` | 캠페인 생성, 발송 큐, 답장 매칭, 파기, 통계 (**비즈니스 로직**) |
 | `src/parser.js` | 답장 해석(`parseReply`), 전화번호 정규화 |
-| `src/reply-ai.js` | 규칙으로 애매한 답장을 NVIDIA AI로 다시 해석(`aiReviewReply`, 웹훅 뒤 `waitUntil`) |
+| `src/ai.js` | NVIDIA AI 공용 호출(`askJson`), 날짜 계산(`resolveWhen`, AI 대신 코드가) |
+| `src/reply-ai.js` | 애매한 답장 AI 해석·희망 일시·질문 답장 초안·일반 문자 분류(웹훅 뒤 `waitUntil`) |
+| `src/ai-features.js` | 공고 원가중심점 추천, 명단 칸 맞추기, 면접일시 형식, 문구 점검 |
 | `src/gateway.js` | 게이트웨이 API 호출, 웹훅 등록, HMAC 서명 검증 |
 | `src/auth.js` / `src/crypto.js` | 세션/권한, PBKDF2·AES-GCM·HMAC (WebCrypto) |
 | `src/csv.js` / `src/views.js` / `src/d1.js` | CSV, HTML·KST 시각, D1 헬퍼 |
@@ -54,6 +56,7 @@ npm start                # Node 서버 (회사 서버 이전용, .env 필요)
 11. 변경 후 `docs/DECISIONS.md`의 결정/로드맵을 최신으로 유지한다.
 12. `tools/albamon-extension/` 의 파일(README 포함)을 고치면 **`node scripts/build-extension.mjs` 를 실행해 `src/extension-bundle.js` 까지 함께 커밋**한다(배포는 묶음을 다시 만들지만 레포가 어긋나면 CI 가 실패한다). 확장 동작을 바꾸면 CI "Extension test"(실제 크롬 + 가짜 알바몬)를 확인한다.
 14. **시험은 실제 회사 서버(그룹웨어·메일·알바몬)에 절대 접속하지 않는다.** 그룹웨어/POP3 코드는 시험 중(`NODE_TEST_CONTEXT`, `env.NO_REAL_NETWORK`) 실제 주소면 바로 멈춘다. 새 외부 접속 코드에도 같은 장치를 둔다.
+15. **AI(NVIDIA)** 는 규칙이 못 할 때만 쓰고 실패해도 동작해야 한다. 이름·전화번호·이력 정보는 보내지 않는다(명단은 모양만, 안내 문자는 가림). 날짜 계산은 AI 에 맡기지 않는다(`resolveWhen`). 시험은 `env.AI_FETCH` 가짜만.
 13. D1 은 **쿼리당 값(?) 100개, 요청당 내부 호출 1,000번** 제한이 있다. IN 목록은 `d1.js` 의 `chunks` 로 나누고, 건마다 여러 번 조회하는 일괄 처리는 한 번에 처리할 수를 제한한다. 시험용 DB 어댑터도 100개 제한을 지킨다.
 
 ## 알려진 사항

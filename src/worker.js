@@ -1,6 +1,6 @@
 // Cloudflare Worker 진입점: 화면(SSR) + 웹훅 + Cron 발송 큐
 import { createSession, getUser, canAccessDepartment, ensureInitialAdmin, hashPassword, verifyPassword } from './auth.js';
-import { candidatesFromCsv, toCsv } from './csv.js';
+import { candidatesFromCsv, candidatesFromRows, parseCsv, toCsv } from './csv.js';
 import { registerWebhook, verifySignature, unlockGateway } from './gateway.js';
 import { encryptText, decryptText, randomToken, sha256Hex } from './crypto.js';
 import {
@@ -35,7 +35,9 @@ import { runGroupwareScan, runProbe } from './groupware.js';
 import { OUTCOMES, setOutcome, queueAutoReminders, queueFollowups, queueResultMessages, RESULT_TEMPLATES, parseInterviewAt } from './reminders.js';
 import { phoneApiUrl, isPublicCloud } from './admin.js';
 import { monitorPhones, recordError } from './monitor.js';
-import { aiReviewReply, needsAi } from './reply-ai.js';
+import { aiReviewReply, aiReviewUnmatched, needsAi } from './reply-ai.js';
+import { aiEnabled } from './ai.js';
+import { aiSuggestPostings, aiMapColumns, aiNormalizeWhens, aiCheckTemplate } from './ai-features.js';
 import { applyDeliveryEvent, pollDelivery, notifyNewReply, unreadCount, markAllRead } from './delivery.js';
 import { rateLimit } from './accounts.js';
 
@@ -122,10 +124,14 @@ async function handle(request, env, ctx) {
       });
       note = r.matched ? `matched result=${r.result}` : 'unmatched';
       // 규칙으로 판단하지 못한 답장은 AI 로 한 번 더 본다(응답을 늦추지 않게 뒤에서, 키가 있을 때만)
-      if (r.matched && env.NVIDIA_API_KEY && needsAi(r.result, evt.payload.message)) {
+      if (r.matched && aiEnabled(env) && needsAi(r.result, evt.payload.message)) {
         ctx.waitUntil(aiReviewReply(env, { candidateId: r.candidateId, message: evt.payload.message ?? '', at: r.at })
           .then((a) => audit(db, null, 'reply.ai', `gateway=${gw.id} candidate=${r.candidateId} ${a.applied ? `applied result=${a.result}${a.kind ? ' kind=' + a.kind : ''}` : `kept${a.error ? ' error=' + a.error : ''}`}`))
           .catch((e) => recordError(env, 'reply-ai', e, 'aiReviewReply')));
+      } else if (!r.matched && !r.echo && r.at && aiEnabled(env)) {
+        // 면접 안내와 연결되지 않은 문자: 종류·요약만 붙인다(문자함)
+        ctx.waitUntil(aiReviewUnmatched(env, { gatewayId: gw.id, phone: r.phone, message: evt.payload.message ?? '', at: r.at })
+          .catch((e) => recordError(env, 'reply-ai', e, 'aiReviewUnmatched')));
       }
       ctx.waitUntil(notifyNewReply(env, gw.id).catch((e) => recordError(env, 'notify', e, 'notifyNewReply')));
     } else if (['sms:sent', 'sms:delivered', 'sms:failed'].includes(evt.event) && evt.payload) {
@@ -287,6 +293,14 @@ async function handle(request, env, ctx) {
     return html(pg('면접 안내', await renderCampaignList(db, user, deps)));
   }
 
+  // 안내 문구 AI 점검(면접 안내 만들기 화면의 버튼). 바꾸기는 사람이 누른다
+  if (path === '/campaigns/ai-template' && method === 'POST') {
+    const f = form(await request.text());
+    const r = aiEnabled(env) ? await aiCheckTemplate(env, { template: f.template, kind: f.kind }) : { error: 'off' };
+    await audit(db, user, 'ai.template', r.error ? `error=${r.error}` : 'ok');
+    return new Response(JSON.stringify(r), { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
+  }
+
   // 새 캠페인
   if (path === '/campaigns/new') {
     const deps = await visibleDepartments(db, user);
@@ -295,7 +309,7 @@ async function handle(request, env, ctx) {
       if (!gws.length) return html(pg('면접 안내 만들기', `<div class="notice warn" role="alert">${icon('alert')}<div><b>문자를 보낼 폰이 아직 연결되지 않았어요.</b><br>${user.role === 'super' ? '<a href="/admin">설정에서 폰을 먼저 연결하세요.</a>' : '전체 관리자에게 폰 연결을 부탁하세요.'}</div></div>`));
       const today = fmtTime(Date.now()).slice(5, 10);
       const prefill = await prefillFromApplicants(db, url.searchParams.get('ids'));
-      const body = renderCampaignNew({ gws, deps, today, defaultTemplate: DEFAULT_TEMPLATE, slotTemplate: SLOT_TEMPLATE, prefill });
+      const body = renderCampaignNew({ gws, deps, today, defaultTemplate: DEFAULT_TEMPLATE, slotTemplate: SLOT_TEMPLATE, prefill, ai: aiEnabled(env) });
       return html(pg('면접 안내 만들기', body));
     }
     const f = form(await request.text());
@@ -308,9 +322,21 @@ async function handle(request, env, ctx) {
       f.name = `${f.name || '면접 안내'} ${String(f.one_name || '').trim()}`.trim();
     }
     if (one && !isValidMobile(normalizePhone(f.one_phone || ''))) return html(pg('오류', '<p>휴대폰 번호를 확인해 주세요. (예: 010-1234-5678)</p><p><a href="/campaigns/new">돌아가기</a></p>'), 400);
-    const parsed = one
+    let parsed = one
       ? { errors: [], candidates: [{ site: defaultSite, name: String(f.one_name || '').trim(), phone: f.one_phone || '', interview_at: String(f.one_when || '').trim() }] }
       : candidatesFromCsv(f.csv || '', { requireSite: !defaultSite });
+    const aiNotes = [];
+    // 규칙으로 열을 못 찾았거나 순서로 짐작했으면(inferred) AI 가 제목 줄과 값의 모양(가림)만 보고 맞춘다. AI 가 실패하면 규칙 결과 그대로
+    if (!one && (parsed.errors.length || parsed.inferred) && aiEnabled(env)) {
+      const rows = parseCsv(f.csv || '');
+      const mc = await aiMapColumns(env, rows).catch(() => null);
+      if (mc && (mc.idx.site >= 0 || defaultSite)) {
+        parsed = { errors: [], candidates: candidatesFromRows(rows, mc.idx, mc.hasHeader) };
+        const head = mc.hasHeader ? rows[0] : null;
+        const nameOf = (k, label) => (mc.idx[k] >= 0 ? `${label}=${head ? `"${String(head[mc.idx[k]] || '').trim()}"` : `${mc.idx[k] + 1}번째 칸`}` : '');
+        aiNotes.push(`AI가 명단의 칸을 맞췄어요: ${[nameOf('site', '사업장'), nameOf('name', '이름'), nameOf('phone', '전화번호'), nameOf('interview_at', '면접일시')].filter(Boolean).join(', ')}. 아래 사람별 현황에서 맞게 들어갔는지 확인해 주세요.`);
+      }
+    }
     // 면접일시가 비어 있는 사람에게는 "모두 같은 면접일시" 칸의 값을 넣는다
     const sameWhen = String(f.default_when || '').trim().slice(0, 60);
     if (!one && sameWhen) for (const c of parsed.candidates) if (!c.interview_at) c.interview_at = sameWhen;
@@ -318,6 +344,18 @@ async function handle(request, env, ctx) {
     // 일정 고르기: 후보를 한 줄에 하나씩(최대 9개)
     const slots = f.kind === 'slots' ? String(f.slots || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean).slice(0, 9) : [];
     if (f.kind === 'slots' && !slots.length) return html(pg('오류', '<p>고를 수 있는 면접 일정을 한 줄에 하나씩 적어 주세요. (예: 10/21(화) 14:00)</p><p><a href="/campaigns/new">돌아가기</a></p>'), 400);
+    // 읽을 수 없는 면접일시("다음주 화 2시")는 AI 가 "10/21(화) 14:00" 형식으로 바꾼다(문자에 그대로 들어가므로 바꾼 내용을 보여 준다)
+    if (aiEnabled(env)) {
+      const bad = (slots.length ? slots : parsed.candidates.map((c) => c.interview_at)).filter((v) => v && !Number.isFinite(parseInterviewAt(v)));
+      if (bad.length) {
+        const map = await aiNormalizeWhens(env, bad).catch(() => new Map());
+        if (map.size) {
+          for (let i = 0; i < slots.length; i++) if (map.has(slots[i])) slots[i] = map.get(slots[i]);
+          for (const c of parsed.candidates) if (map.has(c.interview_at)) c.interview_at = map.get(c.interview_at);
+          aiNotes.push(`AI가 면접일시 ${map.size}개를 읽을 수 있는 형식으로 바꿨어요(문자에 이렇게 들어가요): ${[...map].slice(0, 8).map(([a, b]) => `"${a}" → ${b}`).join(', ')}${map.size > 8 ? ' 외' : ''}. 틀렸으면 보내기 전에 고쳐 주세요.`);
+        }
+      }
+    }
     const r = await createCampaign(db, {
       departmentId: gw.department_id, gatewayId: gw.id, name: f.name || '무제', template: f.template,
       retentionDays: Number(f.retention_days) || 90, userId: user.id, candidates: parsed.candidates, defaultSite,
@@ -372,13 +410,13 @@ async function handle(request, env, ctx) {
     return html(pg('올리기 완료', `<header class="phead"><div><h1>명단을 올렸어요</h1></div></header>
       <div class="col">
         <div class="notice ok">${icon('check')}<div><b>${r.accepted}명을 불러왔어요.</b></div></div>
-        ${rej}${whenWarn}${linkNotice}${nextStep}
+        ${aiNotes.map((t) => `<div class="notice info">${icon('info')}<div>${esc(t)}</div></div>`).join('')}${rej}${whenWarn}${linkNotice}${nextStep}
         <a class="btn big" href="/campaigns/${r.campaignId}">${scheduledAt ? '예약 내용 확인하기' : '다음: 보내기 화면으로'}</a>
       </div>`, 'interview'));
   }
 
   // 캠페인 상세 / 액션
-  if ((m = path.match(/^\/campaigns\/(\d+)(?:\/(send|unschedule|cancel|remind|export\.csv|set|outcome|autoremind|remindprev|followup|slot|reschedule|result))?$/))) {
+  if ((m = path.match(/^\/campaigns\/(\d+)(?:\/(send|unschedule|cancel|remind|export\.csv|set|outcome|autoremind|remindprev|followup|slot|reschedule|result|answer))?$/))) {
     const camp = await loadCampaign(db, user, Number(m[1]));
     if (!camp) return html(pg('없음', '<p>캠페인을 찾을 수 없습니다.</p>'), 404);
     const action = m[2];
@@ -425,6 +463,17 @@ async function handle(request, env, ctx) {
         await audit(db, user, 'candidate.reschedule', `campaign=${camp.id} candidate=${Number(f.id)} result=${r}`);
         if (r === 'queued') ctx.waitUntil(processQueue(env).catch(console.error));
         if (r === 'invalid') return redirect(`/campaigns/${camp.id}?err=reschedule`);
+      } else if (action === 'answer') {
+        // AI 가 만든 질문 답장 초안(담당자가 고쳐서) 보내기
+        const cand = await first(db, `SELECT id, phone FROM candidates WHERE id=? AND campaign_id=?`, Number(f.id), camp.id);
+        const text = String(f.text || '').replace(/\r\n?/g, '\n').trim().slice(0, 1000);
+        if (cand && cand.phone && text && !camp.purged_at) {
+          await run(db, `INSERT INTO messages (gateway_id,phone,text,status,user_id,at,scheduled_at) VALUES (?,?,?,'scheduled',?,?,?)`,
+            camp.gateway_id, cand.phone, text, user.id, Date.now(), Date.now());
+          await run(db, `UPDATE candidates SET ai_draft='' WHERE id=?`, cand.id);
+          await audit(db, user, 'candidate.answer', `campaign=${camp.id} candidate=${cand.id}`);
+          ctx.waitUntil(processQueue(env).catch(console.error));
+        }
       } else if (action === 'result') {
         const n = await queueResultMessages(db, camp, f.outcome, f.template, user.id);
         await audit(db, user, 'campaign.result', `campaign=${camp.id} outcome=${String(f.outcome).slice(0, 10)} n=${n}`);
@@ -661,6 +710,12 @@ export async function runGroupwareCron(env, whenMs = Date.now()) {
     if (await rateLimit(env.DB, 'gw:scan', 1, 50000)) await runGroupwareScan(env, { now: whenMs });
   } catch (e) {
     await recordError(env, 'cron', e, 'groupwareScan');
+  }
+  try {
+    // 정리 안 된 공고의 원가중심점 추천(AI, 1분에 2개까지). 키가 없으면 하지 않는다
+    if (aiEnabled(env) && await rateLimit(env.DB, 'ai:postings', 1, 50000)) await aiSuggestPostings(env, { now: whenMs });
+  } catch (e) {
+    await recordError(env, 'cron', e, 'aiSuggestPostings');
   }
 }
 

@@ -235,7 +235,7 @@ export async function handleInbound(db, gatewayId, { sender, message }) {
   if (!cand) {
     await run(db, `INSERT INTO inbound (gateway_id,sender,message,received_at,result) VALUES (?,?,?,?,?)`,
       gatewayId, phone, message, now, 'unmatched');
-    return { matched: false };
+    return { matched: false, phone, at: now };
   }
   // 일정 고르기 안내(이 사람에게 따로 다시 안내한 경우 제외)는 번호로 일정을 정한다
   const slots = cand.template_override ? [] : slotsOf({ slots: cand.camp_slots });
@@ -253,15 +253,15 @@ export async function handleInbound(db, gatewayId, { sender, message }) {
   if (kind && result === 'absent' && !slotText) result = 'unclear';
   if (cand.manual && (result === 'absent' || kind) && cand.status !== 'absent') {
     // 담당자가 직접 정한 건이라도 취소("못 가요")·일정 변경 요청이 오면 놓치지 않게 "확인 필요"로 올린다(리마인드도 멈춤)
-    await run(db, `UPDATE candidates SET status='unclear', manual=0, reply_text=?, ai_note='', replied_at=?, reply_kind=? WHERE id=?`, message, now, kind, cand.id);
+    await run(db, `UPDATE candidates SET status='unclear', manual=0, reply_text=?, ai_note='', ai_wanted='', ai_draft='', replied_at=?, reply_kind=? WHERE id=?`, message, now, kind, cand.id);
     result = 'unclear';
   } else if (cand.manual) {
     // 관리자가 이미 확정한 건은 원문만 기록
-    await run(db, `UPDATE candidates SET reply_text=?, ai_note='', replied_at=?, reply_kind=? WHERE id=?`, message, now, kind, cand.id);
+    await run(db, `UPDATE candidates SET reply_text=?, ai_note='', ai_wanted='', ai_draft='', replied_at=?, reply_kind=? WHERE id=?`, message, now, kind, cand.id);
   } else if (slotText) {
     const changed = slotText !== cand.interview_at;
     await run(db,
-      `UPDATE candidates SET status='attending', interview_at=?, reply_text=?, ai_note='', replied_at=?, reply_kind=?${changed ? ', reminded_at=NULL, reminded_prev_at=NULL' : ''} WHERE id=?`,
+      `UPDATE candidates SET status='attending', interview_at=?, reply_text=?, ai_note='', ai_wanted='', ai_draft='', replied_at=?, reply_kind=?${changed ? ', reminded_at=NULL, reminded_prev_at=NULL' : ''} WHERE id=?`,
       slotText, message, now, kind, cand.id);
     // 고른 일정을 바로 확정 안내한다(문자 큐). 같은 일정을 다시 보내 온 경우는 보내지 않는다.
     if (changed) {
@@ -269,7 +269,7 @@ export async function handleInbound(db, gatewayId, { sender, message }) {
         cand.camp_gateway, cand.phone, renderTemplate(SLOT_CONFIRM_TEMPLATE, { ...cand, interview_at: slotText }), now, now);
     }
   } else {
-    await run(db, `UPDATE candidates SET status=?, reply_text=?, ai_note='', replied_at=?, reply_kind=? WHERE id=?`, result, message, now, kind, cand.id);
+    await run(db, `UPDATE candidates SET status=?, reply_text=?, ai_note='', ai_wanted='', ai_draft='', replied_at=?, reply_kind=? WHERE id=?`, result, message, now, kind, cand.id);
   }
   await run(db, `INSERT INTO inbound (gateway_id,sender,message,received_at,candidate_id,result) VALUES (?,?,?,?,?,?)`,
     gatewayId, phone, message, now, cand.id, result);
@@ -313,7 +313,7 @@ export async function purgeExpired(db, now = Date.now()) {
   for (const { id } of due) {
     await db.batch([
       stmt(db, `DELETE FROM inbound WHERE candidate_id IN (SELECT id FROM candidates WHERE campaign_id=?)`, id),
-      stmt(db, `UPDATE candidates SET name='', phone='', message_text='', reply_text='', ai_note='', interview_at='', template_override='' WHERE campaign_id=?`, id),
+      stmt(db, `UPDATE candidates SET name='', phone='', message_text='', reply_text='', ai_note='', ai_wanted='', ai_draft='', interview_at='', template_override='' WHERE campaign_id=?`, id),
       stmt(db, `UPDATE campaigns SET purged_at=?, template='' WHERE id=?`, now, id)
     ]);
   }

@@ -74,6 +74,12 @@ function inferColumns(rows) {
   return { site, name, phone, interview_at: when };
 }
 
+// 열 위치를 이미 알 때(AI 가 맞춘 경우) 명단을 만든다. hasHeader=true 면 첫 줄은 건너뛴다
+export function candidatesFromRows(rows, idx, hasHeader = true) {
+  const get = (r, k) => (idx[k] >= 0 ? (r[idx[k]] ?? '').trim() : '');
+  return (hasHeader ? rows.slice(1) : rows).map((r) => ({ site: get(r, 'site'), name: get(r, 'name'), phone: get(r, 'phone'), interview_at: get(r, 'interview_at') }));
+}
+
 // 반환: { candidates: [{site,name,phone,interview_at}], errors: [string], inferred: boolean }
 // requireSite=false 이면 사업장 열이 없어도 된다(화면에서 사업장을 직접 입력한 경우)
 export function candidatesFromCsv(text, { requireSite = true } = {}) {

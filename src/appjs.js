@@ -183,6 +183,8 @@ document.addEventListener('click', function (e) {
   var card = b.closest('section') || document;
   var inp = card.querySelector('input[name=cost_center]');
   if (inp) { inp.value = b.getAttribute('data-fill'); inp.focus(); }
+  var job = b.getAttribute('data-fill-job'), ji = card.querySelector('input[name=job]');
+  if (job && ji && !ji.value) ji.value = job;   // AI 추천 직무는 비어 있을 때만
 });
 
 // 연락처 가져오기를 요청한 직후(주소에 fr=건수 가 붙어 돌아온 화면)에는 확장 프로그램을 바로 깨운다(30초 알람을 기다리지 않도록)

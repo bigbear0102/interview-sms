@@ -6,7 +6,8 @@ import { openSqliteD1 } from '../src/node/d1-sqlite.js';
 import { handleRequest } from '../src/worker.js';
 import { encryptText } from '../src/crypto.js';
 import { createCampaign, handleInbound, purgeExpired } from '../src/core.js';
-import { normalizeAi, classifyReply, needsAi, aiReviewReply, AI_URL } from '../src/reply-ai.js';
+import { normalizeAi, classifyReply, needsAi, aiReviewReply } from '../src/reply-ai.js';
+import { AI_URL } from '../src/ai.js';
 
 // 가짜 AI: 답장 원문 → 돌려줄 판단. 보낸 요청을 기록한다.
 function fakeAi(answers) {
@@ -48,7 +49,7 @@ const SLOTS = ['10/22(수) 10:00', '10/23(목) 14:00'];
 
 test('AI 응답 검사: JSON 만 받고 번호·확신도 범위를 지킴', () => {
   assert.deepEqual(normalizeAi('생각… {"intent":"attending","slot":2,"confidence":0.95,"note":"목요일 선택"}', 2),
-    { intent: 'attending', slot: 2, confidence: 0.95, note: '목요일 선택' });
+    { intent: 'attending', slot: 2, wanted: '', confidence: 0.95, note: '목요일 선택' });
   assert.equal(normalizeAi('{"intent":"attending","slot":3,"confidence":1}', 2).slot, null);   // 없는 번호
   assert.equal(normalizeAi('{"intent":"party","confidence":1}', 2), null);
   assert.equal(normalizeAi('그냥 글', 2), null);

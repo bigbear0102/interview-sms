@@ -5,6 +5,7 @@ import { esc, icon } from './views.js';
 import { pageHeader, emptyState } from './ui.js';
 import { peopleTabs, bracketName, suggestCostCenters } from './workspace.js';
 export { bracketName, suggestCostCenters };
+import { aiPostingSuggestion } from './ai-features.js';
 import { inboxScope, pendingInboxCount, requestFetchByPosting } from './mail-intake.js';
 
 const clip = (s, n) => String(s || '').trim().slice(0, n);
@@ -60,6 +61,7 @@ export async function renderPostings(db, { tab = 'todo', viewer = null, flash = 
   const cards = [];
   for (const g of shown) {
     const sug = g.blank > 0 ? await suggestCostCenters(db, g.title) : [];
+    const ai = g.blank > 0 ? await aiPostingSuggestion(db, g.recruit_no) : null;
     const people = g.reg + g.pend;
     const lab = `g-${esc(g.recruit_no)}`;
     cards.push(`<section class="card posting" id="${lab}" style="margin-bottom:12px;overflow-wrap:anywhere;min-width:0">
@@ -77,6 +79,7 @@ export async function renderPostings(db, { tab = 'todo', viewer = null, flash = 
           <input name="job" list="dl-pjob" value="${esc(g.job || '')}" placeholder="예: 주차관리" maxlength="100" autocomplete="off"></label>
         <button class="btn" style="width:100%">${people}명에게 적용</button>
       </form>
+      ${ai ? `<div style="margin-top:8px;font-size:13px" class="muted">AI 추천: <button type="button" class="small secondary" data-fill="${esc(ai.cost_center)}" data-fill-job="${esc(ai.job || '')}" style="margin:0 4px 4px 0">${esc(ai.cost_center)}${ai.job ? ` · ${esc(ai.job)}` : ''}</button>${ai.note ? `<small>${esc(ai.note)}</small>` : ''} <small>— 눌러서 채운 뒤 "적용"을 눌러야 정해져요</small></div>` : ''}
       ${sug.length ? `<div style="margin-top:8px;font-size:13px" class="muted">제안: ${sug.map((s) => `<button type="button" class="small secondary" data-fill="${esc(s)}" style="margin:0 4px 4px 0">${esc(s)}</button>`).join('')}</div>` : ''}
     </section>`);
   }
