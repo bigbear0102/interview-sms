@@ -70,7 +70,13 @@ const CSS = `
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);
   font:16px/1.6 "Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,system-ui,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;
-  letter-spacing:-.01em;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  letter-spacing:-.01em;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  /* 한국어는 낱말 단위로 줄을 바꾼다(음절 중간에서 끊지 않음). 아주 긴 주소·번호만 어디서든 끊는다 */
+  word-break:keep-all;overflow-wrap:break-word;line-break:strict}
+input,textarea,select{word-break:normal}
+h1,h2,h3,h4{text-wrap:balance}
+p,li,dd,.notice>div,.muted,small{text-wrap:pretty}
+.chipbtn,.tabs a,.lk,td button,.conn{white-space:nowrap}
 h1,h2,h3,h4{letter-spacing:-.02em;line-height:1.25;margin:0}
 h1{font-size:28px;font-weight:700}h2{font-size:22px;font-weight:700}h3{font-size:18px;font-weight:600}
 p{margin:0}
@@ -111,7 +117,8 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
 .phead .back{display:inline-block;font-size:14px;margin-bottom:6px}
 .pactions{display:flex;gap:8px;flex-wrap:wrap}
 .section{margin-top:32px}
-.shead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px}
+.shead{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;margin-bottom:12px}
+.shead>.muted,.shead>span{font-size:14px}
 .stack{display:flex;flex-direction:column;gap:16px}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
 .grow{flex:1}
@@ -290,7 +297,9 @@ a.conn:hover{text-decoration:none;filter:brightness(.96)}
 .sline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;margin:0 0 12px;font-size:14px;color:var(--muted)}
 .sline b{color:var(--ink)}
 .sline .conn{padding:5px 12px;font-size:13px}
-.sline .lk{font-size:14px;padding:0;min-height:32px;color:var(--blue)}
+.sline .lk,.sline button.lk{font-size:14px;padding:0;min-height:32px;color:var(--blue);background:none;border:0;font-weight:500}
+.sline .lk b{color:inherit}
+.appcard .foot{margin-left:-8px}
 .fchips{margin-bottom:12px}
 .appcard .rline{font-size:14px;color:var(--ink);margin-top:4px;overflow-wrap:anywhere}
 .appcard .rsum{margin-top:6px;font-size:14px}
@@ -415,6 +424,7 @@ code{background:var(--chip);padding:2px 8px;border-radius:6px;word-break:break-a
 .mrow:first-child{border-top:0}
 .mtop{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .mtop .when{margin-left:auto;color:var(--muted);font-size:13px;white-space:nowrap}
+@media (max-width:720px){.mtop{padding-right:72px}.mtop .when{position:absolute;right:16px;top:17px}}
 .mtext{white-space:pre-wrap;word-break:break-word;margin-top:6px}
 .mact{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .pcard{padding:16px 18px}.pcard+.pcard{margin-top:12px}
@@ -471,8 +481,9 @@ details.pop summary{list-style:none}details.pop summary::-webkit-details-marker{
   table.cards.cand td::before{content:none}
   table.cards.cand tr{display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:center}
   table.cards.cand td{display:block;padding:0}
-  table.cards.cand td.c-name{grid-column:1;font-weight:600;font-size:16px}
-  table.cards.cand td.c-status{grid-column:2;justify-self:end}
+  table.cards.cand td.c-site{grid-row:1}
+  table.cards.cand td.c-name{grid-column:1;grid-row:2;font-weight:600;font-size:16px}
+  table.cards.cand td.c-status{grid-column:2;grid-row:2;justify-self:end;text-align:right}
   table.cards.cand td.c-site,table.cards.cand td.c-phone,table.cards.cand td.c-when{grid-column:1/-1;color:var(--muted);font-size:14px}
   table.cards.cand td.c-when:empty{display:none}
   table.cards.cand td.c-outcome{grid-column:1/-1}

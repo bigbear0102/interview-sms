@@ -85,7 +85,7 @@ export function renderToday(list, { day = Date.now(), now = Date.now() } = {}) {
 .trow .tm{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
 .trow .who b{font-size:17px}
 .trow .sub{display:block;color:var(--muted);font-size:14px}
-.trow .tcamp{color:var(--muted)}
+.trow .tcamp{color:var(--muted);white-space:nowrap}
 .tstars{grid-column:2/-1;display:flex;gap:0;margin-top:-4px}
 .tstars .starbtn{background:none;border:0;padding:0 3px;min-height:32px;min-width:30px;font-size:20px;line-height:1;color:var(--line);cursor:pointer}
 .tstars .starbtn.on{color:#f5a623}

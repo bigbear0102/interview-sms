@@ -567,7 +567,7 @@ const kstDay = (s, plusDays = 0) => {
 
 const SHEET_CSS = `<style>
 .searchbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
-.searchbar>input[type=search]{flex:1 1 260px;min-width:0}
+.searchbar>input[type=search]{flex:1 1 160px;min-width:0}
 .filterbox{flex:none}
 .filterbox>summary{list-style:none}
 .filterbox>summary::-webkit-details-marker{display:none}
@@ -784,7 +784,7 @@ export async function renderApplicantSheet(db, opts = {}) {
     ${rows.map((r) => `<tr data-href="/applicants/${r.id}">
       <td class="sel"><input type="checkbox" class="rowchk" name="ids" value="${r.id}" form="bulkform" aria-label="${esc(r.name)} 선택"></td>
       <td class="who"><a class="pname" href="/applicants/${r.id}">${esc(r.name)}${r.bl_id ? ` <span class="badge no" title="${esc(reasonLabel(r.reason_code, r.reason_text))}">블랙리스트</span>` : ''}</a><span class="sub">${esc(fmtPhone(r.phone))}${r.n_stars ? ` · ${starBadge(r.avg_stars, r.n_stars)}` : ''}</span></td>
-      <td class="what">${r.applied_to ? `<span class="cc">${esc(r.applied_to)}</span>` : (r.unclassified ? '<span class="badge wait">정리 필요</span>' : '<span class="muted">-</span>')}${r.job ? `<span class="sub">${esc(r.job)}</span>` : ''}${r.apps > 1 ? `<span class="sub">지원 ${r.apps}건</span>` : ''}${resumeSub(r.resume_parsed)}</td>
+      <td class="what">${r.applied_to ? `<span class="cc">${esc(r.applied_to)}</span>` : (r.unclassified ? '<span class="badge wait">정리 필요</span>' : '')}${r.job ? `<span class="sub">${esc(r.job)}</span>` : ''}${r.apps > 1 ? `<span class="sub">지원 ${r.apps}건</span>` : ''}${resumeSub(r.resume_parsed)}</td>
       <td class="stage">${stageCell(stages.get(r.phone))}</td>
       <td class="when">${esc(relDate(r.created_at))}</td>
       <td class="go" aria-hidden="true">›</td></tr>`).join('')}
