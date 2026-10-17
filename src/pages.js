@@ -460,7 +460,7 @@ export function renderCampaignDetail(d) {
           <button name="status" value="attending">참석</button> <button name="status" value="absent">불참</button></form>`;
     // 다시 안내는 답장을 보낸 사람(변경 요청·불참·확인 필요·참석)에게만. 답 없는 사람은 "답 없는 사람에게 다시 보내기"를 쓴다.
     const resch = (c.reply_kind === 'reschedule' || ['attending', 'absent', 'unclear'].includes(c.status)) && camp.status !== 'draft' && camp.status !== 'scheduled'
-      ? `<details class="resch"${c.reply_kind === 'reschedule' ? ' open' : ''}><summary>새 일정으로 다시 안내</summary>
+      ? `<details class="resch"${c.reply_kind === 'reschedule' ? ' open' : ''}><summary>일정 다시 안내</summary>
           <form method="post" action="/campaigns/${camp.id}/reschedule" data-confirm="이 사람에게 새 일정으로 안내 문자를 보낼까요?">${hid}
             <input name="when" required placeholder="10/24 14:00" aria-label="새 면접일시" autocomplete="off"><button class="small">보내기</button></form></details>` : '';
     return set + resch;
