@@ -47,6 +47,9 @@ const mailForwardedRfc822 = (inner) => Buffer.from([
   inner.toString('binary'), '--OUT--', ''
 ].join('\r\n'), 'binary');
 
+// 새 메일은 들어오자마자 연락처+이력서 가져오기가 요청된다. 수동 요청 흐름 시험은 요청 전 상태(예전 건)로 돌려 놓고 한다.
+const asOld = (db) => db.prepare(`UPDATE applicant_inbox SET fetch_state='', fetch_req_at=NULL, resume_only=0`).run();
+
 async function setup() {
   const db = openSqliteD1(':memory:', fileURLToPath(new URL('../migrations', import.meta.url)));
   const env = { DB: db, ENCRYPTION_KEY: 'k', PUBLIC_BASE_URL: 'https://interview.example.test', GATEWAY_URL: 'https://x/api/3rdparty/v1', GATEWAY_PRIVATE_TOKEN: 't' };
@@ -130,6 +133,7 @@ test('수신함 화면: 대기 목록, 등록(연락처 필수)·무시·되돌�
   const { db, call, post } = await setup();
   await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('홍길동(여, 32세)', '900000001'))), Date.now());
   await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('박민수(남, 30세)', '900000002'))), Date.now());
+  await asOld(db);   // 요청하지 않은 예전 건으로(새 메일은 들어오자마자 가져오기를 요청한다)
   const page = await (await call('/applicants/inbox')).text();
   const text = visible(page);
   assert.ok(text.includes('홍길동'));
@@ -188,6 +192,7 @@ test('에이전트 API: 토큰 인증, 요청 목록, 결과 저장, 자동 등�
   const { db, env, call, post } = await setup();
   await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('홍길동(여, 32세)', '900000001'))), Date.now());
   await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('박민수(남, 30세)', '900000002'))), Date.now());
+  await asOld(db);   // 요청하지 않은 예전 건으로(새 메일은 들어오자마자 가져오기를 요청한다)
   const id1 = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='홍길동'`).first()).id;
   const api = (path, init = {}, token) => handleRequest(new Request('https://interview.example.test' + path, {
     ...init, headers: { ...(token ? { authorization: 'Bearer ' + token } : {}), ...(init.headers || {}) }
@@ -249,6 +254,7 @@ test('대기 전체 요청, 연결 키는 관리자 화면에서 한 번만 보�
   const { db, call, post } = await setup();
   await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('홍길동(여, 32세)', '900000001'))), Date.now());
   await ingestRaw(db, new Uint8Array(mailQP(bodyHtml('박민수(남, 30세)', '900000002'))), Date.now());
+  await asOld(db);   // 요청하지 않은 예전 건으로(새 메일은 들어오자마자 가져오기를 요청한다)
   const r = await post('/applicants/inbox/fetch-all', {});
   assert.match(r.headers.get('location'), /ok=fetchall&n=2/);
   assert.equal(await requestFetch(db, null), 0);               // 이미 요청된 건은 다시 세지 않는다
@@ -594,14 +600,15 @@ test('원가중심점을 정하면 연락처 가져오기가 자동으로 요청
   await mail('홍길동', '900000101'); await mail('박민수', '900000102'); await mail('최수아', '900000103');
   // resume: 이력서만 읽기 요청(새 메일이면 자동, 연락처 보기는 누르지 않음)
   const state = async () => Object.fromEntries((await db.prepare(`SELECT name, fetch_state s, resume_only ro FROM applicant_inbox`).all()).results.map((r) => [r.name, r.s === 'requested' && r.ro ? 'resume' : r.s]));
-  assert.deepEqual(await state(), { 홍길동: 'resume', 박민수: 'resume', 최수아: 'resume' });   // 처음에는 이력서만 읽기(연락처는 요청하지 않는다)
+  assert.deepEqual(await state(), { 홍길동: 'requested', 박민수: 'requested', 최수아: 'requested' });   // 새 메일은 들어오자마자 연락처+이력서 가져오기 요청
+  await asOld(db);   // 아래는 요청 전(예전) 건에서 원가중심점으로 요청되는 흐름
   const id1 = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='홍길동'`).first()).id;
   // 최수아는 이미 연락처가 있다 → 다시 요청하지 않는다
   await db.prepare(`UPDATE applicant_inbox SET phone='01011112222', fetch_state='done' WHERE name='최수아'`).run();
   // 1) 새 지원: 이 사람만 분류(같은 공고 적용 끔) → 이 사람만 요청
   let r = await post(`/applicants/inbox/${id1}/cost`, { cost_center: 'A센터' });
   assert.match(r.headers.get('location'), /ok=cost&fr=1$/);
-  assert.deepEqual(await state(), { 홍길동: 'requested', 박민수: 'resume', 최수아: 'done' });
+  assert.deepEqual(await state(), { 홍길동: 'requested', 박민수: '', 최수아: 'done' });
   assert.ok(visible(await (await call('/applicants/inbox?ok=cost&fr=1')).text()).includes('연락처 1건의 가져오기도 요청했어요'));
   // 분류를 비우면 요청하지 않는다
   await db.prepare(`UPDATE applicant_inbox SET fetch_state='' WHERE name='홍길동'`).run();
@@ -620,8 +627,8 @@ test('원가중심점을 정하면 연락처 가져오기가 자동으로 요청
   await mail('정다은', '900000104');
   assert.equal((await state()).정다은, 'requested');
   assert.equal((await db.prepare(`SELECT cost_center c FROM applicant_inbox WHERE name='정다은'`).first()).c, 'A센터');
-  // 규칙이 없는 공고의 새 메일은 연락처는 요청하지 않고 이력서만 읽는다
+  // 규칙이 없는 공고의 새 메일도 바로 요청한다
   await db.prepare(`DELETE FROM inbox_cost_rules`).run();
   await mail('강하늘', '900000105');
-  assert.equal((await state()).강하늘, 'resume');
+  assert.equal((await state()).강하늘, 'requested');
 });

@@ -76,7 +76,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
     restored2: '다시 대기로 돌렸어요. 이미 등록된 지원자는 지원자 목록에 그대로 있고, 다시 등록해도 중복으로 생기지 않아요.',
     bulkreg: `${Number(n) || 0}명을 지원자로 등록했어요.${Number(skipped) ? ` 연락처가 없는 ${Number(skipped)}건은 건너뛰었어요.` : ''}${Number(later) ? ` 한 번에 ${BULK_REGISTER_MAX}명까지 등록해요. 남은 ${Number(later)}명은 한 번 더 눌러 주세요.` : ''}`,
     bulkign: `${Number(n) || 0}건을 무시로 처리했어요.`,
-    resumeall: `${Number(n) || 0}명의 이력서를 읽도록 요청했어요. 확장 프로그램(v1.9.1 이상)이 켜져 있으면 차례로 채워져요. 연락처 보기는 누르지 않아요.`
+    resumeall: `${Number(n) || 0}명의 이력서·연락처 가져오기를 요청했어요. 회사 PC 크롬(확장 v1.9.1, 알바몬 로그인)이 켜져 있으면 차례로 채워져요.`
   };
   const ERR = { invalid: '이름과 휴대폰 번호를 확인해 주세요. (예: 010-1234-5678)', gone: '이미 처리되었거나 찾을 수 없는 건이에요.', nopick: '먼저 지원자를 골라 주세요.', cclist: '원가중심점 목록에 없는 이름이에요. 입력하면 나오는 목록에서 골라 주세요.' };
   const notices = [];
@@ -85,7 +85,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   // 연락처는 가져왔지만 이력서 내용은 없는 사람(확장 v1.9 전에 가져온 사람): 이력서만 다시 읽기
   const noResume = (await first(db, `SELECT COUNT(*) n FROM applicant_inbox i WHERE i.resume_url != '' AND i.fetch_state != 'requested'
       AND NOT EXISTS (SELECT 1 FROM applicant_resumes r WHERE r.inbox_id=i.id) AND ${inboxScope(viewer, 'i').sql}`, ...inboxScope(viewer, 'i').args).catch(() => ({ n: 0 }))).n;
-  if (noResume) notices.push(`<div class="notice info">${icon('info')}<div><b>이력서 내용이 저장되지 않은 지원자가 ${noResume}명</b> 있어요(예전에 받은 지원). 이력서는 열기만 하면 연락처 외 정보가 보여서, 열람권 없이 가져올 수 있어요.
+  if (noResume) notices.push(`<div class="notice info">${icon('info')}<div><b>이력서 내용이 저장되지 않은 지원자가 ${noResume}명</b> 있어요(예전에 받은 지원). 누르면 연락처가 없는 사람은 연락처와 이력서를, 있는 사람은 이력서를 가져와요.
     <form method="post" action="/applicants/inbox/resume-all" class="inline" data-busy="이력서 다시 읽기 요청 중" style="margin-left:6px"><button class="small secondary">이력서 내용 가져오기</button></form></div></div>`);
 
   const needPhone = all_.filter((r) => !r.phone).length;
@@ -540,7 +540,8 @@ export async function handleInbox(c, deps) {
 
   if (path === '/applicants/inbox/resume-all' && method === 'POST') {
     const sc = inboxScope(viewer, 'i');
-    const r = await run(db, `UPDATE applicant_inbox SET resume_only=1, fetch_state='requested', fetch_at=NULL, fetch_note='', fetch_req_at=?
+    // 연락처가 없으면 연락처+이력서, 연락처가 이미 있으면(예전에 가져온 사람·등록된 사람) 이력서만
+    const r = await run(db, `UPDATE applicant_inbox SET resume_only=CASE WHEN phone != '' THEN 1 ELSE 0 END, fetch_state='requested', fetch_at=NULL, fetch_note='', fetch_req_at=?
         WHERE id IN (SELECT i.id FROM applicant_inbox i WHERE i.resume_url != '' AND i.fetch_state != 'requested'
           AND NOT EXISTS (SELECT 1 FROM applicant_resumes x WHERE x.inbox_id=i.id) AND ${sc.sql})`, Date.now(), ...sc.args);
     const n = r.meta.changes || 0;

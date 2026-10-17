@@ -221,10 +221,10 @@ export async function saveParsed(db, p, now = Date.now(), ownerId = null, mailAc
     `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at, cost_center, owner_user_id, job, mail_account, fetch_state, fetch_req_at, mail_fields, resume_only)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     p.source, p.applyNo, clip(p.recruitNo, 30), clip(p.company, 100), clip(p.jobTitle, 200), clip(p.name, 50), clip(p.gender, 4),
-    // 이력서 링크가 있으면 항상 읽기를 요청한다: 원가중심점이 정해진 공고면 연락처까지, 아니면 이력서만(연락처 외 정보는 열기만 하면 보인다)
+    // 이력서 링크가 있으면 들어오자마자 연락처+이력서 전체 가져오기를 요청한다(내가 올린 공고는 연락처 보기를 눌러도 이용권이 들지 않음, 2026-10-18 사용자 확인)
     p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), safeResumeUrl(p.resumeUrl).slice(0, 500), now, rule ? rule.cost_center : '', ownerId, rule ? rule.job : '', clip(mailAccount, 60), safeResumeUrl(p.resumeUrl) ? 'requested' : '', safeResumeUrl(p.resumeUrl) ? now : null,
     p.fields && typeof p.fields === 'object' ? JSON.stringify(Object.fromEntries(Object.entries(p.fields).slice(0, 60).map(([k, v]) => [clip(k, 40), clip(v, 500)]))) : '',
-    rule && rule.cost_center ? 0 : 1);
+    0);
   return { ok: true, id: Number(r.meta.last_row_id) };
 }
 
@@ -370,7 +370,7 @@ export async function agentQueue(db, limit = 5, userId = null, { all: everyone =
   return all(db,
     `SELECT i.id, i.apply_no, i.name, i.resume_url, i.recruit_no, i.resume_only, r.account_id
        FROM applicant_inbox i LEFT JOIN recruit_accounts r ON r.recruit_no=i.recruit_no AND i.recruit_no != ''
-      WHERE i.id IN (${ph}) AND i.fetch_at=? AND i.fetch_state='requested' ORDER BY i.id`, ...cand.map((r) => r.id), claim);
+      WHERE i.id IN (${ph}) AND i.fetch_at=? AND i.fetch_state='requested' ORDER BY i.resume_only, i.id`, ...cand.map((r) => r.id), claim);
 }
 
 // 에이전트 결과 저장. 반환: { ok, phone? }

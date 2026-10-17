@@ -88,7 +88,7 @@ test('예전에 연락처만 가져온 사람: 이력서만 다시 읽기(등록
   const res = await boss.post('/applicants/inbox/resume-all', {});
   assert.equal(res.headers.get('location'), '/applicants/inbox?ok=resumeall&n=2');
   const q = await agentQueue(db, 10, null);
-  assert.deepEqual(q.map((x) => [x.id, x.resume_only]), [[a, 1], [b, 1], [c, 1]]);   // 등록된 사람도 다시 읽음(c 는 새 메일이라 이미 자동 요청됨)
+  assert.deepEqual(q.map((x) => [x.id, x.resume_only]), [[c, 0], [a, 1], [b, 1]]);   // 연락처 가져오기(c, 새 메일 자동 요청)가 먼저, 등록된 사람도 이력서만 다시 읽음
   // 결과: 연락처는 비어 있을 때만, 등록 상태는 그대로, 자동 등록 안 함
   await api(`/api/agent/inbox/${b}/result`, { ok: true, phone: '', resume: RESUME });
   const rb = await db.prepare(`SELECT status, phone, fetch_state, resume_only FROM applicant_inbox WHERE id=?`).bind(b).first();
@@ -122,26 +122,26 @@ test('지원 메일의 모든 항목을 함께 해석', () => {
   assert.deepEqual(p.fields, { 이름: '홍길동(여, 32세)', 지원일시: '2026.10.18', 희망근무지: '강남' });
 });
 
-test('새 지원 메일: 이력서는 자동으로 읽기 요청, 예전 확장(버전 없음)에는 주지 않음, 연락처 요청하면 연락처 가져오기로 바뀜', async () => {
+test('새 지원 메일: 들어오자마자 연락처+이력서 가져오기 요청, 이력서만 읽기는 v1.9.1 이상 확장에만', async () => {
   const { db, boss, env, add } = await setup();
   const id = await add('4001', '자동읽기');
   const row = await db.prepare(`SELECT fetch_state, resume_only FROM applicant_inbox WHERE id=?`).bind(id).first();
-  assert.deepEqual({ ...row }, { fetch_state: 'requested', resume_only: 1 });
+  assert.deepEqual({ ...row }, { fetch_state: 'requested', resume_only: 0 });
   const token = await (await import('../src/mail-intake.js')).createAgentToken(db, boss.id);
   const list = (ver) => handleRequest(new Request('https://x.test/api/agent/inbox', { headers: { authorization: 'Bearer ' + token, ...(ver ? { 'x-ext-version': ver } : {}) } }), env, { waitUntil() {} }).then((r) => r.json());
-  assert.deepEqual((await list('')).items, []);            // v1.8(버전 정보 없음): 연락처 보기를 눌러 버리므로 주지 않음
+  assert.deepEqual((await list('')).items.map((x) => x.id), [id]);           // 연락처 가져오기는 예전 확장도 처리
+  // 연락처가 이미 있는 사람의 이력서만 읽기: 예전 확장(버전 없음·1.9.0)에는 주지 않음
+  await db.prepare(`UPDATE applicant_inbox SET phone='01044440001', fetch_state='requested', resume_only=1, fetch_at=NULL WHERE id=?`).bind(id).run();
+  assert.deepEqual((await list('')).items, []);
   assert.deepEqual((await list('1.9.0')).items, []);
   assert.deepEqual((await list('1.9.1')).items.map((x) => [x.id, x.resume_only]), [[id, 1]]);
-  await db.prepare(`UPDATE applicant_inbox SET fetch_at=NULL`).run();   // 위에서 3분 동안 가져간 표시를 지움
+  await db.prepare(`UPDATE applicant_inbox SET fetch_at=NULL`).run();
   assert.deepEqual((await list('2.0.0')).items.map((x) => x.id), [id]);
-  // 카드: 이력서 읽는 중이어도 연락처 가져오기 버튼은 그대로
+  // 연락처 없이 이력서만 읽는 중인 건(예전 버전 데이터)에 연락처 가져오기를 누르면 연락처 요청으로 바뀜
+  await db.prepare(`UPDATE applicant_inbox SET phone='', resume_only=1, fetch_at=NULL WHERE id=?`).bind(id).run();
   const page = await (await boss.call('/applicants/inbox')).text();
   assert.match(page, /이력서 읽는 중/);
-  assert.match(page, new RegExp(`/applicants/inbox/${id}/fetch`));
-  // 연락처 가져오기를 누르면 연락처까지 가져오는 요청으로 바뀜(예전 확장도 처리 가능)
   await boss.post(`/applicants/inbox/${id}/fetch`, {});
   const r2 = await db.prepare(`SELECT fetch_state, resume_only FROM applicant_inbox WHERE id=?`).bind(id).first();
   assert.deepEqual({ ...r2 }, { fetch_state: 'requested', resume_only: 0 });
-  await db.prepare(`UPDATE applicant_inbox SET fetch_at=NULL`).run();
-  assert.deepEqual((await list('')).items.map((x) => x.id), [id]);
 });
