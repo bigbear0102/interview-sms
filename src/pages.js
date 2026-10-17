@@ -528,17 +528,16 @@ export function renderCampaignDetail(d) {
       <div class="shead"><h2>사람별 현황${siteFilter ? ` · ${esc(siteFilter)}` : ''}</h2>${siteFilter ? `<a href="${esc(qs(statusFilter).replace(/site=[^&]*&?/, '').replace(/\?$/, '') || `/campaigns/${camp.id}`)}">사업장 필터 해제</a>` : ''}</div>
       <div class="tabs" role="tablist">${FILTERS.map(([key, label, n]) =>
         `<a href="${esc(qs(key))}"${(statusFilter || '') === key ? ' aria-current="page"' : ''}>${label} <span class="n">${n}</span></a>`).join('')}</div>
-      ${tableWrap(`<table class="cards cand"><thead><tr><th>사업장</th><th>이름</th><th>전화번호</th><th>면접일시</th><th>상태</th><th>받은 답장</th><th>면접 결과</th><th></th></tr></thead><tbody>
+      ${tableWrap(`<table class="cards cand"><thead><tr><th>사업장</th><th>이름</th><th>전화번호 · 면접일시</th><th>상태</th><th>받은 답장</th><th>면접 결과</th><th></th></tr></thead><tbody>
         ${cands.length ? cands.map((c) => `<tr>
-          <td class="c-site">${esc(c.site)}</td><td class="c-name nowrap">${esc(c.name)}</td><td class="c-phone nowrap">${esc(fmtPhone(c.phone))}</td>
-          <td class="c-when nowrap">${esc(c.interview_at)}</td>
+          <td class="c-site">${esc(c.site)}</td><td class="c-name nowrap">${esc(c.name)}</td><td class="c-phone nowrap">${esc(fmtPhone(c.phone))}${c.interview_at ? `<small class="muted" style="display:block">면접 ${esc(c.interview_at)}</small>` : ''}</td>
           <td class="c-status">${c.status === 'sent' && c.delivery === 'queued' ? phoneWaitBadge(c.sent_at) : badge(c.status, slots.length && c.status === 'attending' && !c.template_override ? '일정 정함' : '')}${c.reply_kind === 'reschedule' ? ' <span class="badge review">일정 변경 요청</span>' : ''}${c.followed_at ? ' <small title="답이 없어 자동으로 한 번 더 보냈어요">(한 번 더 보냄)</small>' : ''}${d.flagged && d.flagged.has(c.phone) ? ' <span class="badge no" title="지원자 관리: 블랙리스트 (참고용, 발송은 막지 않아요)">블랙리스트</span>' : ''}${c.manual ? ' <small>(직접)</small>' : ''}${c.delivery === 'delivered' ? ' <small title="상대 휴대폰에 전달됨">✓ 전달</small>' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
           <td class="c-reply msg">${esc(c.reply_text)}</td>
           <td class="c-outcome">${camp.purged_at ? esc(OUTCOMES[c.outcome] || '') : `<form method="post" action="/campaigns/${camp.id}/outcome" class="inline">
             <input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(d.backQuery)}">
-            <select name="outcome" aria-label="면접 결과" onchange="this.form.submit()"><option value="">-</option>${Object.entries(OUTCOMES).map(([k, v]) => `<option value="${k}"${c.outcome === k ? ' selected' : ''}>${v}</option>`).join('')}</select></form>`}</td>
+            <select name="outcome" aria-label="면접 결과" onchange="this.form.submit()"><option value="">결과 기록</option>${Object.entries(OUTCOMES).map(([k, v]) => `<option value="${k}"${c.outcome === k ? ' selected' : ''}>${v}</option>`).join('')}</select></form>`}</td>
           <td class="actions">${rowActions(c)}</td></tr>`).join('')
-          : `<tr><td colspan="8">${emptyState({ title: '해당하는 사람이 없어요' })}</td></tr>`}
+          : `<tr><td colspan="7">${emptyState({ title: '해당하는 사람이 없어요' })}</td></tr>`}
         </tbody></table>`)}
       ${cands.length >= 500 ? '<p class="muted" style="margin-top:8px">최대 500명까지 보여요. 사업장이나 상태로 걸러서 보세요.</p>' : ''}
     </section>`;

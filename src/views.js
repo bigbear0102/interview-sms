@@ -176,10 +176,9 @@ dialog.cdlg p{margin:0 0 20px;font-size:17px;font-weight:600;line-height:1.5;wor
 .rbtn{position:absolute;right:10px;bottom:8px;display:inline-grid;place-items:center;width:40px;height:40px;border-radius:999px;color:var(--blue)}
 .mrow .mtext{padding-right:44px}
 .rbtn:hover{background:var(--blue-bg)}
-table.cand td.actions{min-width:200px}
+table.cand td.actions{min-width:180px}
 table.cand td.actions select{width:100%;min-height:38px}
-table.cand td.c-outcome select{min-width:88px}
-table.cand td.c-site{min-width:84px}
+table.cand td.c-outcome select{min-width:104px}
 .resch>summary{cursor:pointer;color:var(--blue);font-size:14px;margin-top:6px}
 .resch form{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .resch input{width:auto;min-width:130px;min-height:36px;padding:6px 10px}
