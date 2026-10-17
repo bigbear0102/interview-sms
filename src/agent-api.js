@@ -33,7 +33,10 @@ export async function handleAgentApi(request, env, url, deps) {
       const role = (await first(db, `SELECT role FROM users WHERE id=? AND active=1`, uid))?.role;
       everyone = MULTI_ACCOUNT_ENABLED && role === 'super' && !!(await first(db, `SELECT 1 x FROM albamon_accounts WHERE active=1 LIMIT 1`));
     }
-    return json({ items: await agentQueue(db, Number(url.searchParams.get('limit')) || 5, uid, { all: everyone }) });
+    // 확장 버전(v1.9.1 부터 보냄): 이력서만 읽기를 아는 확장인지
+    const v = String(request.headers.get('x-ext-version') || '').split('.').map((x) => parseInt(x, 10) || 0);
+    const resumeOk = v.length === 3 && (v[0] > 1 || (v[0] === 1 && (v[1] > 9 || (v[1] === 9 && v[2] >= 1))));
+    return json({ items: await agentQueue(db, Number(url.searchParams.get('limit')) || 5, uid, { all: everyone, resumeOk }) });
   }
 
   if (path === '/api/agent/albamon-accounts' && method === 'GET') {

@@ -317,6 +317,7 @@ check(r16 && /야간 근무도 가능합니다/.test(r16.text) && /아마노코�
 check(buys === 0, '결제(열람권 구매) 버튼은 누르지 않음');
 check(rv[17] && rv[17].ok && rv[17].phone === '' && r17 && has(r17, '이메일', 'full@example.com'), '이력서만 다시 읽기: 이력서 내용을 보냄');
 check(!clicks.includes('417') && clicks.includes('416'), '이력서만 다시 읽기에서는 연락처 보기 버튼을 누르지 않음');
+check(sysLog.some((l) => /GET \/api\/agent\/inbox/.test(l) && /"x-ext-version":"1\.9\.1"/.test(l)), '시스템에 확장 버전을 알림(예전 확장에는 이력서만 읽기 요청을 주지 않도록)');
 
 // ---- v1.8: 예전 버전이 저장한 그룹웨어 계정·비밀번호를 지운다(그룹웨어 메일은 시스템이 POP3 로 직접) ----
 await sw.evaluate(() => chrome.storage.local.set({ gwAccounts: [{ id: 'x', pw: 'old-secret' }], gwId: 'x', gwPw: 'old-secret', gwSeen: ['1'] }));

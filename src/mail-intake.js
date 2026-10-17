@@ -218,11 +218,13 @@ export async function saveParsed(db, p, now = Date.now(), ownerId = null, mailAc
   // 같은 공고에 이미 정해 둔 원가중심점이 있으면 자동으로 붙인다
   const rule = p.recruitNo ? await first(db, `SELECT cost_center, job FROM inbox_cost_rules WHERE recruit_no=?`, clip(p.recruitNo, 30)) : null;
   const r = await run(db,
-    `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at, cost_center, owner_user_id, job, mail_account, fetch_state, fetch_req_at, mail_fields)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, gender, age, address, education, career, resume_url, received_at, cost_center, owner_user_id, job, mail_account, fetch_state, fetch_req_at, mail_fields, resume_only)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     p.source, p.applyNo, clip(p.recruitNo, 30), clip(p.company, 100), clip(p.jobTitle, 200), clip(p.name, 50), clip(p.gender, 4),
-    p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), safeResumeUrl(p.resumeUrl).slice(0, 500), now, rule ? rule.cost_center : '', ownerId, rule ? rule.job : '', clip(mailAccount, 60), rule && rule.cost_center && safeResumeUrl(p.resumeUrl) ? 'requested' : '', rule && rule.cost_center && safeResumeUrl(p.resumeUrl) ? now : null,
-    p.fields && typeof p.fields === 'object' ? JSON.stringify(Object.fromEntries(Object.entries(p.fields).slice(0, 60).map(([k, v]) => [clip(k, 40), clip(v, 500)]))) : '');
+    // 이력서 링크가 있으면 항상 읽기를 요청한다: 원가중심점이 정해진 공고면 연락처까지, 아니면 이력서만(연락처 외 정보는 열기만 하면 보인다)
+    p.age ?? null, clip(p.address, 100), clip(p.education, 50), clip(p.career, 50), safeResumeUrl(p.resumeUrl).slice(0, 500), now, rule ? rule.cost_center : '', ownerId, rule ? rule.job : '', clip(mailAccount, 60), safeResumeUrl(p.resumeUrl) ? 'requested' : '', safeResumeUrl(p.resumeUrl) ? now : null,
+    p.fields && typeof p.fields === 'object' ? JSON.stringify(Object.fromEntries(Object.entries(p.fields).slice(0, 60).map(([k, v]) => [clip(k, 40), clip(v, 500)]))) : '',
+    rule && rule.cost_center ? 0 : 1);
   return { ok: true, id: Number(r.meta.last_row_id) };
 }
 
@@ -257,7 +259,7 @@ export async function pendingInboxCount(db, viewer = null) {
 export async function inboxBreakdown(db, viewer = null) {
   const sc = inboxScope(viewer);
   const r = await first(db,
-    `SELECT COUNT(*) pending, COALESCE(SUM(phone!=''),0) ready, COALESCE(SUM(phone='' AND fetch_state='requested'),0) waiting,
+    `SELECT COUNT(*) pending, COALESCE(SUM(phone!=''),0) ready, COALESCE(SUM(phone='' AND fetch_state='requested' AND resume_only=0),0) waiting,
             COALESCE(SUM(cost_center=''),0) needClass
        FROM applicant_inbox WHERE status='pending' AND ${sc.sql}`, ...sc.args);
   return r || { pending: 0, ready: 0, waiting: 0, needClass: 0 };
@@ -325,7 +327,8 @@ export async function setAutoRegister(db, on) {
 // 가져오기 요청: 아직 연락처가 없고 대기 중인 건만. ids 가 없으면 대기 전체. 반환: 요청한 건수
 export async function requestFetch(db, ids = null, viewer = null) {
   const sc = inboxScope(viewer);
-  let sql = `UPDATE applicant_inbox SET fetch_state='requested', fetch_note='', fetch_at=NULL, fetch_req_at=${Date.now()} WHERE status='pending' AND phone='' AND fetch_state != 'requested' AND ${sc.sql}`;
+  // 이력서만 읽는 요청(resume_only)이 걸려 있어도 연락처 가져오기로 바꾼다
+  let sql = `UPDATE applicant_inbox SET resume_only=0, fetch_state='requested', fetch_note='', fetch_at=NULL, fetch_req_at=${Date.now()} WHERE status='pending' AND phone='' AND (fetch_state != 'requested' OR resume_only=1) AND ${sc.sql}`;
   const args = [...sc.args];
   if (Array.isArray(ids)) {
     if (!ids.length) return 0;
@@ -340,7 +343,7 @@ export async function requestFetch(db, ids = null, viewer = null) {
 export async function requestFetchByPosting(db, recruitNo) {
   const r = String(recruitNo || '');
   if (!r) return 0;
-  const x = await run(db, `UPDATE applicant_inbox SET fetch_state='requested', fetch_note='', fetch_at=NULL, fetch_req_at=${Date.now()} WHERE recruit_no=? AND status='pending' AND phone='' AND fetch_state != 'requested' AND resume_url != ''`, r);
+  const x = await run(db, `UPDATE applicant_inbox SET resume_only=0, fetch_state='requested', fetch_note='', fetch_at=NULL, fetch_req_at=${Date.now()} WHERE recruit_no=? AND status='pending' AND phone='' AND (fetch_state != 'requested' OR resume_only=1) AND resume_url != ''`, r);
   return x.meta.changes || 0;
 }
 
@@ -350,15 +353,16 @@ export async function requestFetchByPosting(db, recruitNo) {
 // (관리자 PC 가 여러 알바몬 계정으로 모두 처리하고, 담당자 PC 도 자기 건을 처리할 때 같은 이력서를 두 번 열지 않게).
 // all=true 면 담당자 구분 없이 모든 요청(알바몬 계정이 등록된 관리자 확장).
 export const CLAIM_MS = 3 * 60 * 1000;
-export async function agentQueue(db, limit = 5, userId = null, { all: everyone = false, now = Date.now() } = {}) {
+// resumeOk: 이력서만 읽기(연락처 보기를 누르지 않음)를 아는 확장(v1.9.1+)에게만 그 요청을 준다. 예전 확장은 연락처 보기를 눌러 버리므로.
+export async function agentQueue(db, limit = 5, userId = null, { all: everyone = false, now = Date.now(), resumeOk = true } = {}) {
   const own = userId == null || everyone ? '1=1' : '(i.owner_user_id = ? OR i.owner_user_id IS NULL)';
   const args = userId == null || everyone ? [] : [userId];
   const n = Math.min(Math.max(Number(limit) || 5, 1), 20);
   // 새 지원(연락처 가져오기) + 이미 가져온 사람의 이력서만 다시 읽기(resume_only)
   const cand = await all(db,
     `SELECT i.id FROM applicant_inbox i
-      WHERE (i.status='pending' OR i.resume_only=1) AND i.fetch_state='requested' AND i.resume_url != '' AND (i.fetch_at IS NULL OR i.fetch_at < ?) AND ${own}
-      ORDER BY i.id LIMIT ${n}`, now - CLAIM_MS, ...args);
+      WHERE ${resumeOk ? `((i.status='pending' AND i.resume_only=0) OR i.resume_only=1)` : `i.status='pending' AND i.resume_only=0`} AND i.fetch_state='requested' AND i.resume_url != '' AND (i.fetch_at IS NULL OR i.fetch_at < ?) AND ${own}
+      ORDER BY i.resume_only, i.id LIMIT ${n}`, now - CLAIM_MS, ...args);
   if (!cand.length) return [];
   const claim = now + Math.floor(Math.random() * 997);   // 이번에 가져간 건을 구분하는 표시
   const ph = cand.map(() => '?').join(',');

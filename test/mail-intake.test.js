@@ -342,7 +342,7 @@ test('사람별 연결 키: 내 건만 보이고, 남의 건 결과는 거절, �
   assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicant_inbox`).first()).n, 2);
 
   // 연락처 가져오기 요청: A 의 키로는 A 건만 보인다
-  await db.prepare(`UPDATE applicant_inbox SET fetch_state='requested'`).run();
+  await db.prepare(`UPDATE applicant_inbox SET fetch_state='requested', resume_only=0`).run();
   const listA = await (await api('/api/agent/inbox', {}, tokA)).json();
   const listB = await (await api('/api/agent/inbox', {}, tokB)).json();
   assert.deepEqual(listA.items.map((x) => x.name), ['홍길동']);
@@ -592,15 +592,16 @@ test('원가중심점을 정하면 연락처 가져오기가 자동으로 요청
   const { db, post, call } = await setup();
   const mail = (name, no, body = bodyHtml) => ingestRaw(db, new Uint8Array(mailQP(bodyHtml(name + '(여, 30세)', no))), Date.now());
   await mail('홍길동', '900000101'); await mail('박민수', '900000102'); await mail('최수아', '900000103');
-  const state = async () => Object.fromEntries((await db.prepare(`SELECT name, fetch_state s FROM applicant_inbox`).all()).results.map((r) => [r.name, r.s]));
-  assert.deepEqual(await state(), { 홍길동: '', 박민수: '', 최수아: '' });          // 처음에는 요청하지 않는다
+  // resume: 이력서만 읽기 요청(새 메일이면 자동, 연락처 보기는 누르지 않음)
+  const state = async () => Object.fromEntries((await db.prepare(`SELECT name, fetch_state s, resume_only ro FROM applicant_inbox`).all()).results.map((r) => [r.name, r.s === 'requested' && r.ro ? 'resume' : r.s]));
+  assert.deepEqual(await state(), { 홍길동: 'resume', 박민수: 'resume', 최수아: 'resume' });   // 처음에는 이력서만 읽기(연락처는 요청하지 않는다)
   const id1 = (await db.prepare(`SELECT id FROM applicant_inbox WHERE name='홍길동'`).first()).id;
   // 최수아는 이미 연락처가 있다 → 다시 요청하지 않는다
   await db.prepare(`UPDATE applicant_inbox SET phone='01011112222', fetch_state='done' WHERE name='최수아'`).run();
   // 1) 새 지원: 이 사람만 분류(같은 공고 적용 끔) → 이 사람만 요청
   let r = await post(`/applicants/inbox/${id1}/cost`, { cost_center: 'A센터' });
   assert.match(r.headers.get('location'), /ok=cost&fr=1$/);
-  assert.deepEqual(await state(), { 홍길동: 'requested', 박민수: '', 최수아: 'done' });
+  assert.deepEqual(await state(), { 홍길동: 'requested', 박민수: 'resume', 최수아: 'done' });
   assert.ok(visible(await (await call('/applicants/inbox?ok=cost&fr=1')).text()).includes('연락처 1건의 가져오기도 요청했어요'));
   // 분류를 비우면 요청하지 않는다
   await db.prepare(`UPDATE applicant_inbox SET fetch_state='' WHERE name='홍길동'`).run();
@@ -619,8 +620,8 @@ test('원가중심점을 정하면 연락처 가져오기가 자동으로 요청
   await mail('정다은', '900000104');
   assert.equal((await state()).정다은, 'requested');
   assert.equal((await db.prepare(`SELECT cost_center c FROM applicant_inbox WHERE name='정다은'`).first()).c, 'A센터');
-  // 규칙이 없는 공고의 새 메일은 요청하지 않는다
+  // 규칙이 없는 공고의 새 메일은 연락처는 요청하지 않고 이력서만 읽는다
   await db.prepare(`DELETE FROM inbox_cost_rules`).run();
   await mail('강하늘', '900000105');
-  assert.equal((await state()).강하늘, '');
+  assert.equal((await state()).강하늘, 'resume');
 });
