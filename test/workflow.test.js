@@ -18,7 +18,8 @@ const visible = (html) => html.replace(/<(style|script)[\s\S]*?<\/\1>/g, ' ').re
 
 async function setup() {
   const db = openSqliteD1(':memory:', fileURLToPath(new URL('../migrations', import.meta.url)));
-  const env = { DB: db, ENCRYPTION_KEY: 'k', PUBLIC_BASE_URL: 'https://example.test', GATEWAY_URL: 'https://sms.example.test/api/3rdparty/v1' };
+  // NO_REAL_NETWORK: 그룹웨어 POP3 등 실제 회사 서버에 접속하지 않게 막는다(시험은 가짜 서버만)
+  const env = { DB: db, ENCRYPTION_KEY: 'k', PUBLIC_BASE_URL: 'https://example.test', GATEWAY_URL: 'https://sms.example.test/api/3rdparty/v1', NO_REAL_NETWORK: true };
   const u = await db.prepare(`INSERT INTO users (username,pass_hash,role,email_verified_at,name,email) VALUES ('boss',?,'super',1,'김관리','boss@willvi.co.kr')`).bind(await hashPassword('password123')).run();
   const sid = await createSession(db, Number(u.meta.last_row_id));
   await db.prepare(`INSERT INTO departments (name) VALUES ('인사팀')`).run();
@@ -551,6 +552,7 @@ test('그룹웨어 직접 연결: 가짜 그룹웨어로 로그인→메일 세�
   const opt = { gw: base, mail: base, ipv4: '' };   // 시험에서는 밖의 IP 를 묻지 않는다
   try {
     const { id } = await saveGwAccount(db, env, 1, 'bigbear@willvi.co.kr', 'Gw!Secret#771');
+    await db.prepare(`UPDATE gw_accounts SET mode='web' WHERE id=?`).bind(id).run();   // 이 시험은 웹 로그인 방식(가짜 서버)
     let a = await db.prepare(`SELECT * FROM gw_accounts WHERE id=?`).bind(id).first();
     assert.match(a.pw_enc, /^enc\$/);
     let r = await scanGwAccount(env, a, opt);
@@ -569,6 +571,7 @@ test('그룹웨어 직접 연결: 가짜 그룹웨어로 로그인→메일 세�
     assert.doesNotMatch(page, /Gw!Secret#771/);
     // 틀린 비밀번호: 쉼(blocked), 다시 시도 안 함
     const w = await saveGwAccount(db, env, 1, 'bigbear', 'wrong');
+    await db.prepare(`UPDATE gw_accounts SET mode='web' WHERE id=?`).bind(w.id).run();
     a = await db.prepare(`SELECT * FROM gw_accounts WHERE id=?`).bind(w.id).first();
     r = await scanGwAccount(env, a, opt);
     a = await db.prepare(`SELECT * FROM gw_accounts WHERE id=?`).bind(w.id).first();
@@ -583,4 +586,67 @@ test('그룹웨어 직접 연결: 가짜 그룹웨어로 로그인→메일 세�
     assert.equal(jar.header('https://mail.willvi.co.kr/mail/x'), 'A=1');
     assert.equal(jar.header('https://gw.willvi.co.kr/gw/y'), 'A=1; B=2');
   } finally { srv.close(); }
+});
+
+test('그룹웨어 POP3: 가짜 POP3 서버로 로그인(전체 주소→아이디만, 성공 형식 기억)·새 메일만·알바몬만·메일 안 지움, 실제 서버 접속 차단', async () => {
+  const net = await import('node:net');
+  const { scanPop3, saveGwAccount } = await import('../src/groupware.js');
+  const { db, env } = await setup();
+  const mime = (from, name, apply) => [`From: ${from}`, 'To: bigbear@willvi.co.kr', 'Subject: test', 'MIME-Version: 1.0', 'Content-Type: text/html; charset=utf-8', '',
+    `<table><tr><th>공고번호</th><td>777</td></tr><tr><th>이름</th><td>${name}</td></tr></table><a href="https://www.albamon.com/email-apply-url-route?recruitNo=777&amp;applyNo=${apply}">이력서 보기</a>`, '.leading-dot-line', ''].join('\r\n');
+  const box = [{ uid: 'u1', body: mime('알바몬 <mailmaster@albamon.com>', '김일', 7001) }, { uid: 'u2', body: mime('친구 <a@b.com>', '아님', 7002) }, { uid: 'u3', body: mime('mailmaster@albamon.com', '박삼', 7003) }];
+  const log = { users: [], cmds: [] };
+  const conns = new Set();
+  const srv = net.createServer((c) => {
+    conns.add(c); c.on('close', () => conns.delete(c));
+    c.write('+OK ready\r\n');
+    let buf = '', user = '', authed = false;
+    c.on('data', (d) => {
+      buf += d.toString('latin1');
+      let i;
+      while ((i = buf.indexOf('\r\n')) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 2);
+        const [cmd, ...a] = line.split(' ');
+        log.cmds.push(cmd);
+        if (cmd === 'USER') { user = a[0]; log.users.push(user); c.write('+OK\r\n'); }
+        else if (cmd === 'PASS') { if (user === 'bigbear' && a.join(' ') === 'pw!ok') { authed = true; c.write('+OK\r\n'); } else c.write('-ERR invalid\r\n'); }
+        else if (!authed) c.write('-ERR auth\r\n');
+        else if (cmd === 'UIDL') c.write('+OK\r\n' + box.map((m, k) => `${k + 1} ${m.uid}\r\n`).join('') + '.\r\n');
+        else if (cmd === 'TOP') { const m = box[Number(a[0]) - 1]; c.write('+OK\r\n' + m.body.split('\r\n\r\n')[0] + '\r\n\r\n.\r\n'); }
+        else if (cmd === 'RETR') { const m = box[Number(a[0]) - 1]; c.write('+OK\r\n' + m.body.split('\r\n').map((l) => (l.startsWith('.') ? '.' + l : l)).join('\r\n') + '\r\n.\r\n'); }
+        else if (cmd === 'QUIT') { c.write('+OK bye\r\n'); c.end(); }
+        else c.write('-ERR ?\r\n');
+      }
+    });
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const pop3 = { host: '127.0.0.1', port: srv.address().port };
+  try {
+    const { id } = await saveGwAccount(db, env, 1, 'bigbear', 'pw!ok');
+    let a = await db.prepare(`SELECT * FROM gw_accounts WHERE id=?`).bind(id).first();
+    let r = await scanPop3(env, a, pop3);
+    assert.deepEqual([r.ok, r.added], [true, 2]);
+    assert.deepEqual(log.users, ['bigbear@willvi.co.kr', 'bigbear']);              // 전체 주소 실패 → 아이디만
+    assert.ok(!log.cmds.includes('DELE'));                                         // 메일을 지우지 않음
+    assert.deepEqual((await db.prepare(`SELECT name FROM applicant_inbox ORDER BY name`).all()).results.map((x) => x.name), ['김일', '박삼']);
+    a = await db.prepare(`SELECT * FROM gw_accounts WHERE id=?`).bind(id).first();
+    assert.equal(a.pop3_user, 'bigbear');                                          // 성공한 형식 기억
+    // 다음 확인: 기억한 형식 한 번만, 새 메일만 받음
+    box.push({ uid: 'u4', body: mime('mailmaster@albamon.com', '최사', 7004) });
+    log.users.length = 0; log.cmds.length = 0;
+    r = await scanPop3(env, a, pop3);
+    assert.deepEqual([r.ok, r.added], [true, 1]);
+    assert.deepEqual(log.users, ['bigbear']);
+    assert.equal(log.cmds.filter((x) => x === 'RETR').length, 1);
+    // 틀린 비밀번호: 쉼
+    const w = await saveGwAccount(db, env, 1, 'bigbear', 'nope');
+    a = await db.prepare(`SELECT * FROM gw_accounts WHERE id=?`).bind(w.id).first();
+    r = await scanPop3(env, a, pop3);
+    a = await db.prepare(`SELECT blocked, last_error FROM gw_accounts WHERE id=?`).bind(w.id).first();
+    assert.equal(a.blocked, 1);
+    // 실제 회사 메일 서버에는 시험에서 절대 접속하지 않음
+    r = await scanPop3(env, a.blocked ? { ...(await db.prepare(`SELECT * FROM gw_accounts WHERE id=?`).bind(w.id).first()) } : a, {});
+    assert.equal(r.ok, false);
+    assert.match(r.error, /실제 메일 서버에 접속하지 않아요/);
+  } finally { for (const c of conns) c.destroy(); srv.close(); }
 });

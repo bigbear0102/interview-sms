@@ -9,15 +9,22 @@
 // - 각 단계 결과(상태 코드·쿠키 이름·주소, 비밀값 없음)를 diag 에 남겨 연결 문제를 화면에서 진단한다.
 import { all, first, run } from './d1.js';
 import { encryptText, decryptText } from './crypto.js';
-import { parseAlbamonApply, saveParsed } from './mail-intake.js';
+import { parseAlbamonApply, saveParsed, parseMime } from './mail-intake.js';
+import { openTcp, Pop3, fromAlbamon } from './pop3.js';
 
 export const GW_BASE = 'https://gw.willvi.co.kr';
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36';
 export const MAIL_BASE = 'https://mail.willvi.co.kr';
+export const POP3_HOST = 'mail.willvi.co.kr';
+export const POP3_PORT = 110;
+export const MAIL_DOMAIN = 'willvi.co.kr';
 const ALBAMON_FROM = 'mailmaster@albamon.com';
 const BODY_BUDGET = 25;        // 한 번에 받는 본문 수(외부 요청 한도)
 const LIST_SIZE = 50;          // 최신 몇 통까지 확인할지(1분마다라 충분)
 const TIMEOUT = 15000;
+
+// node --test 로 도는 중인지(시험이 실제 회사 서버에 접속하지 않게 하는 두 번째 안전장치)
+const underTest = () => typeof process !== 'undefined' && !!(process.env && process.env.NODE_TEST_CONTEXT);
 
 export const gwId = (s) => String(s || '').split('@')[0].trim().toLowerCase();
 
@@ -166,7 +173,7 @@ export async function saveGwAccount(db, env, userId, loginId, pw) {
   const enc = await encryptText(env.ENCRYPTION_KEY, String(pw));
   const now = Date.now();
   await run(db, `INSERT INTO gw_accounts (user_id, login_id, pw_enc, updated_at, created_at) VALUES (?,?,?,?,?)
-    ON CONFLICT(user_id, login_id) DO UPDATE SET pw_enc=excluded.pw_enc, session_enc='', blocked=0, active=1, last_error='', updated_at=excluded.updated_at`, userId, lid, enc, now, now);
+    ON CONFLICT(user_id, login_id) DO UPDATE SET pw_enc=excluded.pw_enc, session_enc='', pop3_user='', blocked=0, active=1, last_error='', updated_at=excluded.updated_at`, userId, lid, enc, now, now);
   return { ok: true, id: (await first(db, `SELECT id FROM gw_accounts WHERE user_id=? AND login_id=?`, userId, lid)).id };
 }
 export async function deleteGwAccount(db, id, userId, isSuper) {
@@ -177,9 +184,93 @@ export async function deleteGwAccount(db, id, userId, isSuper) {
   return true;
 }
 
+// ---------------- POP3 로 한 계정 확인 ----------------
+// 새 메일(UIDL 기준)만 머리(TOP)를 보고 알바몬 발신이면 본문(RETR)을 받아 새 지원으로. 메일은 지우지 않는다.
+export async function scanPop3(env, acct, { host = POP3_HOST, port = POP3_PORT, topBudget = 60, retrBudget = 20, now = Date.now(), firstWindow = 100 } = {}) {
+  const db = env.DB;
+  // 안전장치: 시험 중(env.NO_REAL_NETWORK)에는 실제 회사 메일 서버에 절대 접속하지 않는다(가짜 서버 주소를 꼭 넘겨야 함)
+  if ((env.NO_REAL_NETWORK || underTest()) && host === POP3_HOST) return { ok: false, error: '시험 중에는 실제 메일 서버에 접속하지 않아요' };
+  const diag = [];
+  const clean = (x) => String(x || '').replace(/[^\x20-\x7e가-힣]/g, '').slice(0, 80);
+  const done = async (fields) => {
+    const sets = Object.keys(fields).map((k) => `${k}=?`).join(', ');
+    await run(db, `UPDATE gw_accounts SET ${sets}, last_check_at=?, diag=? WHERE id=?`, ...Object.values(fields), now, diag.join('\n').slice(0, 3000), acct.id);
+  };
+  const markSeen = (uid) => run(db, `INSERT OR IGNORE INTO gw_seen (account_id, mail_id, at) VALUES (?,?,?)`, acct.id, uid, now);
+  let pop = null;
+  try {
+    pop = new Pop3(await openTcp(host, port));
+    const g = await pop.greet();
+    diag.push(`POP3 ${host}:${port} 연결 → ${g.ok ? '+OK' : clean(g.line)}`);
+    const pw = await decryptText(env.ENCRYPTION_KEY, acct.pw_enc);
+    const id = gwId(acct.login_id);
+    // 아이디 형식: 기억한 형식 → 없으면 전체 주소, 그다음 아이디만(틀린 시도는 최대 2번)
+    const tries = acct.pop3_user ? [acct.pop3_user] : [`${id}@${MAIL_DOMAIN}`, id];
+    let user = '', last = '';
+    for (let i = 0; i < tries.length; i++) {
+      const u = tries[i];
+      const r = await pop.login(u, pw);
+      diag.push(`로그인(${u.includes('@') ? '전체 주소' : '아이디만'}) → ${r.ok ? '+OK' : clean(r.line)}`);
+      if (r.ok) { user = u; break; }
+      last = r.line;
+      if (i + 1 < tries.length) { await pop.quit(); pop = new Pop3(await openTcp(host, port)); await pop.greet(); }   // 실패한 세션은 닫고 새로
+    }
+    if (!user) {
+      await done({ blocked: 1, last_error: `그룹웨어 메일(POP3) 로그인이 안 돼요(${clean(last)}). 아이디·비밀번호를 확인해 다시 저장해 주세요. 계정 잠김을 막으려고 그때까지 쉬어요.` });
+      return { ok: false, error: 'login' };
+    }
+    const list = await pop.uidl();
+    const seen = new Set();
+    for (let i = 0; i < list.length; i += 80) {
+      const part = list.slice(i, i + 80).map((x) => x.uid);
+      for (const r of await all(db, `SELECT mail_id FROM gw_seen WHERE account_id=? AND mail_id IN (${part.map(() => '?').join(',')})`, acct.id, ...part)) seen.add(r.mail_id);
+    }
+    let fresh = list.filter((x) => !seen.has(x.uid)).sort((a, b) => b.n - a.n);   // 최신 먼저
+    // 처음 연결: 최근 firstWindow 통만 보고, 그보다 오래된 메일은 본 것으로 표시(예전 메일은 확장 프로그램이 이미 가져왔다)
+    if (!seen.size && fresh.length > firstWindow) {
+      const old = fresh.slice(firstWindow);
+      fresh = fresh.slice(0, firstWindow);
+      const st = old.map((x) => db.prepare(`INSERT OR IGNORE INTO gw_seen (account_id, mail_id, at) VALUES (?,?,?)`).bind(acct.id, x.uid, now));
+      for (let i = 0; i < st.length; i += 40) await db.batch(st.slice(i, i + 40));
+      diag.push(`처음 연결: 오래된 메일 ${old.length}통은 건너뜀`);
+    }
+    let topped = 0, retrd = 0, added = 0, albamon = 0;
+    for (const m of fresh) {
+      if (topped >= topBudget || retrd >= retrBudget) break;
+      topped++;
+      const head = await pop.top(m.n, 0);
+      if (!fromAlbamon(head)) { await markSeen(m.uid); continue; }
+      albamon++;
+      const raw = await pop.retr(m.n);
+      retrd++;
+      if (!raw) continue;   // 못 받은 건은 다음에 다시
+      let p = null;
+      try { const mm = parseMime(raw); p = parseAlbamonApply(mm.html || mm.text); } catch { /* 해석 못 하면 건너뜀 */ }
+      if (p && p.name) { const r = await saveParsed(db, p, now, acct.user_id, id); if (r && !r.duplicate) added++; }
+      await markSeen(m.uid);
+    }
+    await pop.quit();
+    diag.push(`메일 ${list.length}통 중 새 메일 ${fresh.length}통 확인(${topped}), 알바몬 ${albamon}통, 새 지원 ${added}건${fresh.length > topped ? ` (남은 ${fresh.length - topped}통은 다음에)` : ''}`);
+    await done({ pop3_user: user, last_ok_at: now, last_error: '', last_added: added });
+    return { ok: true, added };
+  } catch (e) {
+    diag.push('오류: ' + String(e.message || e).slice(0, 200));
+    if (pop) await pop.quit();
+    await done({ last_error: `그룹웨어 메일(POP3)에 연결하지 못했어요(${String(e.message || e).slice(0, 80)}). 잠시 뒤 다시 시도해요.` });
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
 // ---------------- 한 계정 확인 ----------------
-// 반환: { ok, added, error? }
-export async function scanGwAccount(env, acct, { gw = GW_BASE, mail = MAIL_BASE, budget = BODY_BUDGET, now = Date.now(), ipv4: opts_ipv4 } = {}) {
+// 방식에 따라 POP3(기본) 또는 웹 로그인. 반환: { ok, added, error? }
+export async function scanGwAccount(env, acct, opts = {}) {
+  if ((acct.mode || 'pop3') === 'pop3') return scanPop3(env, acct, opts.pop3 || {});
+  return scanGwWeb(env, acct, opts);
+}
+
+// 웹 로그인 방식(그룹웨어가 서버 접속을 처리하지 못해 500 → 지금은 쓰지 않음, 2026-10-17)
+export async function scanGwWeb(env, acct, { gw = GW_BASE, mail = MAIL_BASE, budget = BODY_BUDGET, now = Date.now(), ipv4: opts_ipv4 } = {}) {
+  if ((env.NO_REAL_NETWORK || underTest()) && (gw === GW_BASE || mail === MAIL_BASE)) return { ok: false, error: '시험 중에는 실제 그룹웨어에 접속하지 않아요' };
   const db = env.DB;
   const diag = [];
   const jar = acct.session_enc ? CookieJar.parse(await decryptText(env.ENCRYPTION_KEY, acct.session_enc).catch(() => '[]')) : new CookieJar();

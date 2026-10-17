@@ -248,6 +248,7 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
             <input name="pw" type="password" maxlength="100" required placeholder="그룹웨어 비밀번호" autocomplete="new-password" aria-label="그룹웨어 비밀번호">
             <button class="btn small">${gwList.length ? '추가·비밀번호 바꾸기' : '연결하기'}</button></form>
           <p class="muted" style="font-size:13px;margin:0">비밀번호가 틀리면 계정이 잠기지 않게 다시 저장할 때까지 쉬어요. 확장 프로그램의 그룹웨어 계정과 같이 써도 같은 지원은 한 번만 들어와요.</p>
+          <p class="muted" style="font-size:13px;margin:0">참고: 회사 메일 서버(POP3)가 암호화를 지원하지 않아 <b>비밀번호가 암호화 없이 전송</b>돼요(관리자 승인, 2026-10). 메일은 읽기만 하고 지우지 않아요.</p>
         </div></section>`;
   let sharedCard = '';
   if (isSuper) {
