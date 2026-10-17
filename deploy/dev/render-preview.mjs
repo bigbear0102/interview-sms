@@ -77,6 +77,15 @@ const inb = (no, name, phone, state, cc) => db.prepare(`INSERT INTO applicant_in
 await inb('1', '김하늘', '01030001111', 'done', '아마노코리아(현장HR)');
 for (const [no, nm] of [['2', '박서준'], ['3', '이도현'], ['4', '최유나']]) await inb(no, nm, '', 'requested', '아마노코리아(현장HR)');
 await inb('5', '정민재', '', '', ''); await inb('6', '한소희', '', '', '');
+// 저장된 이력서(미리보기용): 김하늘 새 지원 → 첫 지원자에 연결
+{
+  const { saveResume } = await import('../../src/resume.js');
+  const ib = await db.prepare(`SELECT id FROM applicant_inbox WHERE apply_no='1'`).first();
+  await db.prepare(`UPDATE applicant_inbox SET applicant_id=? WHERE id=?`).bind(appIds[0], ib.id).run();
+  await saveResume(db, ib.id, '1', { text: '이력서\n기본정보\n이메일 demo@example.com\n경력사항\n아마노코리아 주차관리 2년\n자기소개\n성실하게 일하겠습니다.\n야간 근무도 가능합니다.\n자격증\n운전면허 1종 보통',
+    pairs: [['생년월일', '1995.03.04 (31세)'], ['이메일', 'demo@example.com'], ['희망근무지', '서울 강남구'], ['근무형태', '알바 / 주말'], ['희망급여', '시급 11,000원'], ['자격증', '운전면허 1종 보통'], ['병역', '군필']],
+    sections: ['기본정보', '경력사항', '자기소개', '자격증'], url: 'https://www.albamon.com/x', title: '이력서' });
+}
 await db.prepare(`INSERT INTO ai_postings (recruit_no, cost_center, job, note, at) VALUES ('901','아마노코리아(현장HR)','주차관리','제목의 고객사 이름',?)`).bind(Date.now()).run();
 await db.prepare(`INSERT INTO agent_tokens (user_id, token_hash, created_at, last_used_at) VALUES (1,'h',1,?)`).bind(Date.now() - 3 * 3600e3).run();
 
