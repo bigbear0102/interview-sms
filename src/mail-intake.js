@@ -316,6 +316,30 @@ export async function verifyAgentToken(db, token) {
   return diff === 0 ? { userId: null } : null;
 }
 
+// 자동 가져오기(기본 켜짐): 5분마다 연락처·이력서가 빠진 지원을 다시 요청한다(확장이 켜져 있으면 처리).
+const SWEEP_KEY = 'inbox_auto_fetch';
+export const SWEEP_MAX_TRIES = 3;           // 실패하면 1시간 뒤 다시, 3번까지
+export async function getAutoFetch(db) {
+  const r = await first(db, `SELECT value FROM applicant_settings WHERE key=?`, SWEEP_KEY);
+  return !r || r.value !== '0';
+}
+export async function setAutoFetch(db, on) {
+  await run(db, `INSERT INTO applicant_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, SWEEP_KEY, on ? '1' : '0');
+}
+// 반환: { contact, resume } 새로 요청한 수
+export async function autoFetchSweep(db, now = Date.now()) {
+  if (!(await getAutoFetch(db))) return { contact: 0, resume: 0 };
+  const retry = `(fetch_state='' OR (fetch_state IN ('failed','done') AND COALESCE(fetch_done_at,0) < ? AND fetch_tries < ${SWEEP_MAX_TRIES}))`;
+  // 연락처 없는 대기 지원 → 연락처+이력서
+  const a = await run(db, `UPDATE applicant_inbox SET resume_only=0, fetch_state='requested', fetch_at=NULL, fetch_note='', fetch_req_at=?
+      WHERE status='pending' AND phone='' AND resume_url != '' AND ${retry}`, now, now - 3600000);
+  // 연락처는 있는데 이력서가 없는 지원(등록된 사람 포함) → 이력서만
+  const b = await run(db, `UPDATE applicant_inbox SET resume_only=1, fetch_state='requested', fetch_at=NULL, fetch_note='', fetch_req_at=?
+      WHERE status IN ('pending','registered') AND phone != '' AND resume_url != '' AND ${retry}
+        AND NOT EXISTS (SELECT 1 FROM applicant_resumes r WHERE r.inbox_id=applicant_inbox.id)`, now, now - 3600000);
+  return { contact: a.meta.changes || 0, resume: b.meta.changes || 0 };
+}
+
 export async function getAutoRegister(db) {
   const r = await first(db, `SELECT value FROM applicant_settings WHERE key=?`, AUTO_KEY);
   return !!(r && r.value === '1');
@@ -328,7 +352,7 @@ export async function setAutoRegister(db, on) {
 export async function requestFetch(db, ids = null, viewer = null) {
   const sc = inboxScope(viewer);
   // 이력서만 읽는 요청(resume_only)이 걸려 있어도 연락처 가져오기로 바꾼다
-  let sql = `UPDATE applicant_inbox SET resume_only=0, fetch_state='requested', fetch_note='', fetch_at=NULL, fetch_req_at=${Date.now()} WHERE status='pending' AND phone='' AND (fetch_state != 'requested' OR resume_only=1) AND ${sc.sql}`;
+  let sql = `UPDATE applicant_inbox SET resume_only=0, fetch_tries=0, fetch_state='requested', fetch_note='', fetch_at=NULL, fetch_req_at=${Date.now()} WHERE status='pending' AND phone='' AND (fetch_state != 'requested' OR resume_only=1) AND ${sc.sql}`;
   const args = [...sc.args];
   if (Array.isArray(ids)) {
     if (!ids.length) return 0;
@@ -343,7 +367,7 @@ export async function requestFetch(db, ids = null, viewer = null) {
 export async function requestFetchByPosting(db, recruitNo) {
   const r = String(recruitNo || '');
   if (!r) return 0;
-  const x = await run(db, `UPDATE applicant_inbox SET resume_only=0, fetch_state='requested', fetch_note='', fetch_at=NULL, fetch_req_at=${Date.now()} WHERE recruit_no=? AND status='pending' AND phone='' AND (fetch_state != 'requested' OR resume_only=1) AND resume_url != ''`, r);
+  const x = await run(db, `UPDATE applicant_inbox SET resume_only=0, fetch_tries=0, fetch_state='requested', fetch_note='', fetch_at=NULL, fetch_req_at=${Date.now()} WHERE recruit_no=? AND status='pending' AND phone='' AND (fetch_state != 'requested' OR resume_only=1) AND resume_url != ''`, r);
   return x.meta.changes || 0;
 }
 
@@ -383,15 +407,15 @@ export async function saveFetchResult(db, id, { ok, phone = '', note = '', resum
   const savedResume = ok && resume ? await saveResume(db, id, row.apply_no, resume, now).catch(() => false) : false;
   if (row.resume_only) {
     // 이력서만 다시 읽기: 연락처는 비어 있을 때만 채우고, 상태는 원래대로(done)
-    await run(db, `UPDATE applicant_inbox SET resume_only=0, fetch_state='done', fetch_done_at=?, fetch_note=?${!row.phone && /^01[016789]\d{7,8}$/.test(p) ? ', phone=?' : ''} WHERE id=?`,
+    await run(db, `UPDATE applicant_inbox SET resume_only=0, fetch_state='done', fetch_done_at=?, fetch_tries=fetch_tries+${savedResume ? 0 : 1}, fetch_note=?${!row.phone && /^01[016789]\d{7,8}$/.test(p) ? ', phone=?' : ''} WHERE id=?`,
       now, savedResume ? '' : String(note || '이력서를 읽지 못했어요').slice(0, 200), ...(!row.phone && /^01[016789]\d{7,8}$/.test(p) ? [p] : []), id);
     return { ok: savedResume, phone: row.phone || p, resume: savedResume, resumeOnly: true };
   }
   if (ok && /^01[016789]\d{7,8}$/.test(p)) {
-    await run(db, `UPDATE applicant_inbox SET phone=?, fetch_state='done', fetch_note='', fetch_done_at=? WHERE id=?`, p, now, id);
+    await run(db, `UPDATE applicant_inbox SET phone=?, fetch_state='done', fetch_note='', fetch_done_at=?, fetch_tries=${resume && !savedResume ? 'fetch_tries+1' : 'fetch_tries'} WHERE id=?`, p, now, id);
     return { ok: true, phone: p, resume: savedResume };
   }
-  await run(db, `UPDATE applicant_inbox SET fetch_state='failed', fetch_note=?, fetch_done_at=? WHERE id=?`,
+  await run(db, `UPDATE applicant_inbox SET fetch_state='failed', fetch_note=?, fetch_done_at=?, fetch_tries=fetch_tries+1 WHERE id=?`,
     String(note || '연락처를 찾지 못했어요').slice(0, 200), now, id);
   return { ok: false, reason: 'failed' };
 }

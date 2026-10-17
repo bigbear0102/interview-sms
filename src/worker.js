@@ -37,6 +37,7 @@ import { phoneApiUrl, isPublicCloud } from './admin.js';
 import { monitorPhones, recordError } from './monitor.js';
 import { aiReviewReply, aiReviewUnmatched, needsAi } from './reply-ai.js';
 import { aiEnabled } from './ai.js';
+import { autoFetchSweep } from './mail-intake.js';
 import { startOp, opFor, readOp, purgeOpLogs, opIdOf } from './oplog.js';
 import { aiSuggestPostings, aiMapColumns, aiNormalizeWhens, aiCheckTemplate } from './ai-features.js';
 import { applyDeliveryEvent, pollDelivery, notifyNewReply, unreadCount, markAllRead } from './delivery.js';
@@ -736,6 +737,12 @@ export async function runGroupwareCron(env, whenMs = Date.now()) {
 
 // 주기 작업: 발송 큐 처리 + 매 시 정각 파기/세션 정리 (Workers Cron, Node 서버 공용)
 export async function runScheduled(env, whenMs = Date.now()) {
+  try {
+    // 자동 가져오기(기본 켜짐): 5분마다 연락처·이력서가 빠진 지원을 다시 요청(확장이 켜져 있으면 처리)
+    if (await rateLimit(env.DB, 'auto:fetch', 1, 5 * 60000 - 20000)) await autoFetchSweep(env.DB, whenMs);
+  } catch (e) {
+    await recordError(env, 'cron', e, 'autoFetchSweep');
+  }
   try {
     if (await rateLimit(env.DB, 'auto:remind', 1, 4 * 60000)) await queueAutoReminders(env.DB, whenMs);
   } catch (e) {

@@ -145,3 +145,32 @@ test('새 지원 메일: 들어오자마자 연락처+이력서 가져오기 요
   const r2 = await db.prepare(`SELECT fetch_state, resume_only FROM applicant_inbox WHERE id=?`).bind(id).first();
   assert.deepEqual({ ...r2 }, { fetch_state: 'requested', resume_only: 0 });
 });
+
+test('자동 가져오기(기본 켜짐): 5분마다 빠진 연락처·이력서 요청, 실패는 1시간 뒤 3번까지, 끄면 안 함', async () => {
+  const { db, add } = await setup();
+  const { autoFetchSweep, setAutoFetch, saveFetchResult } = await import('../src/mail-intake.js');
+  const now = Date.now();
+  const a = await add('5001', '새건');       // 새 메일: 이미 요청됨
+  const b = await add('5002', '예전건');
+  const c = await add('5003', '연락처만');
+  await db.prepare(`UPDATE applicant_inbox SET fetch_state='' WHERE id=?`).bind(b).run();
+  await db.prepare(`UPDATE applicant_inbox SET phone='01055550003', fetch_state='done', fetch_done_at=?, status='registered' WHERE id=?`).bind(now - 2 * 3600000, c).run();
+  assert.deepEqual(await autoFetchSweep(db, now), { contact: 1, resume: 1 });
+  const st = async (id) => ({ ...(await db.prepare(`SELECT fetch_state s, resume_only r, fetch_tries t FROM applicant_inbox WHERE id=?`).bind(id).first()) });
+  assert.deepEqual(await st(b), { s: 'requested', r: 0, t: 0 });
+  assert.deepEqual(await st(c), { s: 'requested', r: 1, t: 0 });
+  // 실패: 1시간 안에는 다시 요청하지 않고, 3번 실패하면 멈춤
+  for (let i = 1; i <= 3; i++) {
+    await saveFetchResult(db, a, { ok: false, note: '버튼 없음' }, now + i * 7200000);
+    assert.equal((await autoFetchSweep(db, now + i * 7200000 + 60000)).contact, 0);           // 방금 실패
+    const later = await autoFetchSweep(db, now + i * 7200000 + 3700000);
+    assert.equal(later.contact, i < 3 ? 1 : 0, `실패 ${i}번 뒤`);
+  }
+  assert.equal((await st(a)).t, 3);
+  // 수동으로 누르면 다시 처음부터
+  await db.prepare(`UPDATE applicant_inbox SET fetch_tries=0, fetch_state='failed', fetch_done_at=0 WHERE id=?`).bind(a).run();
+  await setAutoFetch(db, false);
+  assert.deepEqual(await autoFetchSweep(db, now + 99999999), { contact: 0, resume: 0 });
+  await setAutoFetch(db, true);
+  assert.equal((await autoFetchSweep(db, now + 99999999)).contact, 1);
+});

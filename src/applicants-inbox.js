@@ -14,7 +14,7 @@ import { peopleTabs, connState, unclassifiedPostings, suggestForTitles, agentIdl
 import { normalizePhone, isValidMobile } from './parser.js';
 import {
   getUserMailName, setUserMailName, inboxScope, ensureIntakeToken, intakeAddress, intakeDomain, listInbox, pendingInboxCount,
-  requestFetch, requestFetchByPosting, createAgentToken, hasAgentToken, getAutoRegister, setAutoRegister, agentStatus
+  requestFetch, requestFetchByPosting, createAgentToken, hasAgentToken, getAutoRegister, setAutoRegister, agentStatus, getAutoFetch, setAutoFetch
 } from './mail-intake.js';
 
 // 수신함은 열어 둔 채로 두면 1분마다 새로 고친다(새 지원 메일이 저절로 보이게).
@@ -235,6 +235,7 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
   const cs = connState(agent);
   const tokenSet = agent.hasKey;
   const autoOn = isSuper ? await getAutoRegister(db) : false;
+  const fetchOn = isSuper ? await getAutoFetch(db) : false;
   const pending = await pendingInboxCount(db, viewer);
   const todo = await unclassifiedPostings(db).catch(() => 0);
   const FLASH = { gw_saved: '그룹웨어를 연결했어요. 아래 결과를 확인해 주세요.', gw_checked: '그룹웨어를 확인했어요.', gw_deleted: '그룹웨어 연결을 지웠어요.', am_saved: '알바몬 계정을 저장했어요. 관리자 PC의 확장이 다음 확인 때(1분 안) 새 계정을 받아요.', am_deleted: '알바몬 계정을 지웠어요.', am_toggled: '알바몬 계정 사용 여부를 바꿨어요.', auto: '자동 등록 설정을 저장했어요.', addr: '내 수신 주소를 바꿨어요. 메일 전달 규칙을 걸어 두셨다면 새 주소로 바꿔 주세요.', token: '공용 수신 주소를 새로 만들었어요. 메일 전달 설정도 새 주소로 바꿔 주세요.' };
@@ -265,7 +266,9 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
   // 관리자: 연락처를 가져오면 바로 지원자로 등록(예전에는 공용 수신 주소 카드 안에 있었다)
   const autoCard = isSuper ? `<div class="card" style="margin-top:12px"><b>자동 등록</b> <small class="muted">관리자</small>
       <div style="margin-top:8px"><form method="post" action="/applicants/inbox/auto" class="inline"><input type="hidden" name="on" value="${autoOn ? 0 : 1}">
-        <button class="btn secondary small">연락처를 가져오면 바로 지원자로 등록: <b>${autoOn ? '켜짐 (끄기)' : '꺼짐 (켜기)'}</b></button></form></div></div>` : '';
+        <button class="btn secondary small">연락처를 가져오면 바로 지원자로 등록: <b>${autoOn ? '켜짐 (끄기)' : '꺼짐 (켜기)'}</b></button></form></div>
+      <div style="margin-top:8px"><form method="post" action="/applicants/inbox/auto-fetch" class="inline"><input type="hidden" name="on" value="${fetchOn ? 0 : 1}">
+        <button class="btn secondary small">5분마다 빠진 연락처·이력서 자동으로 가져오기: <b>${fetchOn ? '켜짐 (끄기)' : '꺼짐 (켜기)'}</b></button></form></div></div>` : '';
   const keyCard = `<div class="card"><b>연결 키</b> <small class="muted">${tokenSet ? '있음' : '없음'} · 보통은 자동으로 연결돼서 만질 일이 없어요</small>
       <div class="stack" style="margin-top:10px">
         ${agentToken ? `<div class="copybox"><div class="copylabel">내 연결 키 (지금만 보여요)</div><div class="copyvalue">${esc(agentToken)}</div>
@@ -295,7 +298,7 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
     <div class="csteps">
       ${gwCard}
       <section class="cstep${agent.lastUsedAt ? ' done' : ''}"><h2>연락처 가져오기: 크롬 확장 프로그램 설치</h2>
-        <p class="muted" style="font-size:15px">알바몬 메일에는 연락처가 없어요. <b>PC 크롬의 확장 프로그램</b>이 알바몬 이력서를 열어 연락처를 채워 줘요. 한 번만 설치하면 돼요. 그 PC의 크롬이 켜져 있을 때 처리돼요(휴대폰에서 요청해도 돼요).</p>
+        <p class="muted" style="font-size:15px"><b>PC 크롬의 확장 프로그램</b>이 켜져 있으면 새 지원의 <b>연락처와 이력서를 자동으로</b> 가져와요(빠진 건 5분마다 다시). 한 번만 설치하면 돼요.</p>
         <div class="stack">
           <ol class="muted" style="margin:0;padding-left:20px;font-size:14px">
             <li>아래 <b>확장 프로그램 내려받기</b>로 파일을 받고 압축을 풀어요.</li>
@@ -540,7 +543,7 @@ export async function handleInbox(c, deps) {
   if (path === '/applicants/inbox/resume-all' && method === 'POST') {
     const sc = inboxScope(viewer, 'i');
     // 연락처가 없으면 연락처+이력서, 연락처가 이미 있으면(예전에 가져온 사람·등록된 사람) 이력서만
-    const r = await run(db, `UPDATE applicant_inbox SET resume_only=CASE WHEN phone != '' THEN 1 ELSE 0 END, fetch_state='requested', fetch_at=NULL, fetch_note='', fetch_req_at=?
+    const r = await run(db, `UPDATE applicant_inbox SET resume_only=CASE WHEN phone != '' THEN 1 ELSE 0 END, fetch_tries=0, fetch_state='requested', fetch_at=NULL, fetch_note='', fetch_req_at=?
         WHERE id IN (SELECT i.id FROM applicant_inbox i WHERE i.resume_url != '' AND i.fetch_state != 'requested'
           AND NOT EXISTS (SELECT 1 FROM applicant_resumes x WHERE x.inbox_id=i.id) AND ${sc.sql})`, Date.now(), ...sc.args);
     const n = r.meta.changes || 0;
@@ -563,6 +566,13 @@ export async function handleInbox(c, deps) {
     const n = await requestFetch(db, null, viewer);
     await audit(db, user, 'applicant.inbox_fetch_all', `n=${n}`);
     return redirect(`/applicants/inbox?ok=fetchall&n=${n}`);
+  }
+  if (path === '/applicants/inbox/auto-fetch' && method === 'POST') {
+    if (user.role !== 'super') return html(pg('접근 불가', '<p>관리자만 할 수 있어요.</p>', 'applicants'), 403);
+    const f = await readForm(request);
+    await setAutoFetch(db, f.on === '1');
+    await audit(db, user, 'applicant.inbox_auto_fetch', `on=${f.on === '1' ? 1 : 0}`);
+    return redirect('/applicants/inbox/connect?ok=auto');
   }
   if (path === '/applicants/inbox/auto' && method === 'POST') {
     if (user.role !== 'super') return html(pg('접근 불가', '<p>관리자만 할 수 있어요.</p>', 'applicants'), 403);

@@ -139,6 +139,9 @@
   3. 크롬을 켜 두면 차례로 처리돼요(4건씩 동시)
 - 그다음 할 일: "이력서 항목 분석"으로 실제 항목을 확인하고 정리 규칙(`src/resume.js` KNOWN)을 보완해요.
 
+## 자동 가져오기 기본 — 배포 (2026-10-18, 마이그레이션 0033)
+- 5분마다 빠진 연락처·이력서를 자동으로 요청해요. 실패하면 1시간 간격으로 3번까지 다시 시도해요. 관리자 토글이 있고 기본은 켜짐이에요. 시험 216개 통과.
+
 ## 작업 방법 메모
 - 배포는 `npm run deploy`(테스트→마이그레이션→배포→/healthz). 이 환경(Termux PRoot)에서도 wrangler 로그인·배포·D1 원격 조회가 된다.
 - 라이브 코드 비교: `GET /accounts/{id}/workers/scripts/interview-sms/content/v2` 결과의 worker.js ↔ `npx wrangler deploy --dry-run --outdir <dir>`.
