@@ -16,3 +16,5 @@ jobs:
       - run: npm ci
       - run: cd tools/albamon-agent && npm ci
       - run: xvfb-run -a node tools/albamon-extension/mock-multi.mjs
+      - name: 기존 시험(계정 1개·그룹웨어)
+        run: xvfb-run -a node tools/albamon-extension/mock-ext.mjs

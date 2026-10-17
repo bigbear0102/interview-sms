@@ -228,10 +228,10 @@ mf.host_permissions = ['http://127.0.0.1/*'];
 mf.content_scripts[0].matches = ['http://127.0.0.1/applicants/inbox*'];
 writeFileSync(join(dir, 'manifest.json'), JSON.stringify(mf));
 
-const chrome = ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'].find((p) => existsSync(p));
+const chrome = [process.env.CHROME_PATH, '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'].filter(Boolean).find((p) => existsSync(p));
 const browser = await puppeteer.launch({
   executablePath: chrome, headless: false, userDataDir: join(dir, 'profile'), pipe: true, enableExtensions: true,
-  args: ['--no-first-run', '--window-position=-2000,0', '--window-size=800,600']
+  args: ['--no-first-run', '--no-sandbox', '--window-position=-2000,0', '--window-size=800,600']
 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 await browser.installExtension(dir);
