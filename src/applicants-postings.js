@@ -59,9 +59,11 @@ export async function renderPostings(db, { tab = 'todo', viewer = null, flash = 
   const when = (t) => (t ? new Date(Number(t) + 9 * 3600 * 1000).toISOString().slice(0, 10) : '');
 
   const cards = [];
-  for (const g of shown) {
-    const sug = g.blank > 0 ? await suggestCostCenters(db, g.title) : [];
-    const ai = g.blank > 0 ? await aiPostingSuggestion(db, g.recruit_no) : null;
+  // 공고마다 제안·AI 추천을 동시에 읽는다
+  const extra = await Promise.all(shown.map((g) => g.blank > 0
+    ? Promise.all([suggestCostCenters(db, g.title), aiPostingSuggestion(db, g.recruit_no)]) : [[], null]));
+  for (const [gi, g] of shown.entries()) {
+    const [sug, ai] = extra[gi];
     const people = g.reg + g.pend;
     const lab = `g-${esc(g.recruit_no)}`;
     cards.push(`<section class="card posting" id="${lab}" style="margin-bottom:12px;overflow-wrap:anywhere;min-width:0">

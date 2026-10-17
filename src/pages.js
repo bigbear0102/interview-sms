@@ -150,45 +150,48 @@ export async function renderHome(db, user, deps) {
   let scheduled = 0, review = 0, gwCount = 0, reviewHref = '/campaigns', noreplyHref = '/campaigns';
   let phones = [];
   let noreply7 = 0;
-  const unread = await unreadCount(db, user).catch(() => 0);
-  const inbox = await inboxBreakdown(db, { id: user.id, isSuper: user.role === 'super' }).catch(() => ({ pending: 0, ready: 0, waiting: 0 }));
+  // 서로 상관없는 조회는 한꺼번에 보낸다(DB 왕복 시간이 쌓이지 않게, 2026-10-18 속도 점검)
+  const viewer = { id: user.id, isSuper: user.role === 'super' };
+  const [unread, inbox] = await Promise.all([
+    unreadCount(db, user).catch(() => 0),
+    inboxBreakdown(db, viewer).catch(() => ({ pending: 0, ready: 0, waiting: 0 }))
+  ]);
   const agent = inbox.waiting ? await agentStatus(db, user.id).catch(() => ({ hasKey: true, lastUsedAt: Date.now() })) : null;
   const stalled = !!(agent && agentIdle(agent));
 
   if (depIds.length) {
     const dph = idList(depIds);
-    const gwIds = (await all(db, `SELECT id FROM gateways WHERE active=1 AND department_id IN (${dph})`, ...depIds)).map((r) => r.id);
+    const [gwRows, rv, nr] = await Promise.all([
+      all(db, `SELECT id, name, health, health_note, last_seen_at FROM gateways WHERE active=1 AND department_id IN (${dph})`, ...depIds),
+      // 확인 필요(일정 변경 요청 포함): 한 안내에만 있으면 그 안내의 확인 필요 목록으로 바로 보낸다
+      all(db, `SELECT ca.campaign_id id, COUNT(*) n FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
+       WHERE k.department_id IN (${dph}) AND k.purged_at IS NULL AND ca.status='unclear' GROUP BY ca.campaign_id`, ...depIds),
+      all(db, `SELECT ca.campaign_id id, COUNT(*) n FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
+        WHERE k.department_id IN (${dph}) AND ca.status='sent' AND ca.sent_at>=? GROUP BY ca.campaign_id`, ...depIds, Date.now() - 7 * DAY)
+    ]);
+    const gwIds = gwRows.map((r) => r.id);
     gwCount = gwIds.length;
-    phones = await all(db, `SELECT name, health, health_note, last_seen_at FROM gateways WHERE active=1 AND department_id IN (${dph})`, ...depIds);
+    phones = gwRows;
     if (gwIds.length) {
       const g = idList(gwIds);
-      const ms = (await first(db, `SELECT COUNT(*) n FROM messages WHERE gateway_id IN (${g}) AND status IN ('scheduled','sending')`, ...gwIds)).n;
-      const cs = (await first(db, `SELECT COUNT(*) n FROM campaigns WHERE gateway_id IN (${g}) AND status='scheduled'`, ...gwIds)).n;
-      scheduled = ms + cs;
+      const [ms, cs] = await Promise.all([
+        first(db, `SELECT COUNT(*) n FROM messages WHERE gateway_id IN (${g}) AND status IN ('scheduled','sending')`, ...gwIds),
+        first(db, `SELECT COUNT(*) n FROM campaigns WHERE gateway_id IN (${g}) AND status='scheduled'`, ...gwIds)
+      ]);
+      scheduled = ms.n + cs.n;
     }
-    // 확인 필요(일정 변경 요청 포함): 한 안내에만 있으면 그 안내의 확인 필요 목록으로 바로 보낸다
-    const rv = await all(db,
-      `SELECT ca.campaign_id id, COUNT(*) n FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
-       WHERE k.department_id IN (${dph}) AND k.purged_at IS NULL AND ca.status='unclear' GROUP BY ca.campaign_id`, ...depIds);
     review = rv.reduce((a, r) => a + r.n, 0);
     reviewHref = rv.length === 1 ? `/campaigns/${rv[0].id}?status=unclear` : '/campaigns';
-    const nr = await all(db,
-      `SELECT ca.campaign_id id, COUNT(*) n FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
-        WHERE k.department_id IN (${dph}) AND ca.status='sent' AND ca.sent_at>=? GROUP BY ca.campaign_id`, ...depIds, Date.now() - 7 * DAY);
     noreplyHref = nr.length === 1 ? `/campaigns/${nr[0].id}?status=sent` : '/campaigns';
     noreply7 = nr.reduce((a, r) => a + r.n, 0);
   }
 
   // 절약 시간은 월 1회 보는 정보라 맨 아래 한 줄(펼치면 자세히)
-  const ms = await monthStats(db, depIds);
-  const savingsCard = renderSavingsCard(ms);
-  const savings = savingsCard ? `<details class="savline"><summary>이번 달 시스템이 대신한 일 · ${esc(fmtMinutes(estimateMinutes(ms)))}</summary>${savingsCard}</details>` : '';
-  const postTodo = await unclassifiedPostings(db).catch(() => 0);
-
-  // 사업장·발송일별 현황 (최근 30일)
-  let board = [];
-  if (depIds.length) {
-    board = await all(db,
+  const [ms, postTodo, td, boardRows] = await Promise.all([
+    monthStats(db, depIds),
+    unclassifiedPostings(db).catch(() => 0),
+    todayTodo(db, user).catch(() => ({ total: 0, left: 0 })),
+    depIds.length ? all(db,
       `SELECT date((ca.sent_at + 32400000) / 1000, 'unixepoch') day, ca.site site,
          COUNT(*) sent,
          SUM(ca.status='attending') attending, SUM(ca.status='absent') absent,
@@ -197,8 +200,14 @@ export async function renderHome(db, user, deps) {
        FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
        WHERE k.department_id IN (${idList(depIds)}) AND ca.sent_at IS NOT NULL AND ca.sent_at>=?
          AND ca.status IN ('sent','attending','absent','unclear')
-       GROUP BY day, ca.site ORDER BY day DESC, ca.site LIMIT 120`, ...depIds, today - 29 * DAY);
-  }
+       GROUP BY day, ca.site ORDER BY day DESC, ca.site LIMIT 120`, ...depIds, today - 29 * DAY) : []
+  ]);
+  const savingsCard = renderSavingsCard(ms);
+  const savings = savingsCard ? `<details class="savline"><summary>이번 달 시스템이 대신한 일 · ${esc(fmtMinutes(estimateMinutes(ms)))}</summary>${savingsCard}</details>` : '';
+
+
+  // 사업장·발송일별 현황 (최근 30일)
+  const board = boardRows;
   const bsum = board.reduce((a, r) => ({ showed: a.showed + r.showed, noshow: a.noshow + r.noshow, sent: a.sent + r.sent, attending: a.attending + r.attending, absent: a.absent + r.absent, unclear: a.unclear + r.unclear, noreply: a.noreply + r.noreply }),
     { showed: 0, noshow: 0, sent: 0, attending: 0, absent: 0, unclear: 0, noreply: 0 });
   const dayLabel = (d) => { const [, m, dd] = d.split('-'); return `${Number(m)}/${Number(dd)}`; };
@@ -212,7 +221,6 @@ export async function renderHome(db, user, deps) {
     : `<div class="notice warn" role="alert">${icon('alert')}<div><b>문자를 보낼 폰이 아직 연결되지 않았어요.</b><br>${
       user.role === 'super' ? '<a href="/admin">설정에서 폰을 연결하세요.</a> · <a href="/help/phone">폰 설치 안내</a>' : '관리자에게 폰 연결을 부탁하세요. · <a href="/help/phone">폰 설치 안내</a>'}</div></div>`;
 
-  const td = await todayTodo(db, user).catch(() => ({ total: 0, left: 0 }));
   // 할 일은 숫자 + 제목만, 0이면 숨긴다. 자동으로 진행 중인 일(연락처 가져오기 등)은 할 일이 아니다.
   const item = (href, n, tone, title) => `<li><a href="${href}"><span class="n ${tone}">${n}</span><span class="t">${title}</span><span class="go" aria-hidden="true">›</span></a></li>`;
   const todoItems = [

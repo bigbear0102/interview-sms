@@ -109,7 +109,15 @@ test('지원자 목록: 위쪽 탭(일의 순서), 행 누르면 상세, 추가�
 test('공통 스크립트: 확인 대화상자, 제출 중 잠금, 표 머리글 scope', async () => {
   const { call, post } = await setup('super');
   await post('/applicants/new', { name: '홍길동', phone: '010-1111-0001', applied_to: 'A', job: '현장' });
-  const html = await (await call('/applicants')).text();
+  const page = await (await call('/applicants')).text();
+  // 공통 스크립트는 따로 파일(오래 기억)로: 페이지가 가리키는 주소로 받아 본다
+  const src = page.match(/<script src="(\/assets\/app\.[a-z0-9]+\.js)"><\/script>/)[1];
+  const jsRes = await call(src);
+  assert.equal(jsRes.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+  const css = page.match(/<link rel="stylesheet" href="(\/assets\/app\.[a-z0-9]+\.css)">/)[1];
+  assert.match(await (await call(css)).text(), /word-break:keep-all/);
+  assert.equal((await call('/assets/app.old.js')).status, 404);
+  const html = page + await jsRes.text();
   assert.match(html, /window\.askConfirm/);
   assert.match(html, /aria-busy/);
   assert.match(html, /<th scope="col">/);

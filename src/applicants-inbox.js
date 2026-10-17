@@ -60,12 +60,18 @@ const STATUS_BADGE = {
 const SUBLINE = (r) => [r.gender, r.age ? r.age + '세' : '', r.address, r.career ? '경력 ' + r.career : ''].filter(Boolean).join(' · ');
 
 export async function renderInbox(db, env, { status = 'pending', isSuper = false, flash = '', err = '', origin = '', fetched = 0, viewer = null, filter = '', n = 0, skipped = 0, fr = 0, later = 0 } = {}) {
-  const pending = await pendingInboxCount(db, viewer);
-  const todo = await unclassifiedPostings(db).catch(() => 0);
-  const all_ = await listInbox(db, status === 'done' ? 'done' : 'pending', 200, viewer);
   const dsc = inboxScope(viewer);
-  const doneCount = (await first(db, `SELECT COUNT(*) n FROM applicant_inbox WHERE status != 'pending' AND ${dsc.sql}`, ...dsc.args)).n;
-  const agent = await agentStatus(db, viewer ? viewer.id : null);
+  // 서로 상관없는 조회는 한꺼번에(DB 왕복 시간이 쌓이지 않게)
+  const [pending, todo, all_, doneRow, agent, noResumeRow] = await Promise.all([
+    pendingInboxCount(db, viewer),
+    unclassifiedPostings(db).catch(() => 0),
+    listInbox(db, status === 'done' ? 'done' : 'pending', 200, viewer),
+    first(db, `SELECT COUNT(*) n FROM applicant_inbox WHERE status != 'pending' AND ${dsc.sql}`, ...dsc.args),
+    agentStatus(db, viewer ? viewer.id : null),
+    first(db, `SELECT COUNT(*) n FROM applicant_inbox i WHERE i.resume_url != '' AND i.fetch_state != 'requested'
+      AND NOT EXISTS (SELECT 1 FROM applicant_resumes r WHERE r.inbox_id=i.id) AND ${inboxScope(viewer, 'i').sql}`, ...inboxScope(viewer, 'i').args).catch(() => ({ n: 0 }))
+  ]);
+  const doneCount = doneRow.n;
   const cs = connState(agent);
   const idle = agentIdle(agent);
 
@@ -83,8 +89,7 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   if (FLASH[flash]) notices.push(`<div class="notice ok">${icon('check')}<div>${esc(FLASH[flash])}</div></div>`);
   if (ERR[err]) notices.push(`<div class="notice warn" role="alert">${icon('alert')}<div>${esc(ERR[err])}</div></div>`);
   // 연락처는 가져왔지만 이력서 내용은 없는 사람(확장 v1.9 전에 가져온 사람): 이력서만 다시 읽기
-  const noResume = (await first(db, `SELECT COUNT(*) n FROM applicant_inbox i WHERE i.resume_url != '' AND i.fetch_state != 'requested'
-      AND NOT EXISTS (SELECT 1 FROM applicant_resumes r WHERE r.inbox_id=i.id) AND ${inboxScope(viewer, 'i').sql}`, ...inboxScope(viewer, 'i').args).catch(() => ({ n: 0 }))).n;
+  const noResume = noResumeRow.n;
 
   const needPhone = all_.filter((r) => !r.phone).length;
   const stalledN = idle ? all_.filter((r) => !r.phone && r.fetch_state === 'requested' && !r.resume_only).length : 0;

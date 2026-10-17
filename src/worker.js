@@ -11,7 +11,7 @@ import {
 import { all, first, run } from './d1.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import { applyAdminAction, renderAdmin } from './admin.js';
-import { page, esc, STATUS_LABEL, fmtTime, parseKstLocal, icon } from './views.js';
+import { page, esc, STATUS_LABEL, fmtTime, parseKstLocal, icon, assets } from './views.js';
 import {
   renderHome, renderCampaignList, renderCampaignNew, renderCampaignDetail, renderSend, renderMessages,
   renderPassword, renderAudit
@@ -99,6 +99,14 @@ async function handle(request, env, ctx) {
   const method = request.method;
   const publicBase = env.PUBLIC_BASE_URL || url.origin;
   let m;
+
+  // 공통 디자인·스크립트(주소에 내용 해시가 있어 오래 기억해도 된다). DB·로그인을 거치지 않는다.
+  if (method === 'GET' && path.startsWith('/assets/app.')) {
+    const a = assets();
+    if (path === a.css) return new Response(a.cssBody, { headers: { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'public, max-age=31536000, immutable' } });
+    if (path === a.js) return new Response(a.jsBody, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'public, max-age=31536000, immutable' } });
+    return new Response('not found', { status: 404 });
+  }
 
   // 문자 수신 웹훅 (로그인 불필요, URL 토큰 + HMAC)
   // 폰이 정말 알림을 보냈는지 확인할 수 있도록, 도착한 요청은 결과와 함께 감사 로그에 남긴다(개인정보 제외).

@@ -533,8 +533,20 @@ export const NAV = [
 ];
 
 // nav: 현재 위치(home|send|inbox|interview|settings|account)
+// 공통 디자인(CSS)·스크립트(APP_JS)는 페이지마다 넣지 않고 따로 파일로 보낸다(브라우저가 1년 기억, 내용이 바뀌면 주소가 바뀜).
+// 예전에는 페이지마다 약 55KB를 다시 받았다(2026-10-18 속도 점검).
+function hashOf(str) { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); }
+let ASSETS = null;
+export function assets() {
+  if (!ASSETS) {
+    const v = hashOf(CSS + APP_JS);
+    ASSETS = { css: `/assets/app.${v}.css`, js: `/assets/app.${v}.js`, cssBody: CSS, jsBody: APP_JS };
+  }
+  return ASSETS;
+}
+
 export function page(user, title, body, nav = '', badges = {}) {
-  const head = `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - 문자 관리 시스템</title>${HEAD_ASSETS}<style>${CSS}</style>`;
+  const head = `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} - 문자 관리 시스템</title>${HEAD_ASSETS}<link rel="stylesheet" href="${assets().css}">`;
   if (!user) return `<!doctype html><html lang="ko"><head>${head}</head><body><main id="main" class="auth"><div class="auth-wrap"><p class="auth-brand">문자 관리 시스템</p>${body}</div></main></body></html>`;
 
   const items = NAV.filter((n) => !n.superOnly || user.role === 'super');
@@ -570,6 +582,6 @@ export function page(user, title, body, nav = '', badges = {}) {
 <nav class="tabbar" aria-label="하단 메뉴">${tabItems.map((n) => link(n, true)).join('')}<button type="button" class="tabmore${moreCurrent ? ' cur' : ''}" aria-expanded="false" aria-controls="moresheet">${icon('more', 22)}<span>더보기</span></button></nav>
 <div class="moresheet" id="moresheet" hidden><ul>${moreLinks.map((m) => `<li><a href="${m.href}"${nav === m.key ? ' class="cur" aria-current="page"' : ''}>${icon(m.icon, 20)}<span>${esc(m.label)}</span></a></li>`).join('')}
   <li><form method="post" action="/logout"><button type="submit">${icon('send', 20)}<span>로그아웃</span></button></form></li></ul></div>
-<script>${APP_JS}</script>
+<script src="${assets().js}"></script>
 </body></html>`;
 }

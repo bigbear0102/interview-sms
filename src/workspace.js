@@ -59,13 +59,11 @@ export async function suggestCostCenters(db, title, limit = 4) {
 
 // 여러 제목의 제안을 한꺼번에(같은 고객사 이름은 한 번만 찾는다). 반환: Map(제목 → 이름 배열)
 export async function suggestForTitles(db, titles, limit = 3) {
-  const byCore = new Map();
   const out = new Map();
-  for (const t of new Set(titles)) {
-    const core = bracketName(t);
-    if (!core) { out.set(t, []); continue; }
-    if (!byCore.has(core)) byCore.set(core, await suggestCostCenters(db, t, limit));
-    out.set(t, byCore.get(core));
-  }
+  const uniq = [...new Set(titles)];
+  const cores = [...new Set(uniq.map(bracketName).filter(Boolean))];
+  // 고객사 이름마다 한 번, 동시에 찾는다
+  const found = new Map(await Promise.all(cores.map(async (core) => [core, await suggestCostCenters(db, `[${core}]`, limit)])));
+  for (const t of uniq) out.set(t, found.get(bracketName(t)) || []);
   return out;
 }

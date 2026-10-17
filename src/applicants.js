@@ -377,19 +377,25 @@ export function renderApplicantNew({ error = '', values = {} } = {}) {
 export async function renderApplicantDetail(db, id, { user, notice = '', link = null } = {}) {
   const a = await first(db, `SELECT * FROM applicants WHERE id=?`, id);
   if (!a) return null;
-  const apps = await all(db, `SELECT * FROM applicant_applications WHERE applicant_id=? ORDER BY id DESC`, id);
-  const bls = await all(db,
-    `SELECT b.*, COALESCE(NULLIF(u.name,''), u.username) by_name, COALESCE(NULLIF(r.name,''), r.username) rel_name
-       FROM blacklist b LEFT JOIN users u ON u.id=b.created_by LEFT JOIN users r ON r.id=b.released_by
-      WHERE b.applicant_id=? ORDER BY b.id DESC`, id);
-  const evs = await all(db,
-    `SELECT e.*, COALESCE(NULLIF(u.name,''), u.username) who FROM applicant_events e LEFT JOIN users u ON u.id=e.user_id
-      WHERE e.applicant_id=? ORDER BY e.id DESC LIMIT 50`, id);
+  // 서로 상관없는 조회는 한꺼번에(DB 왕복 시간이 쌓이지 않게)
+  const [apps, bls, evs, hist, sameName, dlA, dlJ, stageMap, rates, resume] = await Promise.all([
+    all(db, `SELECT * FROM applicant_applications WHERE applicant_id=? ORDER BY id DESC`, id),
+    all(db,
+      `SELECT b.*, COALESCE(NULLIF(u.name,''), u.username) by_name, COALESCE(NULLIF(r.name,''), r.username) rel_name
+         FROM blacklist b LEFT JOIN users u ON u.id=b.created_by LEFT JOIN users r ON r.id=b.released_by
+        WHERE b.applicant_id=? ORDER BY b.id DESC`, id),
+    all(db,
+      `SELECT e.*, COALESCE(NULLIF(u.name,''), u.username) who FROM applicant_events e LEFT JOIN users u ON u.id=e.user_id
+        WHERE e.applicant_id=? ORDER BY e.id DESC LIMIT 50`, id),
+    link && link.history ? campaignHistory(db, a.phone, user) : null,
+    all(db, `SELECT id, phone FROM applicants WHERE name=? AND id!=? ORDER BY id LIMIT 10`, a.name, a.id),
+    all(db, `SELECT DISTINCT applied_to v FROM applicant_applications WHERE applied_to != '' ORDER BY v LIMIT 100`),
+    all(db, `SELECT DISTINCT job v FROM applicant_applications WHERE job != '' ORDER BY v LIMIT 100`),
+    latestStages(db, [a.phone], user).catch(() => new Map()),
+    ratingsOf(db, a.id).catch(() => []),
+    resumeOfApplicant(db, a.id, a.phone).catch(() => null)
+  ]);
   const active = bls.find((b) => b.status === 'active');
-  const hist = link && link.history ? await campaignHistory(db, a.phone, user) : null;
-  const sameName = await all(db, `SELECT id, phone FROM applicants WHERE name=? AND id!=? ORDER BY id LIMIT 10`, a.name, a.id);
-  const dlA = await all(db, `SELECT DISTINCT applied_to v FROM applicant_applications WHERE applied_to != '' ORDER BY v LIMIT 100`);
-  const dlJ = await all(db, `SELECT DISTINCT job v FROM applicant_applications WHERE job != '' ORDER BY v LIMIT 100`);
 
   const pastBl = bls.filter((b) => b.status !== 'active');
   const latest = apps[0] || {};
@@ -452,9 +458,7 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
           <div class="dlg-actions">${cancel}<button class="btn secondary">합치기</button></div></form>`)
   ].join('');
 
-  const stage = (await latestStages(db, [a.phone], user).catch(() => new Map())).get(a.phone);
-  const rates = await ratingsOf(db, a.id).catch(() => []);
-  const resume = await resumeOfApplicant(db, a.id, a.phone).catch(() => null);
+  const stage = stageMap.get(a.phone);
   return `${RATING_CSS}${RESUME_CSS}<a class="back" href="/applicants" style="display:inline-block;font-size:14px;margin-bottom:10px">← 지원자</a>
     ${notice}
     <header class="pd-hero">

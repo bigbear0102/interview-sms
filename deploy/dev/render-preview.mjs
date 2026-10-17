@@ -133,9 +133,22 @@ const pages = {
   signup: ['/signup', false],
   forgot: ['/forgot', false]
 };
+// 화면마다 DB 호출 수를 센다(속도 점검용: 운영에서는 호출 하나가 왕복 시간이라 수가 곧 속도)
+let dbCalls = 0;
+for (const k of ['prepare']) { const orig = db[k].bind(db); db[k] = (...a) => { const st = orig(...a); for (const m of ['first', 'all', 'run']) { const f = st[m]?.bind(st); if (f) st[m] = (...x) => { dbCalls++; return f(...x); }; } const b = st.bind?.bind(st); if (b) st.bind = (...x) => { const r = b(...x); for (const m of ['first', 'all', 'run']) { const f = r[m]?.bind(r); if (f) r[m] = (...y) => { dbCalls++; return f(...y); }; } return r; }; return st; }; }
+const origBatch = db.batch.bind(db); db.batch = (x) => { dbCalls++; return origBatch(x); };
+{
+  const { assets } = await import('../../src/views.js');
+  const a = assets();
+  mkdirSync(`${out}/assets`, { recursive: true });
+  writeFileSync(`${out}${a.css}`, a.cssBody);
+  writeFileSync(`${out}${a.js}`, a.jsBody);
+}
 for (const [name, [path, auth]] of Object.entries(pages)) {
+  dbCalls = 0;
   const res = await handleRequest(new Request('https://interview.example' + path, auth ? { headers: { cookie: `sid=${sid}` } } : {}), env, ctx);
   const html = await res.text();
-  writeFileSync(`${out}/${name}.html`, html);
-  console.log(name.padEnd(20), res.status, html.length);
+  // 공통 CSS·JS 는 파일로 분리됐다: 미리보기(file://)에서 열리게 상대 경로로 바꾼다
+  writeFileSync(`${out}/${name}.html`, html.replace(/(href|src)="\/assets\//g, '$1="assets/'));
+  console.log(name.padEnd(20), res.status, html.length, `DB ${dbCalls}`);
 }

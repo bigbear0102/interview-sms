@@ -12,12 +12,14 @@ export async function createSession(db, userId) {
 
 export async function getUser(db, token) {
   if (!token) return null;
+  // 한 번에(요청마다 DB 왕복을 줄인다): 사용자 + 부서 목록
   const row = await first(db,
-    `SELECT u.id, u.username, u.name, u.email, u.role FROM sessions s JOIN users u ON u.id=s.user_id
+    `SELECT u.id, u.username, u.name, u.email, u.role, (SELECT group_concat(department_id) FROM user_departments WHERE user_id=u.id) deps
+       FROM sessions s JOIN users u ON u.id=s.user_id
      WHERE s.token_hash=? AND s.expires_at>? AND u.active=1 AND u.email_verified_at IS NOT NULL`, await sha256Hex(token), Date.now());
   if (!row) return null;
-  const deps = (await all(db, `SELECT department_id FROM user_departments WHERE user_id=?`, row.id)).map((r) => r.department_id);
-  return { ...row, departments: deps };
+  const { deps, ...u } = row;
+  return { ...u, departments: deps ? String(deps).split(',').map(Number) : [] };
 }
 
 export const canAccessDepartment = (user, departmentId) =>

@@ -151,6 +151,11 @@
 - 사용자 피드백("줄 맞춤·줄바뀜 불편")으로 전체에 한국어 낱말 단위 줄바꿈을 적용했어요. 시각·숫자·뱃지는 줄바꿈 금지, 모바일 카드 정렬, 빈 칸 "-" 제거. 규칙은 `docs/UX.md` 11장.
 - UX v2 묶음 A~E와 함께 배포했어요.
 
+## 속도 개선 — 배포 (2026-10-18)
+- 공통 CSS·JS를 캐시되는 파일로 분리했어요(페이지 58KB → 8.5KB). 로그인 확인 쿼리를 1번으로 줄였고, 주요 화면의 DB 조회를 동시에 보내요. 자세한 내용은 DECISIONS "속도 개선".
+- `deploy/dev/render-preview.mjs`가 화면별 DB 호출 수를 함께 출력해요(속도 점검용).
+- 운영 로그인 화면의 실제 응답 시간은 재지 못했어요(임시 세션 생성이 권한 검사에서 막힘). 사용자 체감 확인이 필요해요.
+
 ## 작업 방법 메모
 - 배포는 `npm run deploy`(테스트→마이그레이션→배포→/healthz). 이 환경(Termux PRoot)에서도 wrangler 로그인·배포·D1 원격 조회가 된다.
 - 라이브 코드 비교: `GET /accounts/{id}/workers/scripts/interview-sms/content/v2` 결과의 worker.js ↔ `npx wrangler deploy --dry-run --outdir <dir>`.
