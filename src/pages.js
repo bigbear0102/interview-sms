@@ -290,9 +290,14 @@ export async function renderCampaignList(db, user, deps) {
 }
 
 // ---------------- 면접 안내 만들기 ----------------
-export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
-  return `${pageHeader({ title: '면접 안내 만들기', back: { href: '/campaigns', label: '면접 안내' },
+export function renderCampaignNew({ gws, deps, today, defaultTemplate, slotTemplate = '', prefill = null }) {
+  const many = !!prefill;
+  const prefillNotice = prefill ? `<div class="notice ok">${icon('check')}<div><b>지원자 관리에서 고른 ${prefill.count}명을 명단에 채웠어요.</b><br>
+      면접일시가 모두 같으면 아래 <b>"모두 같은 면접일시"</b>에 한 번만 적으세요. 사람마다 다르면 명단의 마지막 칸에 적어요.${prefill.noSite ? `<br>${prefill.noSite}명은 원가중심점이 없어요. 아래 "사업장" 칸에 적으면 함께 적용돼요.` : ''}</div></div>
+    ${prefill.blacklisted.length ? `<div class="notice warn" role="status">${icon('alert')}<div><b>참고: 고른 사람 중 블랙리스트 ${prefill.blacklisted.length}명</b> — ${prefill.blacklisted.slice(0, 10).map(esc).join(', ')}${prefill.blacklisted.length > 10 ? ' 외' : ''}. 보내지 않으려면 명단에서 그 줄을 지우세요.</div></div>` : ''}` : '';
+  return `${pageHeader({ title: '면접 안내 만들기', back: { href: prefill ? '/applicants' : '/campaigns', label: prefill ? '지원자' : '면접 안내' },
     desc: '명단을 올리면 안내 문자가 준비돼요. <b>올린 뒤에 보내기를 눌러야</b> 문자가 나가니 안심하세요.' })}
+    ${prefillNotice}
     <form method="post" class="col">
       <input type="hidden" name="name" value="면접 안내 ${esc(today)}">
 
@@ -300,20 +305,24 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
         <h3>대상자 명단 <small>누구에게 보낼까요?</small></h3>
         <fieldset style="margin-bottom:16px">
           <legend>보낼 대상</legend>
-          <label class="check"><input type="radio" name="mode" value="one" checked> <span>한 명에게만</span></label>
-          <label class="check"><input type="radio" name="mode" value="many"> <span>여러 명 (엑셀 붙여넣기 · 파일)</span></label>
+          <label class="check"><input type="radio" name="mode" value="one"${many ? '' : ' checked'}> <span>한 명에게만</span></label>
+          <label class="check"><input type="radio" name="mode" value="many"${many ? ' checked' : ''}> <span>여러 명 (엑셀 붙여넣기 · 파일 · 지원자 관리에서 고르기)</span></label>
         </fieldset>
         <div id="mode-one">
           <label>사업장(원가중심점) <input name="one_site" placeholder="예: 아마노코리아(현장HR)"></label>
           <label style="margin-top:12px">이름 <input name="one_name" placeholder="홍길동" autocomplete="off"></label>
           <label style="margin-top:12px">휴대폰 번호 <input name="one_phone" type="tel" inputmode="tel" placeholder="010-1234-5678" autocomplete="off"></label>
-          <label style="margin-top:12px">면접일시 <input name="one_when" placeholder="10/20 14:00" autocomplete="off"></label>
+          <label style="margin-top:12px" class="fixed-only">면접일시 <input name="one_when" placeholder="10/20 14:00" autocomplete="off"></label>
         </div>
         <div id="mode-many" hidden>
         <p class="muted" style="margin-bottom:8px">엑셀에서 표를 <b>드래그해서 복사(Ctrl+C)</b>한 뒤, 아래 칸에 <b>붙여넣기(Ctrl+V)</b> 하세요. 제목 줄은 있어도 없어도 돼요.</p>
-        <textarea name="csv" id="csv" rows="7" aria-label="명단 붙여넣기" placeholder="아마노코리아(현장HR)&#9;홍길동&#9;010-1234-5678&#9;10/20 14:00&#10;아마노코리아(현장HR)&#9;김영희&#9;010-2345-6789&#9;10/20 14:30"></textarea>
+        <textarea name="csv" id="csv" rows="7" aria-label="명단 붙여넣기" placeholder="아마노코리아(현장HR)&#9;홍길동&#9;010-1234-5678&#9;10/20 14:00&#10;아마노코리아(현장HR)&#9;김영희&#9;010-2345-6789&#9;10/20 14:30">${prefill ? esc(prefill.csv) : ''}</textarea>
         <div id="paste-preview" class="muted" style="margin-top:8px;font-size:14px" aria-live="polite"></div>
-        <p class="muted" style="margin:10px 0 0;font-size:14px">열 순서는 <b>사업장 · 이름 · 전화번호 · 면접일시</b>를 권해요. 제목 줄이 있으면 순서가 달라도 알아봐요.</p>
+        <p class="muted" style="margin:10px 0 0;font-size:14px">열 순서는 <b>사업장 · 이름 · 전화번호 · 면접일시</b>를 권해요. 제목 줄이 있으면 순서가 달라도 알아봐요.
+          <br>지원자 관리 → 지원자에서 사람을 골라 <b>"면접 안내 만들기"</b>를 누르면 명단이 저절로 채워져요.</p>
+        <label style="margin-top:16px" class="fixed-only">모두 같은 면접일시
+          <small>명단에 면접일시가 비어 있는 사람에게 넣어요</small>
+          <input name="default_when" placeholder="예: 10/20 14:00" autocomplete="off"></label>
         <label style="margin-top:16px">사업장(원가중심점)
           <small>붙여넣은 표에 사업장 열이 없다면 여기에 적으세요. 전체에 적용돼요.</small>
           <input name="default_site" placeholder="예: 아마노코리아(현장HR)"></label>
@@ -328,20 +337,39 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
       </div></div>
 
       <div class="step"><div class="num">2</div><div class="body">
+        <h3>어떻게 안내할까요?</h3>
+        <fieldset>
+          <legend class="sr-only">안내 방식</legend>
+          <label class="check"><input type="radio" name="kind" value="fixed" checked> <span><b>정해진 면접일시를 알려요</b><br><small>"참석" / "불참"으로 답장을 받아요.</small></span></label>
+          <label class="check" style="margin-top:8px"><input type="radio" name="kind" value="slots"> <span><b>면접 일정을 골라 달라고 해요</b><br><small>후보 일정을 번호로 보내고, 답장한 번호가 그 사람의 면접일시가 돼요. 고르면 확정 문자가 저절로 가요.</small></span></label>
+        </fieldset>
+        <div id="slotbox" hidden style="margin-top:12px">
+          <label>고를 수 있는 일정 <small>한 줄에 하나씩, 최대 9개. 문자에는 "1) 10/21(화) 14:00"처럼 번호가 붙어요.</small>
+            <textarea name="slots" id="slots" rows="4" placeholder="10/21(화) 14:00&#10;10/22(수) 10:00&#10;10/23(목) 15:00"></textarea></label>
+          <p class="muted" style="margin-top:8px;font-size:14px">일정을 고르는 방식에서는 명단의 면접일시 칸은 쓰지 않아요. 리마인드를 받으려면 일정을 <b>"10/21 14:00"</b>처럼 날짜와 시간으로 적어 주세요.</p>
+        </div>
+      </div></div>
+
+      <div class="step"><div class="num">3</div><div class="body">
         <h3>보낼 문자</h3>
-        <p class="muted" style="margin-bottom:12px">{이름}, {면접일시} 자리에는 사람마다 맞는 정보가 들어가요. 줄바꿈은 그대로 반영돼요.</p>
+        <p class="muted" style="margin-bottom:12px">{이름}, {면접일시} 자리에는 사람마다 맞는 정보가 들어가요. 일정을 고르는 방식이면 {일정목록} 자리에 번호 붙은 일정이 들어가요. 줄바꿈은 그대로 반영돼요.</p>
         <textarea name="template" id="template" rows="8" aria-label="문자 내용">${esc(defaultTemplate)}</textarea>
         <p style="margin:14px 0 6px"><b>미리보기</b> <small>홍길동님에게 갈 문자</small></p>
         <div id="preview" class="preview"></div>
       </div></div>
 
-      <div class="step"><div class="num">3</div><div class="body">
+      <div class="step"><div class="num">4</div><div class="body">
         <h3>보내기</h3>
         ${gws.length > 1 ? `<label>보낼 폰 <select name="gateway_id">${gws.map((g) =>
           `<option value="${g.id}">${esc(deps.find((d) => d.id === g.department_id)?.name || '')} / ${esc(g.name)}</option>`).join('')}</select></label>`
           : `<input type="hidden" name="gateway_id" value="${gws[0].id}"><p class="muted" style="margin-bottom:12px">보내는 폰: ${esc(gws[0].name)}</p>`}
         ${whenChoice({ firstValue: 'manual', firstLabel: '올린 다음에 제가 직접 보낼게요' })}
-        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:16px"><input type="checkbox" name="auto_remind" value="1" checked style="margin-top:4px"><span><b>면접 당일 아침 8시에 자동으로 다시 알려 주기</b><br><small>"참석"이라고 답한 사람에게만, 면접 당일 오전 8시에 한 번 보내요. 면접일시를 "10/20 14:00"처럼 적어야 해요.</small></span></label>
+        <fieldset style="margin-top:16px;display:grid;gap:12px">
+          <legend><b>자동으로 보내는 문자</b> <small>면접일시를 "10/20 14:00"처럼 날짜와 시간으로 적어야 시각을 맞출 수 있어요</small></legend>
+          <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="remind_prev" value="1" checked style="margin-top:4px"><span><b>면접 전날 오후 5시에 알려 주기</b><br><small>"참석"이라고 답한 사람에게 한 번. 노쇼를 줄이는 데 가장 효과가 커요.</small></span></label>
+          <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="auto_remind" value="1" checked style="margin-top:4px"><span><b>면접 당일 아침 8시에 알려 주기</b><br><small>"참석"이라고 답한 사람에게 한 번.</small></span></label>
+          <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="auto_followup" value="1" checked style="margin-top:4px"><span><b>답이 없으면 하루 뒤 한 번 더 보내기</b><br><small>같은 안내를 한 번만 더 보내요. 면접이 가까우면 면접 3시간 전에 보내요. 밤(21시~9시)에는 보내지 않아요.</small></span></label>
+        </fieldset>
         <details style="margin-top:12px"><summary>더 설정하기</summary>
           <label style="margin-top:8px">개인정보 보관 기간(일) <small>지나면 이름과 전화번호가 저절로 지워져요</small>
             <input name="retention_days" type="number" value="90" min="1" max="3650"></label></details>
@@ -351,12 +379,28 @@ export function renderCampaignNew({ gws, deps, today, defaultTemplate }) {
     ${SCHEDULE_JS}
     <script>
     (function () {
-      var t = document.getElementById('template'), p = document.getElementById('preview');
+      var t = document.getElementById('template'), p = document.getElementById('preview'), sl = document.getElementById('slots');
+      var TPL = { fixed: ${JSON.stringify(defaultTemplate).replace(/</g, '\u003c')}, slots: ${JSON.stringify(slotTemplate).replace(/</g, '\u003c')} };
+      function slotLines() {
+        var xs = sl.value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean).slice(0, 9);
+        return (xs.length ? xs : ['10/21(화) 14:00', '10/22(수) 10:00']).map(function (x, i) { return (i + 1) + ') ' + x; }).join('\n');
+      }
       function show() {
-        var s = t.value.split('{이름}').join('홍길동').split('{면접일시}').join('10/20 14:00').split('{사업장}').join('');
+        var s = t.value.split('{일정목록}').join(slotLines()).split('{이름}').join('홍길동').split('{면접일시}').join('10/20 14:00').split('{사업장}').join('');
         p.textContent = s.split('\\n').map(function (l) { return l.replace(/[ \\t]+/g, ' ').trim(); }).join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
       }
-      t.addEventListener('input', show); show();
+      t.addEventListener('input', show); sl.addEventListener('input', show); show();
+      function kind() {
+        var k = document.querySelector('input[name=kind]:checked').value;
+        document.getElementById('slotbox').hidden = k !== 'slots';
+        sl.required = k === 'slots';
+        document.querySelectorAll('.fixed-only').forEach(function (el) { el.hidden = k === 'slots'; });
+        // 손대지 않은 기본 문구면 방식에 맞는 문구로 바꾼다
+        if (t.value.trim() === TPL.fixed.trim() || t.value.trim() === TPL.slots.trim()) t.value = TPL[k];
+        show();
+      }
+      Array.prototype.forEach.call(document.getElementsByName('kind'), function (r) { r.addEventListener('change', kind); });
+      kind();
       var one = document.getElementById('mode-one'), many = document.getElementById('mode-many');
       function mode() {
         var m = document.querySelector('input[name=mode]:checked').value;
@@ -393,8 +437,33 @@ export function renderCampaignDetail(d) {
   const { camp, totals, siteRows, siteTotal, cands, siteFilter, statusFilter, previewText, canSend, stateNotice, back } = d;
   const replied = (totals.attending || 0) + (totals.absent || 0) + (totals.unclear || 0);
   const delivered = replied + (totals.sent || 0);
-  const FILTERS = [['', '전체', totals.total || 0], ['attending', '참석', totals.attending || 0], ['absent', '불참', totals.absent || 0],
+  const oc = d.outcomes || {};
+  const slots = d.slots || [];
+  const FILTERS = [['', '전체', totals.total || 0], ['attending', slots.length ? '일정 정함' : '참석', totals.attending || 0], ['absent', '불참', totals.absent || 0],
     ['unclear', '확인 필요', totals.unclear || 0], ['sent', '답 없음', totals.sent || 0], ['failed', '못 보냄', totals.failed || 0]];
+  if (oc.reschedule) FILTERS.splice(4, 0, ['reschedule', '일정 변경 요청', oc.reschedule]);
+  const live = !camp.purged_at && camp.status !== 'cancelled';
+  const flashHtml = [
+    d.flash === 'result' ? `<div class="notice ok">${icon('check')}<div><b>${d.flashN}명에게 결과 안내 문자를 보내요.</b> 보낸 문자는 문자함에서 볼 수 있어요.</div></div>` : '',
+    d.err === 'reschedule' ? `<div class="notice warn" role="alert">${icon('alert')}<div>다시 안내하지 못했어요. 새 면접일시를 적었는지, 문자를 보내는 중인 사람이 아닌지 확인해 주세요.</div></div>` : ''
+  ].join('');
+  const slotCard = slots.length ? `<section class="section"><div class="shead"><h2>일정별 확정 인원</h2><span class="muted">답장한 번호로 정해진 사람 수</span></div>
+      <ul class="slotsum">${slots.map((x, i) => `<li><span><b>${i + 1})</b> ${esc(x)}</span><b>${(d.slotCounts && d.slotCounts[x]) || 0}명</b></li>`).join('')}</ul></section>` : '';
+  const rowActions = (c) => {
+    if (!live) return '';
+    const hid = `<input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(d.backQuery)}">`;
+    const set = slots.length
+      ? `<form method="post" action="/campaigns/${camp.id}/slot" class="inline">${hid}
+          <select name="slot" aria-label="일정 정하기" onchange="this.form.submit()"><option value="">일정 정하기</option>${slots.map((x, i) => `<option value="${i + 1}"${c.status === 'attending' && c.interview_at === x ? ' selected' : ''}>${i + 1}) ${esc(x)}</option>`).join('')}</select></form>
+        <form method="post" action="/campaigns/${camp.id}/set" class="inline">${hid}<button name="status" value="absent">불참</button></form>`
+      : `<form method="post" action="/campaigns/${camp.id}/set" class="inline">${hid}
+          <button name="status" value="attending">참석</button> <button name="status" value="absent">불참</button></form>`;
+    const resch = ['sent', 'attending', 'absent', 'unclear', 'failed'].includes(c.status) && camp.status !== 'draft' && camp.status !== 'scheduled'
+      ? `<details class="resch"${c.reply_kind === 'reschedule' ? ' open' : ''}><summary>새 일정으로 다시 안내</summary>
+          <form method="post" action="/campaigns/${camp.id}/reschedule" data-confirm="이 사람에게 새 일정으로 안내 문자를 보낼까요?">${hid}
+            <input name="when" required placeholder="10/24 14:00" aria-label="새 면접일시" autocomplete="off"><button class="small">보내기</button></form></details>` : '';
+    return set + resch;
+  };
   const qs = (status) => `?${siteFilter ? `site=${encodeURIComponent(siteFilter)}&` : ''}${status ? `status=${status}` : ''}`.replace(/[?&]$/, '');
 
   const actions = camp.purged_at ? '' : `
@@ -427,6 +496,7 @@ export function renderCampaignDetail(d) {
 
   return `${pageHeader({ title: camp.name, back, actions,
     desc: `${esc(camp.dept)} · 보내는 폰 ${esc(camp.gateway)} · ${campaignBadge(camp)}` })}
+    ${flashHtml}
     ${stateNotice}
     ${sendCard}
     <div class="stats">
@@ -442,7 +512,8 @@ export function renderCampaignDetail(d) {
         <span style="margin-left:auto">회신율 ${siteTotal.rate}</span></div></div>` : ''}
     ${d.delivery && delivered ? `<p class="muted" style="margin-top:10px">${icon('check', 14)} 전달 확인 ${d.delivery.delivered}명 / 보냄 ${delivered}명${d.delivery.retrying ? ` · 다시 시도 중 ${d.delivery.retrying}명` : ''}</p>` : ''}
     ${d.delivery && d.delivery.stuck ? `<div class="notice warn" style="margin-top:12px" role="alert">${icon('alert')}<div><b>${d.delivery.stuck}명은 폰이 아직 문자를 보내지 않았어요.</b><br>문자 서버는 받았지만 폰이 보내지 못하고 있어요. 폰이 켜져 있는지, SMSGate 앱에서 <b>Cloud server</b>가 켜져 있는지, 인터넷이 되는지 확인해 주세요. 폰이 다시 연결되면 자동으로 나가요.</div></div>` : ''}
-    ${outcomeSection(camp, d.outcomes)}
+    ${slotCard}
+    ${outcomeSection(camp, d.outcomes, d.resultTemplates)}
     ${totals.failed ? `<div class="notice warn" style="margin-top:12px" role="alert">${icon('alert')}<div><b>${totals.failed}명에게 문자를 보내지 못했어요.</b> 위의 "답 없는 사람에게 다시 보내기"로 다시 시도할 수 있어요.</div></div>` : ''}
 
     ${camp.template ? `<details class="card" style="margin-top:16px"><summary><b>보낸(보낼) 문자 보기</b></summary><div class="preview" style="margin-top:12px">${esc(previewText)}</div></details>` : ''}
@@ -456,18 +527,17 @@ export function renderCampaignDetail(d) {
       <div class="shead"><h2>사람별 현황${siteFilter ? ` · ${esc(siteFilter)}` : ''}</h2>${siteFilter ? `<a href="${esc(qs(statusFilter).replace(/site=[^&]*&?/, '').replace(/\?$/, '') || `/campaigns/${camp.id}`)}">사업장 필터 해제</a>` : ''}</div>
       <div class="tabs" role="tablist">${FILTERS.map(([key, label, n]) =>
         `<a href="${esc(qs(key))}"${(statusFilter || '') === key ? ' aria-current="page"' : ''}>${label} <span class="n">${n}</span></a>`).join('')}</div>
-      ${tableWrap(`<table class="cards cand"><thead><tr><th>사업장</th><th>이름</th><th>전화번호</th><th>상태</th><th>받은 답장</th><th>면접 결과</th><th></th></tr></thead><tbody>
+      ${tableWrap(`<table class="cards cand"><thead><tr><th>사업장</th><th>이름</th><th>전화번호</th><th>면접일시</th><th>상태</th><th>받은 답장</th><th>면접 결과</th><th></th></tr></thead><tbody>
         ${cands.length ? cands.map((c) => `<tr>
           <td class="c-site">${esc(c.site)}</td><td class="c-name">${esc(c.name)}</td><td class="c-phone nowrap">${esc(fmtPhone(c.phone))}</td>
-          <td class="c-status">${c.status === 'sent' && c.delivery === 'queued' ? phoneWaitBadge(c.sent_at) : badge(c.status)}${d.flagged && d.flagged.has(c.phone) ? ' <span class="badge no" title="지원자 관리: 블랙리스트 (참고용, 발송은 막지 않아요)">블랙리스트</span>' : ''}${c.manual ? ' <small>(직접)</small>' : ''}${c.delivery === 'delivered' ? ' <small title="상대 휴대폰에 전달됨">✓ 전달</small>' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
+          <td class="c-when nowrap">${esc(c.interview_at)}</td>
+          <td class="c-status">${c.status === 'sent' && c.delivery === 'queued' ? phoneWaitBadge(c.sent_at) : badge(c.status, slots.length && c.status === 'attending' && !c.template_override ? '일정 정함' : '')}${c.reply_kind === 'reschedule' ? ' <span class="badge review">일정 변경 요청</span>' : ''}${c.followed_at ? ' <small title="답이 없어 자동으로 한 번 더 보냈어요">(한 번 더 보냄)</small>' : ''}${d.flagged && d.flagged.has(c.phone) ? ' <span class="badge no" title="지원자 관리: 블랙리스트 (참고용, 발송은 막지 않아요)">블랙리스트</span>' : ''}${c.manual ? ' <small>(직접)</small>' : ''}${c.delivery === 'delivered' ? ' <small title="상대 휴대폰에 전달됨">✓ 전달</small>' : ''}${c.error ? `<br><small>${esc(c.error)}</small>` : ''}</td>
           <td class="c-reply msg">${esc(c.reply_text)}</td>
           <td class="c-outcome">${camp.purged_at ? esc(OUTCOMES[c.outcome] || '') : `<form method="post" action="/campaigns/${camp.id}/outcome" class="inline">
             <input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(d.backQuery)}">
             <select name="outcome" aria-label="면접 결과" onchange="this.form.submit()"><option value="">-</option>${Object.entries(OUTCOMES).map(([k, v]) => `<option value="${k}"${c.outcome === k ? ' selected' : ''}>${v}</option>`).join('')}</select></form>`}</td>
-          <td class="actions">${camp.purged_at ? '' : `<form method="post" action="/campaigns/${camp.id}/set" class="inline">
-            <input type="hidden" name="id" value="${c.id}"><input type="hidden" name="back" value="${esc(d.backQuery)}">
-            <button name="status" value="attending">참석</button> <button name="status" value="absent">불참</button></form>`}</td></tr>`).join('')
-          : `<tr><td colspan="7">${emptyState({ title: '해당하는 사람이 없어요' })}</td></tr>`}
+          <td class="actions">${rowActions(c)}</td></tr>`).join('')
+          : `<tr><td colspan="8">${emptyState({ title: '해당하는 사람이 없어요' })}</td></tr>`}
         </tbody></table>`)}
       ${cands.length >= 500 ? '<p class="muted" style="margin-top:8px">최대 500명까지 보여요. 사업장이나 상태로 걸러서 보세요.</p>' : ''}
     </section>`;

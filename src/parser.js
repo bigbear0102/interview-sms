@@ -42,6 +42,36 @@ export function parseReply(text, extra = {}) {
   return 'unclear';
 }
 
+// 일정 변경 요청("다른 날로 바꿀 수 있나요?", "다음 주로 미뤄 주세요")인지. 참석/불참 판정과는 따로 표시만 한다.
+const RESCHEDULE = ['변경', '바꿀', '바꾸', '바꿔', '바뀔', '다른날', '다른시간', '다른요일', '다른일정', '미룰', '미뤄', '미루', '연기', '조정', '늦춰', '당겨', '다음주', '다음날', '다른때'];
+export function isRescheduleRequest(text) {
+  const t = normalize(text);
+  return !!t && RESCHEDULE.some((k) => t.includes(k));
+}
+
+// 일정 고르기 답장 해석. n = 후보 개수. 반환: { result: 'attending'|'absent'|'unclear', slot?: 1..n, positive?: true }
+//  - 번호 하나(1~n)만 있으면 그 일정으로 참석. ("2번이요", "1 가능합니다")
+//  - 시각·날짜 숫자(14시, 10/21, 14:00, 21일)는 번호로 보지 않는다.
+//  - 번호와 부정 표현이 함께 있거나 번호가 여러 개면 사람이 확인한다(unclear).
+//  - 번호 없이 부정이면 불참, 번호 없이 긍정이면 positive 로 알려 준다(이미 일정이 정해진 사람이면 참석 유지).
+export function parseSlotReply(text, n) {
+  const t = normalize(text);
+  if (!t) return { result: 'unclear' };
+  const negative = NEGATIVE.some((k) => t.includes(k));
+  const stripped = t
+    .replace(/\d+[\/\-.]\d+/g, ' ')            // 10/21, 10-21
+    .replace(/\d+(?=[:시월일분])/g, ' ')           // 14시, 10월, 21일, 14:00 의 앞 숫자
+    .replace(/:\d+/g, ' ');                       // 14:00 의 뒤 숫자
+  const nums = [...new Set((stripped.match(/\d+/g) || []).map(Number))];
+  if (nums.length === 1 && nums[0] >= 1 && nums[0] <= n) {
+    return negative ? { result: 'unclear' } : { result: 'attending', slot: nums[0] };
+  }
+  if (nums.length) return { result: 'unclear' };
+  if (negative) return { result: 'absent' };
+  const r = parseReply(text);
+  return r === 'attending' ? { result: 'unclear', positive: true } : { result: 'unclear' };
+}
+
 // 전화번호를 숫자만 남기고 국내 형식(010...)으로 통일
 export function normalizePhone(raw) {
   let d = String(raw ?? '').replace(/[^\d+]/g, '');

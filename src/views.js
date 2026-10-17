@@ -29,6 +29,7 @@ const ICONS = {
   clipboard: '<path d="M9 3h6v3H9z"/><path d="M8 5H6a2 2 0 00-2 2v13a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><path d="M8 12h8M8 16h5"/>',
   settings: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   check: '<path d="M5 13l4 4L19 7"/>',
@@ -118,6 +119,7 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);padding:20px}
 .card+.card{margin-top:16px}
 [hidden]{display:none!important}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .notice{display:flex;gap:12px;align-items:flex-start;border-radius:var(--r-m);padding:14px 16px;margin:0 0 20px;font-size:16px;color:var(--ink)}
 .notice.ok{background:var(--green-bg)}.notice.warn{background:var(--red-bg)}.notice.info{background:var(--blue-bg)}
 .notice .ico{margin-top:2px}
@@ -174,6 +176,11 @@ dialog.cdlg p{margin:0 0 20px;font-size:17px;font-weight:600;line-height:1.5;wor
 .rbtn{position:absolute;right:10px;bottom:8px;display:inline-grid;place-items:center;width:40px;height:40px;border-radius:999px;color:var(--blue)}
 .mrow .mtext{padding-right:44px}
 .rbtn:hover{background:var(--blue-bg)}
+.resch>summary{cursor:pointer;color:var(--blue);font-size:14px;margin-top:6px}
+.resch form{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.resch input{width:auto;min-width:130px;min-height:36px;padding:6px 10px}
+.slotsum{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.slotsum li{display:flex;justify-content:space-between;gap:12px;padding:10px 14px;background:var(--surface-2);border-radius:var(--r-s)}
 .tgl-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px}
 .tgl{position:relative;flex:none;width:48px;height:28px;min-height:0;border-radius:999px;border:0;padding:0;background:var(--line);cursor:pointer}
 .tgl::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .15s}
@@ -437,7 +444,9 @@ details.pop summary{list-style:none}details.pop summary::-webkit-details-marker{
   table.cards.cand td{display:block;padding:0}
   table.cards.cand td.c-name{grid-column:1;font-weight:600;font-size:16px}
   table.cards.cand td.c-status{grid-column:2;justify-self:end}
-  table.cards.cand td.c-site,table.cards.cand td.c-phone{grid-column:1/-1;color:var(--muted);font-size:14px}
+  table.cards.cand td.c-site,table.cards.cand td.c-phone,table.cards.cand td.c-when{grid-column:1/-1;color:var(--muted);font-size:14px}
+  table.cards.cand td.c-when:empty{display:none}
+  table.cards.cand td.c-outcome{grid-column:1/-1}
   table.cards.cand td.c-reply{grid-column:1/-1;background:var(--surface-2);border-radius:var(--r-s);padding:8px 10px}
   table.cards.cand td.c-reply:empty{display:none}
   table.cards.cand td.actions{grid-column:1/-1}

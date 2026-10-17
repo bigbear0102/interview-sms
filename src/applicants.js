@@ -7,7 +7,7 @@ import { fmtPhone, pageHeader, tableWrap, emptyState, fmtWhen } from './ui.js';
 import { normalizePhone, isValidMobile } from './parser.js';
 import { parseCsv, toCsv } from './csv.js';
 import {
-  getLinkSettings, saveLinkSettings, campaignHistory, noshowSuggestions, dismissSuggestion, DEFAULT_THRESHOLD
+  getLinkSettings, saveLinkSettings, campaignHistory, noshowSuggestions, dismissSuggestion, DEFAULT_THRESHOLD, latestStages
 } from './applicants-link.js';
 import { peopleTabs, handleInbox } from './applicants-inbox.js';
 import { handlePostings } from './applicants-postings.js';
@@ -335,6 +335,11 @@ const statusBadge = (blActive) => (blActive
   ? '<span class="badge no">블랙리스트</span>'
   : '<span class="badge mute">일반</span>');
 
+// 진행 단계(가장 최근 면접 안내 기준). 면접 안내 전이면 흐린 글자로 다음 할 일을 보여 준다.
+const stageCell = (st) => (st
+  ? `<span class="badge ${st.tone}">${esc(st.label)}</span>${st.interviewAt ? `<span class="sub">면접 ${esc(st.interviewAt)}</span>` : ''}`
+  : '<span class="muted" style="font-size:14px">면접 안내 전</span>');
+
 const STATUS_LABEL = { pending: '보내는 중', sending: '보내는 중', sent: '답 없음', attending: '참석', absent: '불참', unclear: '확인 필요', failed: '못 보냄' };
 const OUTCOME_LABEL = { showed: '출석', noshow: '노쇼', passed: '합격', hired: '입사', rejected: '불합격' };
 function historyHtml(list) {
@@ -439,14 +444,15 @@ export async function renderApplicantDetail(db, id, { user, notice = '', link = 
           <div class="dlg-actions">${cancel}<button class="btn secondary">합치기</button></div></form>`)
   ].join('');
 
+  const stage = (await latestStages(db, [a.phone], user).catch(() => new Map())).get(a.phone);
   return `<a class="back" href="/applicants" style="display:inline-block;font-size:14px;margin-bottom:10px">← 지원자</a>
     ${notice}
     <header class="pd-hero">
       <div class="avatar" aria-hidden="true">${esc(String(a.name).trim().slice(0, 1) || '?')}</div>
       <div><h1 class="nm">${esc(a.name)}</h1>
-        <div class="ph"><a href="tel:${esc(a.phone)}">${esc(fmtPhone(a.phone))}</a><button type="button" class="lk" data-copy="${esc(fmtPhone(a.phone))}" style="background:none;border:0;color:var(--blue);min-height:32px;padding:4px 8px;font-size:14px">복사</button>${statusBadge(!!active)}</div>
+        <div class="ph"><a href="tel:${esc(a.phone)}">${esc(fmtPhone(a.phone))}</a><button type="button" class="lk" data-copy="${esc(fmtPhone(a.phone))}" style="background:none;border:0;color:var(--blue);min-height:32px;padding:4px 8px;font-size:14px">복사</button>${statusBadge(!!active)}${stage ? ` <a class="badge ${stage.tone}" href="/campaigns/${stage.campaignId}" title="가장 최근 면접 안내">${esc(stage.label)}</a>` : ''}</div>
         <div class="muted" style="font-size:14px;margin-top:2px">등록 ${esc(created)} · 지원 ${apps.length}건</div></div>
-      <div class="acts"><a class="btn secondary" href="/send?to=${encodeURIComponent(a.phone)}">${icon('send', 18)}문자 보내기</a><button type="button" class="btn secondary" data-dialog="dlg-edit">정보 수정</button></div>
+      <div class="acts"><a class="btn" href="/campaigns/new?ids=${a.id}">${icon('calendar', 18)}면접 안내 만들기</a><a class="btn secondary" href="/send?to=${encodeURIComponent(a.phone)}">${icon('send', 18)}문자 보내기</a><button type="button" class="btn secondary" data-dialog="dlg-edit">정보 수정</button></div>
     </header>
     <div class="pd">
       <div>
@@ -581,6 +587,7 @@ fieldset.linkopts:disabled label{cursor:not-allowed}
   .plist td.who{grid-column:2}
   .plist td.st{grid-column:3;grid-row:1;text-align:right}
   .plist td.what{grid-column:2/4}
+  .plist td.stage{grid-column:2/4}
   .plist td.when{grid-column:2;color:var(--muted);font-size:13px}
   .plist td.go{display:none}
 }
@@ -619,7 +626,11 @@ const SHEET_JS = `<script>
       if (t && s) t.required = v === 'blacklist' && s.value === 'other';
       // 공통 스크립트가 이 문구로 확인 창을 띄운다
       var label = { blacklist: '블랙리스트로 등록', release: '블랙리스트 해제', 'delete': '삭제' }[v];
-      bar.setAttribute('data-confirm', n + '명을 "' + label + '" 처리할까요?' + (v === 'delete' ? ' 되돌릴 수 없어요.' : ''));
+      // 면접 안내 만들기는 다음 화면에서 확인하고 보내므로 묻지 않는다
+      if (v === 'interview') bar.removeAttribute('data-confirm');
+      else bar.setAttribute('data-confirm', n + '명을 "' + label + '" 처리할까요?' + (v === 'delete' ? ' 되돌릴 수 없어요.' : ''));
+      var go = document.getElementById('bulkgo');
+      if (go) go.textContent = v === 'interview' ? '선택한 ' + n + '명으로 면접 안내 만들기' : '선택한 사람에게 적용';
     }
     document.addEventListener('change', function (e) {
       if (e.target.classList && (e.target.classList.contains('rowchk') || e.target.id === 'bulkop')) refresh();
@@ -643,7 +654,7 @@ const SHEET_JS = `<script>
 
 // 첫 화면: 빠른 조회 + 입력 줄 + CSV 업로드 + 필터 + 표 + 쪽 넘기기
 export async function renderApplicantSheet(db, opts = {}) {
-  const { params = paramsFrom(new URLSearchParams()), flash = '', err = '', bulk = null, extra = {}, lookup = '', link = null, isSuper = false } = opts;
+  const { params = paramsFrom(new URLSearchParams()), flash = '', err = '', bulk = null, extra = {}, lookup = '', link = null, isSuper = false, user = null } = opts;
   const back = opts.back || listUrl(params);
   const where = [], args = [];
   if (params.q) {
@@ -673,6 +684,7 @@ export async function renderApplicantSheet(db, opts = {}) {
         EXISTS (SELECT 1 FROM applicant_applications WHERE applicant_id=a.id AND applied_to='' AND recruit_no != '') unclassified,
         (SELECT COUNT(*) FROM applicant_applications WHERE applicant_id=a.id) apps
        ${base} ${W} ORDER BY ${order} LIMIT ${PAGE_SIZE} OFFSET ${(pageNo - 1) * PAGE_SIZE}`, ...args);
+  const stages = await latestStages(db, rows.map((r) => r.phone), user || { role: isSuper ? 'super' : '', departments: [] }).catch(() => new Map());
   const c = await first(db,
     `SELECT COUNT(*) total,
             COALESCE(SUM(EXISTS (SELECT 1 FROM blacklist b WHERE b.applicant_id=a.id AND b.status='active')),0) bl
@@ -737,11 +749,12 @@ export async function renderApplicantSheet(db, opts = {}) {
 
   const hid = `<input type="hidden" name="back" value="${esc(back)}">`;
   const relDate = (ms) => fmtWhen(ms).replace(/ \d\d:\d\d$/, '');
-  const table = rows.length ? `<div class="plistwrap"><table class="plist"><thead><tr><th class="sel"><input type="checkbox" id="chkall" aria-label="이 화면 전체 선택"></th><th scope="col">이름</th><th scope="col">원가중심점 · 직무</th><th scope="col">상태</th><th scope="col">등록</th><th class="go"></th></tr></thead><tbody>
+  const table = rows.length ? `<div class="plistwrap"><table class="plist"><thead><tr><th class="sel"><input type="checkbox" id="chkall" aria-label="이 화면 전체 선택"></th><th scope="col">이름</th><th scope="col">원가중심점 · 직무</th><th scope="col">진행</th><th scope="col">상태</th><th scope="col">등록</th><th class="go"></th></tr></thead><tbody>
     ${rows.map((r) => `<tr data-href="/applicants/${r.id}">
       <td class="sel"><input type="checkbox" class="rowchk" name="ids" value="${r.id}" form="bulkform" aria-label="${esc(r.name)} 선택"></td>
       <td class="who"><a class="pname" href="/applicants/${r.id}">${esc(r.name)}</a><span class="sub">${esc(fmtPhone(r.phone))}</span></td>
       <td class="what">${r.applied_to ? `<span class="cc">${esc(r.applied_to)}</span>` : (r.unclassified ? '<span class="badge wait">정리 필요</span>' : '<span class="muted">-</span>')}${r.job ? `<span class="sub">${esc(r.job)}</span>` : ''}${r.apps > 1 ? `<span class="sub">지원 ${r.apps}건</span>` : ''}</td>
+      <td class="stage">${stageCell(stages.get(r.phone))}</td>
       <td class="st">${statusBadge(r.bl_id)}${r.bl_id ? `<span class="sub">${esc(reasonLabel(r.reason_code, r.reason_text))}</span>` : ''}</td>
       <td class="when">${esc(relDate(r.created_at))}</td>
       <td class="go" aria-hidden="true">›</td></tr>`).join('')}
@@ -809,13 +822,14 @@ export async function renderApplicantSheet(db, opts = {}) {
     <form id="bulkform" method="post" action="/applicants/bulk-action" class="bulkdock" aria-live="polite">${hid}
       <b id="selcount">0명 선택</b>
       <select name="op" id="bulkop" aria-label="처리 방법">
+        <option value="interview">면접 안내 만들기</option>
         <option value="blacklist">블랙리스트로 등록</option>
         <option value="release">블랙리스트 해제</option>
         ${isSuper ? '<option value="delete">삭제 (관리자)</option>' : ''}
       </select>
       <span class="only only-blacklist" style="gap:6px;flex-wrap:wrap">${reasonSelect()}<input type="text" name="reason_text" maxlength="300" placeholder="사유 설명 (선택)" aria-label="사유 설명"></span>
       <span class="only only-release"><input type="text" name="note" maxlength="200" placeholder="해제 메모 (선택)" aria-label="해제 메모"></span>
-      <button>선택한 사람에게 적용</button>
+      <button id="bulkgo">선택한 사람에게 적용</button>
     </form>
     ${table}
     ${pager}
@@ -895,7 +909,7 @@ export async function handleApplicants(c) {
     if (lookup) await audit(db, user, 'applicant.lookup', '');
     const link = await getLinkSettings(db);
     return page('지원자 관리', await renderApplicantSheet(db, {
-      viewer: { id: user.id, isSuper: user.role === 'super' }, params, back: listUrl(params), lookup, link, isSuper: user.role === 'super',
+      viewer: { id: user.id, isSuper: user.role === 'super' }, user, params, back: listUrl(params), lookup, link, isSuper: user.role === 'super',
       flash: sp.get('ok') || '', err: sp.get('err') || '',
       extra: { removed: sp.get('n'), kept: sp.get('k') }
     }));
@@ -944,6 +958,8 @@ export async function handleApplicants(c) {
     const ids = [...new Set(sp.getAll('ids').map((x) => parseInt(x, 10)).filter((x) => Number.isInteger(x) && x > 0))].slice(0, 200);
     if (!ids.length) return redirect(withParam(back, 'err', 'nopick'));
     const op = sp.get('op');
+    // 면접 안내 만들기: 고른 사람으로 명단을 채운 만들기 화면으로 보낸다(여기서는 아무것도 바꾸지 않음)
+    if (op === 'interview') return redirect(`/campaigns/new?ids=${ids.join(',')}`);
     const now = Date.now();
     const ph = ids.map(() => '?').join(',');
     const existing = (await all(db, `SELECT id FROM applicants WHERE id IN (${ph})`, ...ids)).map((r) => r.id);

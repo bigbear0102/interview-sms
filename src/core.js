@@ -1,5 +1,5 @@
 // 업무 로직: 캠페인 생성, 발송 큐, 수신 답장 처리, 보관기간 파기 (Cloudflare D1)
-import { parseReply, normalizePhone, isValidMobile } from './parser.js';
+import { parseReply, parseSlotReply, isRescheduleRequest, normalizePhone, isValidMobile } from './parser.js';
 import { sendSms, unlockGateway } from './gateway.js';
 import { planRetry, retryNote } from './delivery.js';
 import { all, first, run, stmt } from './d1.js';
@@ -26,18 +26,51 @@ export function cleanMessage(text) {
     .trim();
 }
 
-export function renderTemplate(tpl, c) {
+// 일정 고르기 문구. {일정목록} 자리에 "1) 10/21(화) 14:00" 줄이 들어간다.
+export const SLOT_TEMPLATE = [
+  '안녕하세요, {이름}님.',
+  '지원해 주셔서 감사합니다. 면접 일정을 골라 주세요.',
+  '',
+  '{일정목록}',
+  '',
+  '원하시는 번호를 답장해 주세요. (예: 1)',
+  '모두 어려우시면 "불참"이라고 답장해 주세요.'
+].join('\n');
+
+// 일정을 고른 사람에게 바로 보내는 확정 문자
+export const SLOT_CONFIRM_TEMPLATE = [
+  '{이름}님, 면접 일정이 {면접일시}(으)로 정해졌어요.',
+  '참석이 어려워지시면 "불참"이라고 답장해 주세요.'
+].join('\n');
+
+// 일정 변경 요청에 새 일정으로 다시 안내할 때 쓰는 문구
+export const RESCHEDULE_TEMPLATE = [
+  '안녕하세요, {이름}님.',
+  '요청하신 대로 면접 일정을 다시 안내드립니다.',
+  '',
+  '일시: {면접일시}',
+  '',
+  '참석 가능하시면 "참석", 어려우시면 "불참"이라고 답장해 주세요.',
+  '감사합니다.'
+].join('\n');
+
+export const slotsOf = (camp) => String(camp?.slots || '').split('\n').map((x) => x.trim()).filter(Boolean);
+export const slotList = (slots) => slots.map((x, i) => `${i + 1}) ${x}`).join('\n');
+
+export function renderTemplate(tpl, c, slots = []) {
   return cleanMessage(String(tpl ?? '')
+    .replaceAll('{일정목록}', slotList(slots))
     .replaceAll('{사업장}', c.site || '')
     .replaceAll('{이름}', c.name || '지원자')
     .replaceAll('{면접일시}', c.interview_at || '추후 안내'));
 }
 
 // candidates: [{site,name,phone,interview_at}]
-export async function createCampaign(db, { departmentId, gatewayId, name, template, retentionDays, userId, candidates, defaultSite = '', autoRemind = false }) {
+export async function createCampaign(db, { departmentId, gatewayId, name, template, retentionDays, userId, candidates, defaultSite = '', autoRemind = false, remindPrev = false, autoFollowup = false, slots = [] }) {
   const seen = new Set();
   const rejected = [];
   const accepted = [];
+  const slotText = (slots || []).map((x) => String(x).trim()).filter(Boolean).slice(0, 9).join('\n');
   candidates.forEach((c, i) => {
     const phone = normalizePhone(c.phone);
     const site = (c.site || '').trim() || String(defaultSite || '').trim();
@@ -49,9 +82,10 @@ export async function createCampaign(db, { departmentId, gatewayId, name, templa
     accepted.push({ ...c, site, phone });
   });
   const ins = await run(db,
-    `INSERT INTO campaigns (department_id, gateway_id, name, template, retention_days, created_by, created_at, auto_remind)
-     VALUES (?,?,?,?,?,?,?,?)`,
-    departmentId, gatewayId, name, String(template || '').replace(/\r\n?/g, '\n').trim() || DEFAULT_TEMPLATE, retentionDays || 90, userId ?? null, Date.now(), autoRemind ? 1 : 0);
+    `INSERT INTO campaigns (department_id, gateway_id, name, template, retention_days, created_by, created_at, auto_remind, remind_prev, auto_followup, slots)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    departmentId, gatewayId, name, String(template || '').replace(/\r\n?/g, '\n').trim() || (slotText ? SLOT_TEMPLATE : DEFAULT_TEMPLATE), retentionDays || 90, userId ?? null, Date.now(),
+    autoRemind ? 1 : 0, remindPrev ? 1 : 0, autoFollowup ? 1 : 0, slotText);
   const campaignId = Number(ins.meta.last_row_id);
 
   // D1 은 쿼리당 바인딩 100개 제한 → 행 19개(5컬럼)씩 묶어 한 번의 batch 로 실행
@@ -60,7 +94,7 @@ export async function createCampaign(db, { departmentId, gatewayId, name, templa
   for (let i = 0; i < accepted.length; i += ROWS) {
     const chunk = accepted.slice(i, i + ROWS);
     const sql = `INSERT INTO candidates (campaign_id, site, name, phone, interview_at) VALUES ${chunk.map(() => '(?,?,?,?,?)').join(',')}`;
-    stmts.push(stmt(db, sql, ...chunk.flatMap((c) => [campaignId, c.site, c.name || '', c.phone, c.interview_at || ''])));
+    stmts.push(stmt(db, sql, ...chunk.flatMap((c) => [campaignId, c.site, c.name || '', c.phone, slotText ? '' : (c.interview_at || '')])));
   }
   for (let i = 0; i < stmts.length; i += 40) await db.batch(stmts.slice(i, i + 40));
   return { campaignId, accepted: accepted.length, rejected };
@@ -110,7 +144,7 @@ export async function processQueue(env, { batchSize = Number(env.SEND_BATCH || 2
       const gw = await unlockGateway(env, gwRow);
       const updates = [];
       for (const c of claimed) {
-        const text = renderTemplate(camp.template, c);
+        const text = renderTemplate(c.template_override || camp.template, c, slotsOf(camp));
         try {
           const resp = await send(gw, c.phone, text);
           updates.push(stmt(db,
@@ -178,7 +212,7 @@ export async function handleInbound(db, gatewayId, { sender, message }) {
   const phone = normalizePhone(sender);
   const now = Date.now();
   const cand = await first(db,
-    `SELECT c.* FROM candidates c JOIN campaigns k ON k.id=c.campaign_id
+    `SELECT c.*, k.slots camp_slots, k.gateway_id camp_gateway FROM candidates c JOIN campaigns k ON k.id=c.campaign_id
      WHERE k.gateway_id=? AND c.phone=? AND c.status IN ('sent','attending','absent','unclear') AND k.purged_at IS NULL
      ORDER BY c.sent_at DESC LIMIT 1`, gatewayId, phone);
   if (!cand) {
@@ -186,21 +220,66 @@ export async function handleInbound(db, gatewayId, { sender, message }) {
       gatewayId, phone, message, now, 'unmatched');
     return { matched: false };
   }
-  const result = parseReply(message);
+  // 일정 고르기 안내(이 사람에게 따로 다시 안내한 경우 제외)는 번호로 일정을 정한다
+  const slots = cand.template_override ? [] : slotsOf({ slots: cand.camp_slots });
+  let result, slotText = '';
+  if (slots.length) {
+    const r = parseSlotReply(message, slots.length);
+    result = r.result;
+    if (r.slot) slotText = slots[r.slot - 1];
+    else if (r.positive && cand.interview_at && cand.status === 'attending') result = 'attending'; // 이미 고른 사람의 "네"
+  } else {
+    result = parseReply(message);
+  }
+  const kind = isRescheduleRequest(message) ? 'reschedule' : '';
   if (cand.manual) {
     // 관리자가 이미 확정한 건은 원문만 기록
-    await run(db, `UPDATE candidates SET reply_text=?, replied_at=? WHERE id=?`, message, now, cand.id);
+    await run(db, `UPDATE candidates SET reply_text=?, replied_at=?, reply_kind=? WHERE id=?`, message, now, kind, cand.id);
+  } else if (slotText) {
+    const changed = slotText !== cand.interview_at;
+    await run(db,
+      `UPDATE candidates SET status='attending', interview_at=?, reply_text=?, replied_at=?, reply_kind=?${changed ? ', reminded_at=NULL, reminded_prev_at=NULL' : ''} WHERE id=?`,
+      slotText, message, now, kind, cand.id);
+    // 고른 일정을 바로 확정 안내한다(문자 큐). 같은 일정을 다시 보내 온 경우는 보내지 않는다.
+    if (changed) {
+      await run(db, `INSERT INTO messages (gateway_id,phone,text,status,user_id,at,scheduled_at) VALUES (?,?,?,'scheduled',NULL,?,?)`,
+        cand.camp_gateway, cand.phone, renderTemplate(SLOT_CONFIRM_TEMPLATE, { ...cand, interview_at: slotText }), now, now);
+    }
   } else {
-    await run(db, `UPDATE candidates SET status=?, reply_text=?, replied_at=? WHERE id=?`, result, message, now, cand.id);
+    await run(db, `UPDATE candidates SET status=?, reply_text=?, replied_at=?, reply_kind=? WHERE id=?`, result, message, now, kind, cand.id);
   }
   await run(db, `INSERT INTO inbound (gateway_id,sender,message,received_at,candidate_id,result) VALUES (?,?,?,?,?,?)`,
     gatewayId, phone, message, now, cand.id, result);
-  return { matched: true, candidateId: cand.id, result };
+  return { matched: true, candidateId: cand.id, result, slot: slotText, kind };
 }
 
 export async function setManualStatus(db, candidateId, status) {
   if (!['attending', 'absent', 'unclear', 'sent'].includes(status)) throw new Error('invalid status');
   await run(db, `UPDATE candidates SET status=?, manual=1 WHERE id=?`, status, candidateId);
+}
+
+// 일정 고르기: 담당자가 직접 일정을 정한다(전화로 정한 경우 등). 확정 문자는 보내지 않는다.
+export async function setSlotManual(db, candidateId, slotText) {
+  await run(db, `UPDATE candidates SET status='attending', interview_at=?, manual=1, reminded_at=NULL, reminded_prev_at=NULL WHERE id=?`,
+    String(slotText || '').trim().slice(0, 60), candidateId);
+}
+
+// 일정 변경 요청 → 새 일정으로 이 사람에게만 다시 안내한다. 아직 안 보낸 안내면 일시만 바꾼다.
+// 반환: 'queued' | 'updated' | 'invalid'
+export async function rescheduleCandidate(db, camp, candidateId, when, now = Date.now()) {
+  const at = String(when || '').trim().slice(0, 60);
+  if (!at || camp.status === 'cancelled' || camp.purged_at) return 'invalid';
+  if (camp.status === 'draft' || camp.status === 'scheduled') {
+    await run(db, `UPDATE candidates SET interview_at=? WHERE id=? AND campaign_id=?`, at, candidateId, camp.id);
+    return 'updated';
+  }
+  const r = await run(db,
+    `UPDATE candidates SET interview_at=?, status='pending', manual=0, reply_kind='', reminded_at=NULL, reminded_prev_at=NULL, followed_at=NULL,
+       template_override=?, attempts=0, next_retry_at=NULL, error='' WHERE id=? AND campaign_id=? AND status NOT IN ('pending','sending')`,
+    at, RESCHEDULE_TEMPLATE, candidateId, camp.id);
+  if (!r.meta.changes) return 'invalid';
+  await run(db, `UPDATE campaigns SET status='sending' WHERE id=? AND status='done'`, camp.id);
+  return 'queued';
 }
 
 // 보관기간이 지난 캠페인의 개인정보를 파기하고 통계(사업장, 상태)만 남긴다.
@@ -211,7 +290,7 @@ export async function purgeExpired(db, now = Date.now()) {
   for (const { id } of due) {
     await db.batch([
       stmt(db, `DELETE FROM inbound WHERE candidate_id IN (SELECT id FROM candidates WHERE campaign_id=?)`, id),
-      stmt(db, `UPDATE candidates SET name='', phone='', message_text='', reply_text='', interview_at='' WHERE campaign_id=?`, id),
+      stmt(db, `UPDATE candidates SET name='', phone='', message_text='', reply_text='', interview_at='', template_override='' WHERE campaign_id=?`, id),
       stmt(db, `UPDATE campaigns SET purged_at=?, template='' WHERE id=?`, now, id)
     ]);
   }

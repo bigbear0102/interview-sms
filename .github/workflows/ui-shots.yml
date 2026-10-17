@@ -1,0 +1,22 @@
+name: UI shots
+# 화면 검토용 스크린샷(데모 데이터). Actions 실행 결과의 ui-shots 묶음을 내려받아 본다.
+on:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+
+jobs:
+  shots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm i --no-save playwright@1.48.2 && npx playwright install --with-deps chromium
+      - run: node deploy/dev/render-preview.mjs preview && node deploy/dev/shots.mjs preview shots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-shots
+          path: shots
