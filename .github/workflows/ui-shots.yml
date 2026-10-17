@@ -15,7 +15,7 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: npm i --no-save playwright@1.48.2 && npx playwright install --with-deps chromium
-      - run: node deploy/dev/render-preview.mjs preview && node deploy/dev/shots.mjs preview shots
+      - run: node deploy/dev/render-preview.mjs preview && SHOTS_ALL=1 node deploy/dev/shots.mjs preview shots
       - uses: actions/upload-artifact@v4
         with:
           name: ui-shots

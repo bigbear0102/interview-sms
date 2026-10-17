@@ -2,7 +2,7 @@
 // 사용(CI): node deploy/dev/render-preview.mjs out && node deploy/dev/shots.mjs out shots
 // playwright 는 CI 에서만 설치한다(npm i --no-save playwright).
 import { chromium } from 'playwright';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const [src, out] = process.argv.slice(2);
@@ -19,6 +19,10 @@ const SHOTS = [
   ['campaign_detail'],
   ['campaign_slots']
 ];
+// SHOTS_ALL=1 이면 미리보기의 모든 화면을 찍는다(전체 검토용)
+if (process.env.SHOTS_ALL === '1') {
+  for (const f of readdirSync(src).filter((x) => x.endsWith('.html')).map((x) => x.slice(0, -5)).sort()) if (!SHOTS.some(([n, a]) => n === f && !a)) SHOTS.push([f]);
+}
 const browser = await chromium.launch();
 for (const [w, tag] of [[1280, 'pc'], [390, 'm']]) {
   const page = await browser.newPage({ viewport: { width: w, height: 900 }, deviceScaleFactor: 1 });

@@ -84,6 +84,8 @@ const pages = {
   campaign_new_prefill: [`/campaigns/new?ids=${appIds.join(',')}`, true],
   applicants: ['/applicants', true],
   inbox: ['/applicants/inbox', true],
+  inbox_connect: ['/applicants/inbox/connect', true],
+  postings: ['/applicants/postings', true],
   applicant_detail: [`/applicants/${appIds[0]}`, true],
   admin: ['/admin', true],
   password: ['/password', true],
