@@ -185,7 +185,6 @@ export async function renderHome(db, user, deps) {
     inbox.pending - inbox.ready - (stalled ? inbox.waiting : 0) > 0 ? `<li><a href="/applicants/inbox"><span class="n info">${inbox.pending - inbox.ready - (stalled ? inbox.waiting : 0)}</span><span class="t">${inbox.ready || stalled ? '그 밖의 새 지원' : '새 지원이 도착했어요'}<small>원가중심점을 정하면 연락처를 자동으로 가져와요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
     unread ? `<li><a href="/messages?dir=in"><span class="n info">${unread}</span><span class="t">안 읽은 받은 문자<small>문자함에서 확인해요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
     noreply7 ? `<li><a href="${noreplyHref}"><span class="n wait">${noreply7}</span><span class="t">아직 답이 없는 사람 (최근 7일)<small>면접 안내에서 "답 없는 사람에게 다시 보내기"를 쓸 수 있어요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : '',
-    scheduled ? `<li><a href="/messages?dir=scheduled"><span class="n mute">${scheduled}</span><span class="t">예약 대기 중인 발송<small>정해 둔 시간에 나가요</small></span><span class="go" aria-hidden="true">›</span></a></li>` : ''
   ].filter(Boolean);
   const todoHtml = todoItems.length
     ? `<ul class="todo">${todoItems.join('')}</ul>`
@@ -228,7 +227,7 @@ function campaignCard(r) {
   const replied = r.attending + r.absent + r.unclear;
   const delivered = replied + r.noreply;
   return `<a class="camp" href="/campaigns/${r.id}">
-    <div class="top"><b>${esc(r.name)}</b>${campaignBadge(r)}</div>
+    <div class="top"><b>${esc(r.name)}</b><span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${r.unclear && !r.purged_at ? `<span class="badge review">확인 필요 ${r.unclear}</span>` : ''}${campaignBadge(r)}</span></div>
     ${responseBar({ attending: r.attending, absent: r.absent, unclear: r.unclear, noreply: r.noreply })}
     <div class="meta">${r.author ? `${esc(r.author)} · ` : ''}${r.status === 'scheduled' ? `${fmtWhen(r.scheduled_at)} 발송 예정 · ` : ''}대상 ${r.total}명${delivered ? ` · 회신 ${replied}명 · 참석 ${r.attending} · 불참 ${r.absent}` : ''}</div>
   </a>`;
@@ -238,14 +237,12 @@ function campaignCard(r) {
 export async function renderCampaignList(db, user, deps) {
   const depIds = deps.map((d) => d.id);
   const rows = depIds.length
-    ? await all(db, `SELECT k.id, k.name, k.status, k.purged_at, k.scheduled_at,
-          (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id) total,
-          (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='attending') attending,
-          (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='absent') absent,
-          (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='unclear') unclear,
-          (SELECT COUNT(*) FROM candidates WHERE campaign_id=k.id AND status='sent') noreply,
-          (SELECT COALESCE(NULLIF(name,''), username) FROM users WHERE id=k.created_by) author
-        FROM campaigns k WHERE k.department_id IN (${idList(depIds)}) ORDER BY k.id DESC LIMIT 200`, ...depIds)
+    // 안내마다 하위 조회를 여러 번 하지 않고 한 번에 모아 센다(D1 읽기 절약)
+    ? await all(db, `SELECT k.id, k.name, k.status, k.purged_at, k.scheduled_at, COALESCE(NULLIF(u.name,''), u.username) author,
+          COUNT(ca.id) total, COALESCE(SUM(ca.status='attending'),0) attending, COALESCE(SUM(ca.status='absent'),0) absent,
+          COALESCE(SUM(ca.status='unclear'),0) unclear, COALESCE(SUM(ca.status='sent'),0) noreply
+        FROM campaigns k LEFT JOIN candidates ca ON ca.campaign_id=k.id LEFT JOIN users u ON u.id=k.created_by
+        WHERE k.department_id IN (${idList(depIds)}) GROUP BY k.id ORDER BY k.id DESC LIMIT 200`, ...depIds)
     : [];
   return `${pageHeader({ title: '면접 안내', desc: '대상자 명단으로 안내 문자를 한꺼번에 보내고, 참석·불참 답장을 사업장별로 모아 봐요.',
     actions: `<a class="btn" href="/campaigns/new">${icon('plus', 18)}새 면접 안내</a><a class="btn secondary" href="/interviews/today">${icon('calendar', 18)}오늘 면접</a>` })}
@@ -430,8 +427,12 @@ export function renderCampaignDetail(d) {
           <form method="post" action="/campaigns/${camp.id}/reschedule" data-confirm="이 사람에게 새 일정으로 안내 문자를 보낼까요?">${hid}
             <input name="when" required placeholder="10/24 14:00" aria-label="새 면접일시" autocomplete="off"><button class="small">보내기</button></form></details>` : '';
     if (c.status === 'unclear') return (slots.length ? slotSel + setBtns(['absent']) : setBtns(['attending', 'absent'])) + resch;
+    if (c.reply_kind === 'reschedule') return resch;
+    // 그 밖은 접힌 "바꾸기" 하나에 상태 바꾸기·일정 다시 안내를 모은다(행마다 링크가 두 줄로 쌓이지 않게)
     const others = c.status === 'attending' ? ['absent'] : c.status === 'absent' ? ['attending'] : ['attending', 'absent'];
-    return `<details class="resch"><summary>바꾸기</summary><div class="stack" style="gap:6px;margin-top:6px">${slots.length && c.status !== 'attending' ? slotSel : ''}${slots.length ? setBtns(['absent'].filter((x) => x !== c.status)) : setBtns(others)}</div></details>${resch}`;
+    const again = resch ? `<form method="post" action="/campaigns/${camp.id}/reschedule" class="inline" data-confirm="이 사람에게 새 일정으로 안내 문자를 보낼까요?">${hid}
+            <input name="when" required placeholder="새 일시 10/24 14:00" aria-label="새 면접일시" autocomplete="off"><button class="small">다시 안내</button></form>` : '';
+    return `<details class="resch"><summary>바꾸기</summary><div class="stack" style="gap:8px;margin-top:6px">${slots.length && c.status !== 'attending' ? slotSel : ''}${slots.length ? setBtns(['absent'].filter((x) => x !== c.status)) : setBtns(others)}${again}</div></details>`;
   };
   const qs = (status) => `?${siteFilter ? `site=${encodeURIComponent(siteFilter)}&` : ''}${status ? `status=${status}` : ''}`.replace(/[?&]$/, '');
 

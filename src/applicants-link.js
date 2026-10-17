@@ -4,6 +4,7 @@
 //  - suggest  : 노쇼 N회 이상이면 블랙리스트 후보로 "제안"만 한다(승인은 사람이)
 //  - flag     : 면접 안내 명단에 블랙리스트 대상이 있으면 "참고용"으로 알려 준다(발송은 막지 않는다)
 import { all, first, run } from './d1.js';
+import { esc } from './views.js';
 
 const KEYS = {
   enabled: 'link_enabled', register: 'link_register', history: 'link_history', suggest: 'link_suggest', flag: 'link_flag',
@@ -133,4 +134,22 @@ export async function latestStages(db, phones, user) {
     else { cur.times++; if (r.outcome === 'noshow') cur.noshow++; }
   }
   return out;
+}
+
+// 문자 시스템 연결 설정 카드(관리자). 연결 설정 화면에 둔다(매일 쓰는 지원자 목록에서 치웠다).
+export function linkSettingsPanel(link, isSuper, back = '/applicants/inbox/connect') {
+  const hid = `<input type="hidden" name="back" value="${esc(back)}">`;
+  return `<details class="card" style="margin-top:12px" open><summary><b>문자 시스템 연결</b>
+      <span class="muted">${link.enabled ? '켜짐' : '꺼짐 (기본)'} — 면접 안내와 지원자 관리를 이어 줘요. 발송은 막지 않아요.</span></summary>
+      <form method="post" action="/applicants/settings" id="linkform" class="stack" style="margin-top:12px">${hid}
+        <label class="check"><input type="checkbox" name="enabled" value="1"${link.enabled ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span><b>연결 사용</b> <small>켜야 아래 항목을 고를 수 있어요. 끄면 아래 항목은 모두 동작하지 않아요</small></span></label>
+        <fieldset class="linkopts" id="linkopts"${link.enabled ? '' : ' disabled'}>
+        <label class="check"><input type="checkbox" name="register" value="1"${link.raw.register ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>면접 안내를 만들 때 명단을 지원자로 <b>자동 등록</b> <small>(중복은 올리지 않아요, 원가중심점에는 사업장을 넣어요)</small></span></label>
+        <label class="check"><input type="checkbox" name="history" value="1"${link.raw.history ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>지원자 상세·기록에 <b>면접 안내 이력</b> 보이기</span></label>
+        <label class="check"><input type="checkbox" name="suggest" value="1"${link.raw.suggest ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>노쇼 기록이 많은 사람을 <b>블랙리스트 후보로 제안</b> <small>(등록은 사람이 승인해요)</small></span></label>
+        <label style="max-width:220px">제안 기준 (노쇼 횟수)<input type="number" name="threshold" min="1" max="20" value="${link.threshold}"${isSuper ? '' : ' disabled'}></label>
+        <label class="check"><input type="checkbox" name="flag" value="1"${link.raw.flag ? ' checked' : ''}${isSuper ? '' : ' disabled'}> <span>면접 안내 명단을 올릴 때 블랙리스트 대상이 있으면 <b>참고용으로 표시</b></span></label>
+        </fieldset>
+        ${isSuper ? '<div><button class="btn secondary">설정 저장</button></div>' : '<p class="muted">설정은 관리자만 바꿀 수 있어요.</p>'}
+      </form></details>` + `<script>(function(){var lm=document.querySelector('#linkform input[name=enabled]'),lo=document.getElementById('linkopts');if(lm&&lo)lm.addEventListener('change',function(){lo.disabled=!lm.checked;});})();</script>`;
 }
