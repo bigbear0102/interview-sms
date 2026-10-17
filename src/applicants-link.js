@@ -100,3 +100,33 @@ export async function flaggedInCampaign(db, campaignId) {
       WHERE a.phone IN (SELECT phone FROM candidates WHERE campaign_id=? AND phone != '')`, campaignId);
   return new Map(rows.map((r) => [r.phone, r]));
 }
+
+// 지원자 진행 단계: 같은 전화번호의 가장 최근 면접 안내 건으로 판단한다(별도 저장 없음).
+// 면접 결과가 있으면 결과가, 없으면 답장 상태가 단계가 된다. 관리자가 아니면 자기 부서의 면접 안내만 본다.
+const STAGE_BY_OUTCOME = { hired: ['ok', '입사'], passed: ['ok', '합격'], rejected: ['mute', '불합격'], noshow: ['no', '노쇼'], showed: ['info', '출석'] };
+const STAGE_BY_STATUS = {
+  attending: ['ok', '참석 예정'], absent: ['no', '불참'], unclear: ['review', '확인 필요'], sent: ['wait', '답 없음'],
+  pending: ['mute', '보낼 예정'], sending: ['mute', '보낼 예정'], failed: ['fail', '못 보냄']
+};
+export function stageOf(c) {
+  if (!c) return null;
+  const [tone, label] = STAGE_BY_OUTCOME[c.outcome] || STAGE_BY_STATUS[c.status] || ['mute', c.status];
+  return { tone, label, campaignId: c.campaign_id, interviewAt: c.interview_at || '' };
+}
+
+export async function latestStages(db, phones, user) {
+  const list = [...new Set((phones || []).filter(Boolean))].slice(0, 100);
+  const out = new Map();
+  if (!list.length) return out;
+  const scoped = user && user.role !== 'super';
+  const deps = (user && user.departments) || [];
+  if (scoped && !deps.length) return out;
+  const rows = await all(db,
+    `SELECT ca.phone, ca.status, ca.outcome, ca.interview_at, ca.campaign_id
+       FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
+      WHERE ca.phone IN (${list.map(() => '?').join(',')}) AND k.status!='cancelled'
+        ${scoped ? `AND k.department_id IN (${deps.map(() => '?').join(',')})` : ''}
+      ORDER BY ca.id DESC`, ...list, ...(scoped ? deps : []));
+  for (const r of rows) if (!out.has(r.phone)) out.set(r.phone, stageOf(r));
+  return out;
+}

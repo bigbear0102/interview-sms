@@ -6,7 +6,7 @@ import { encryptText, decryptText, randomToken, sha256Hex } from './crypto.js';
 import {
   DEFAULT_TEMPLATE, renderTemplate, createCampaign, scheduleCampaign, cancelCampaign, remindCampaign,
   processQueue, handleInbound, setManualStatus, purgeExpired, campaignStats, sendDirect, unscheduleCampaign,
-  queueDirect, cancelDirect
+  queueDirect, cancelDirect, SLOT_TEMPLATE, slotsOf, setSlotManual, rescheduleCandidate
 } from './core.js';
 import { all, first, run } from './d1.js';
 import { normalizePhone, isValidMobile } from './parser.js';
@@ -30,7 +30,7 @@ import { handleAgentApi } from './agent-api.js';
 import { getIntakeToken, ingestRaw, ownerForMailName, MAX_MAIL_BYTES } from './mail-intake.js';
 import { getLinkSettings, flaggedInCampaign } from './applicants-link.js';
 import { renderLanding } from './landing.js';
-import { OUTCOMES, setOutcome, queueAutoReminders } from './reminders.js';
+import { OUTCOMES, setOutcome, queueAutoReminders, queueFollowups, queueResultMessages, RESULT_TEMPLATES } from './reminders.js';
 import { phoneApiUrl, isPublicCloud } from './admin.js';
 import { monitorPhones, recordError } from './monitor.js';
 import { applyDeliveryEvent, pollDelivery, notifyNewReply, unreadCount, markAllRead } from './delivery.js';
@@ -58,6 +58,25 @@ async function loadCampaign(db, user, id) {
   const c = await first(db, `SELECT k.*, d.name dept, g.name gateway FROM campaigns k
     JOIN departments d ON d.id=k.department_id JOIN gateways g ON g.id=k.gateway_id WHERE k.id=?`, id);
   return c && canAccessDepartment(user, c.department_id) ? c : null;
+}
+
+// 지원자 관리에서 고른 사람(ids=1,2,3)으로 면접 안내 명단을 채운다. 원가중심점은 가장 최근 지원 건의 값.
+async function prefillFromApplicants(db, idsParam) {
+  const ids = [...new Set(String(idsParam || '').split(',').map((x) => parseInt(x, 10)).filter((x) => Number.isInteger(x) && x > 0))].slice(0, 200);
+  if (!ids.length) return null;
+  const rows = await all(db,
+    `SELECT a.id, a.name, a.phone,
+        (SELECT applied_to FROM applicant_applications WHERE applicant_id=a.id ORDER BY id DESC LIMIT 1) site,
+        EXISTS (SELECT 1 FROM blacklist b WHERE b.applicant_id=a.id AND b.status='active') bl
+       FROM applicants a WHERE a.id IN (${ids.map(() => '?').join(',')}) ORDER BY a.name`, ...ids);
+  if (!rows.length) return null;
+  const clean = (v) => String(v || '').replace(/[\t\r\n]/g, ' ').trim();
+  return {
+    csv: ['사업장\t이름\t전화번호\t면접일시', ...rows.map((r) => `${clean(r.site)}\t${clean(r.name)}\t${clean(r.phone)}\t`)].join('\n'),
+    count: rows.length,
+    noSite: rows.filter((r) => !clean(r.site)).length,
+    blacklisted: rows.filter((r) => r.bl).map((r) => r.name)
+  };
 }
 
 // 화면 위치(상단/하단 메뉴 강조)
@@ -252,7 +271,8 @@ async function handle(request, env, ctx) {
     if (method === 'GET') {
       if (!gws.length) return html(pg('면접 안내 만들기', `<div class="notice warn" role="alert">${icon('alert')}<div><b>문자를 보낼 폰이 아직 연결되지 않았어요.</b><br>${user.role === 'super' ? '<a href="/admin">설정에서 폰을 먼저 연결하세요.</a>' : '전체 관리자에게 폰 연결을 부탁하세요.'}</div></div>`));
       const today = fmtTime(Date.now()).slice(5, 10);
-      const body = renderCampaignNew({ gws, deps, today, defaultTemplate: DEFAULT_TEMPLATE });
+      const prefill = await prefillFromApplicants(db, url.searchParams.get('ids'));
+      const body = renderCampaignNew({ gws, deps, today, defaultTemplate: DEFAULT_TEMPLATE, slotTemplate: SLOT_TEMPLATE, prefill });
       return html(pg('면접 안내 만들기', body));
     }
     const f = form(await request.text());
@@ -268,10 +288,17 @@ async function handle(request, env, ctx) {
     const parsed = one
       ? { errors: [], candidates: [{ site: defaultSite, name: String(f.one_name || '').trim(), phone: f.one_phone || '', interview_at: String(f.one_when || '').trim() }] }
       : candidatesFromCsv(f.csv || '', { requireSite: !defaultSite });
+    // 면접일시가 비어 있는 사람에게는 "모두 같은 면접일시" 칸의 값을 넣는다
+    const sameWhen = String(f.default_when || '').trim().slice(0, 60);
+    if (!one && sameWhen) for (const c of parsed.candidates) if (!c.interview_at) c.interview_at = sameWhen;
     if (parsed.errors.length) return html(pg('오류', `<p>${parsed.errors.map(esc).join('<br>')}</p><p><a href="/campaigns/new">돌아가기</a></p>`), 400);
+    // 일정 고르기: 후보를 한 줄에 하나씩(최대 9개)
+    const slots = f.kind === 'slots' ? String(f.slots || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean).slice(0, 9) : [];
+    if (f.kind === 'slots' && !slots.length) return html(pg('오류', '<p>고를 수 있는 면접 일정을 한 줄에 하나씩 적어 주세요. (예: 10/21(화) 14:00)</p><p><a href="/campaigns/new">돌아가기</a></p>'), 400);
     const r = await createCampaign(db, {
       departmentId: gw.department_id, gatewayId: gw.id, name: f.name || '무제', template: f.template,
-      retentionDays: Number(f.retention_days) || 90, userId: user.id, candidates: parsed.candidates, autoRemind: f.auto_remind === '1', defaultSite
+      retentionDays: Number(f.retention_days) || 90, userId: user.id, candidates: parsed.candidates, defaultSite,
+      autoRemind: f.auto_remind === '1', remindPrev: f.remind_prev === '1', autoFollowup: f.auto_followup === '1', slots
     });
     await audit(db, user, 'campaign.create', `campaign=${r.campaignId} accepted=${r.accepted} rejected=${r.rejected.length}`);
     // 지원자 관리 연결(설정이 켜져 있을 때만). 실패해도 면접 안내 만들기는 계속한다.
@@ -320,7 +347,7 @@ async function handle(request, env, ctx) {
   }
 
   // 캠페인 상세 / 액션
-  if ((m = path.match(/^\/campaigns\/(\d+)(?:\/(send|unschedule|cancel|remind|export\.csv|set|outcome|autoremind))?$/))) {
+  if ((m = path.match(/^\/campaigns\/(\d+)(?:\/(send|unschedule|cancel|remind|export\.csv|set|outcome|autoremind|remindprev|followup|slot|reschedule|result))?$/))) {
     const camp = await loadCampaign(db, user, Number(m[1]));
     if (!camp) return html(pg('없음', '<p>캠페인을 찾을 수 없습니다.</p>'), 404);
     const action = m[2];
@@ -349,6 +376,27 @@ async function handle(request, env, ctx) {
           await setOutcome(db, cand.id, f.outcome);
           await audit(db, user, 'candidate.outcome', `campaign=${camp.id} candidate=${cand.id} outcome=${f.outcome || '-'}`);
         }
+      } else if (action === 'remindprev' || action === 'followup') {
+        const col = action === 'remindprev' ? 'remind_prev' : 'auto_followup';
+        await run(db, `UPDATE campaigns SET ${col}=? WHERE id=?`, f.on === '1' ? 1 : 0, camp.id);
+        await audit(db, user, `campaign.${action}`, `campaign=${camp.id} on=${f.on === '1' ? 1 : 0}`);
+      } else if (action === 'slot') {
+        const cand = await first(db, `SELECT id FROM candidates WHERE id=? AND campaign_id=?`, Number(f.id), camp.id);
+        const slot = slotsOf(camp)[Number(f.slot) - 1];
+        if (cand && slot) {
+          await setSlotManual(db, cand.id, slot);
+          await audit(db, user, 'candidate.slot', `campaign=${camp.id} candidate=${cand.id} slot=${Number(f.slot)}`);
+        }
+      } else if (action === 'reschedule') {
+        const r = await rescheduleCandidate(db, camp, Number(f.id), f.when);
+        await audit(db, user, 'candidate.reschedule', `campaign=${camp.id} candidate=${Number(f.id)} result=${r}`);
+        if (r === 'queued') ctx.waitUntil(processQueue(env).catch(console.error));
+        if (r === 'invalid') return redirect(`/campaigns/${camp.id}?err=reschedule`);
+      } else if (action === 'result') {
+        const n = await queueResultMessages(db, camp, f.outcome, f.template, user.id);
+        await audit(db, user, 'campaign.result', `campaign=${camp.id} outcome=${String(f.outcome).slice(0, 10)} n=${n}`);
+        if (n > 0) ctx.waitUntil(processQueue(env).catch(console.error));
+        return redirect(`/campaigns/${camp.id}?ok=result&n=${n}`);
       } else if (action === 'autoremind') {
         await run(db, `UPDATE campaigns SET auto_remind=? WHERE id=?`, f.on === '1' ? 1 : 0, camp.id);
         await audit(db, user, 'campaign.autoremind', `campaign=${camp.id} on=${f.on === '1' ? 1 : 0}`);
@@ -393,12 +441,20 @@ async function handle(request, env, ctx) {
     const outcomeStats = await first(db,
       `SELECT COALESCE(SUM(outcome='showed'),0) showed, COALESCE(SUM(outcome='noshow'),0) noshow, COALESCE(SUM(outcome='passed'),0) passed,
         COALESCE(SUM(outcome='hired'),0) hired, COALESCE(SUM(outcome='rejected'),0) rejected,
-        COALESCE(SUM(status='attending' AND reminded_at IS NOT NULL),0) reminded FROM candidates WHERE campaign_id=?`, camp.id);
+        COALESCE(SUM(status='attending' AND reminded_at IS NOT NULL),0) reminded, COALESCE(SUM(reminded_prev_at IS NOT NULL),0) reminded_prev,
+        COALESCE(SUM(followed_at IS NOT NULL),0) followed, COALESCE(SUM(reply_kind='reschedule'),0) reschedule,
+        COALESCE(SUM(outcome='passed' AND result_sent_at IS NULL),0) todo_passed, COALESCE(SUM(outcome='hired' AND result_sent_at IS NULL),0) todo_hired,
+        COALESCE(SUM(outcome='rejected' AND result_sent_at IS NULL),0) todo_rejected FROM candidates WHERE campaign_id=?`, camp.id);
     const firstCand = camp.template ? await first(db, `SELECT * FROM candidates WHERE campaign_id=? ORDER BY id LIMIT 1`, camp.id) : null;
-    const previewText = camp.template ? renderTemplate(camp.template, firstCand || { site: '', name: '홍길동', interview_at: '' }) : '';
+    const slots = slotsOf(camp);
+    const previewText = camp.template ? renderTemplate(camp.template, firstCand || { site: '', name: '홍길동', interview_at: '' }, slots) : '';
+    const slotCounts = slots.length
+      ? Object.fromEntries((await all(db, `SELECT interview_at v, COUNT(*) n FROM candidates WHERE campaign_id=? AND status='attending' GROUP BY interview_at`, camp.id)).map((r) => [r.v, r.n]))
+      : null;
     const where = ['campaign_id=?']; const args = [camp.id];
     if (siteFilter) { where.push('site=?'); args.push(siteFilter); }
-    if (statusFilter) { where.push('status=?'); args.push(statusFilter); }
+    if (statusFilter === 'reschedule') where.push(`reply_kind='reschedule'`);
+    else if (statusFilter) { where.push('status=?'); args.push(statusFilter); }
     const cands = await all(db, `SELECT * FROM candidates WHERE ${where.join(' AND ')} ORDER BY site, id LIMIT 500`, ...args);
     const back = '?' + url.searchParams.toString();
     const totals = stats.reduce((t, s) => {
@@ -421,6 +477,7 @@ async function handle(request, env, ctx) {
     const body = renderCampaignDetail({
       flagged,
       camp, totals, siteRows, siteTotal, cands, siteFilter, statusFilter, previewText, canSend, stateNotice, delivery: deliveryStats, outcomes: outcomeStats,
+      slots, slotCounts, resultTemplates: RESULT_TEMPLATES, flash: url.searchParams.get('ok') || '', flashN: Number(url.searchParams.get('n')) || 0, err: url.searchParams.get('err') || '',
       backQuery: back, back: { href: '/campaigns', label: '면접 안내' }
     });
     return html(pg(camp.name, body));
@@ -568,6 +625,11 @@ export async function runScheduled(env, whenMs = Date.now()) {
     if (await rateLimit(env.DB, 'auto:remind', 1, 4 * 60000)) await queueAutoReminders(env.DB, whenMs);
   } catch (e) {
     await recordError(env, 'cron', e, 'autoReminders');
+  }
+  try {
+    if (await rateLimit(env.DB, 'auto:followup', 1, 9 * 60000)) await queueFollowups(env.DB, whenMs);
+  } catch (e) {
+    await recordError(env, 'cron', e, 'followups');
   }
   try {
     await processQueue(env);

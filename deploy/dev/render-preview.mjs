@@ -8,6 +8,8 @@ import { handleRequest } from '../../src/worker.js';
 import { createSession } from '../../src/auth.js';
 import { hashPassword, encryptText } from '../../src/crypto.js';
 import { createCampaign, handleInbound, scheduleCampaign } from '../../src/core.js';
+import { saveApplicant } from '../../src/applicants.js';
+import { setOutcome } from '../../src/reminders.js';
 
 const out = process.argv[2];
 if (!out) { console.error('출력 폴더가 필요합니다.'); process.exit(1); }
@@ -43,6 +45,21 @@ await db.prepare(`INSERT INTO messages (gateway_id,phone,text,status,at,schedule
   .bind(Date.now() - 600000, Date.now() - 1200000, Date.now(), Date.now() + 86400000).run();
 await db.prepare(`INSERT INTO inbound (gateway_id,sender,message,received_at,result) VALUES (1,'01099998888','확인했습니다. 감사합니다.',?, 'unmatched')`).bind(Date.now() - 300000).run();
 
+// 면접 결과·결과 안내 대기
+const ids = (await db.prepare(`SELECT id FROM candidates WHERE campaign_id=? ORDER BY id`).bind(camp.campaignId).all()).results.map((r) => r.id);
+await setOutcome(db, ids[0], 'passed'); await setOutcome(db, ids[1], 'showed'); await setOutcome(db, ids[4], 'noshow');
+// 일정 고르기 안내
+const camp3 = await createCampaign(db, { departmentId: 1, gatewayId: 1, name: '면접 일정 고르기 10/21~23', candidates: cands.slice(6, 12), userId: 1,
+  slots: ['10/21(화) 14:00', '10/22(수) 10:00', '10/23(목) 15:00'], remindPrev: true, autoRemind: true, autoFollowup: true });
+await db.prepare(`UPDATE campaigns SET status='done', scheduled_at=? WHERE id=?`).bind(Date.now() - 7200000, camp3.campaignId).run();
+await db.prepare(`UPDATE candidates SET status='sent', sent_at=? WHERE campaign_id=?`).bind(Date.now() - 1800000, camp3.campaignId).run();
+for (const [msg, i] of [['2번이요', 6], ['1', 7], ['다음주로 미룰 수 있을까요?', 8], ['불참합니다', 9]]) await handleInbound(db, 1, { sender: cands[i].phone, message: msg });
+// 지원자 관리
+const appIds = [];
+for (const [i, site] of [[0, '아마노코리아(현장HR)'], [1, '아마노코리아(현장HR)'], [4, '아마노코리아(파견)'], [6, ''], [10, '']]) {
+  appIds.push((await saveApplicant(db, { name: names[i], phone: cands[i].phone, applied_to: site, job: site ? '주차관리' : '' }, 1, 'manual')).id);
+}
+
 // ---- 화면 렌더링 ----
 const pages = {
   login: ['/login', false],
@@ -55,6 +72,10 @@ const pages = {
   campaign_new: ['/campaigns/new', true],
   campaign_detail: [`/campaigns/${camp.campaignId}`, true],
   campaign_scheduled: [`/campaigns/${camp2.campaignId}`, true],
+  campaign_slots: [`/campaigns/${camp3.campaignId}`, true],
+  campaign_new_prefill: [`/campaigns/new?ids=${appIds.join(',')}`, true],
+  applicants: ['/applicants', true],
+  applicant_detail: [`/applicants/${appIds[0]}`, true],
   admin: ['/admin', true],
   password: ['/password', true],
   people: ['/people', true],
