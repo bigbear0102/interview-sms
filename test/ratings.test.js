@@ -113,7 +113,7 @@ test('AI 찾기: 나이·성별로 거르기(원문에서 직접 읽음), 결혼
   assert.match(page, /나이 <b>20~29세<\/b> · 성별 <b>여<\/b>/);
   assert.ok(page.includes('<b>일번</b>') && !page.includes('<b>이번</b>') && !page.includes('<b>삼번</b>'));
   assert.match(page, /010-2000-0001 · 여 24세/);
-  assert.match(page, /정보가 없는 지원자\(직접 등록 등\)는 결과에서 빠져요/);
+  assert.match(page, /나이·성별 정보가 있는 지원자만 보여요/);
   const p2 = await (await users.boss.call('/applicants/ask?q=' + encodeURIComponent('안양 기혼'))).text();
   assert.match(p2, /<b>기혼<\/b> 조건은 시스템에 정보가 없어서 거르지 못했어요/);
 });

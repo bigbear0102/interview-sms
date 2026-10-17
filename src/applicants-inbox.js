@@ -85,8 +85,8 @@ export async function renderInbox(db, env, { status = 'pending', isSuper = false
   // 연락처는 가져왔지만 이력서 내용은 없는 사람(확장 v1.9 전에 가져온 사람): 이력서만 다시 읽기
   const noResume = (await first(db, `SELECT COUNT(*) n FROM applicant_inbox i WHERE i.resume_url != '' AND i.fetch_state != 'requested'
       AND NOT EXISTS (SELECT 1 FROM applicant_resumes r WHERE r.inbox_id=i.id) AND ${inboxScope(viewer, 'i').sql}`, ...inboxScope(viewer, 'i').args).catch(() => ({ n: 0 }))).n;
-  if (noResume) notices.push(`<div class="notice info">${icon('info')}<div><b>이력서 내용이 저장되지 않은 지원자가 ${noResume}명</b> 있어요(예전에 받은 지원). 누르면 연락처가 없는 사람은 연락처와 이력서를, 있는 사람은 이력서를 가져와요.
-    <form method="post" action="/applicants/inbox/resume-all" class="inline" data-busy="이력서 다시 읽기 요청 중" style="margin-left:6px"><button class="small secondary">이력서 내용 가져오기</button></form></div></div>`);
+  if (noResume) notices.push(`<div class="notice info">${icon('info')}<div>이력서가 없는 지원자 <b>${noResume}명</b>
+    <form method="post" action="/applicants/inbox/resume-all" class="inline" data-busy="이력서 다시 읽기 요청 중" style="margin-left:6px"><button class="small secondary">가져오기</button></form></div></div>`);
 
   const needPhone = all_.filter((r) => !r.phone).length;
   const stalledN = idle ? all_.filter((r) => !r.phone && r.fetch_state === 'requested' && !r.resume_only).length : 0;
@@ -253,15 +253,14 @@ export async function renderConnect(db, env, { isSuper = false, flash = '', err 
       <form method="post" action="/applicants/inbox/gw/${g.id}/delete" class="inline" data-confirm="이 그룹웨어 연결을 지울까요? 저장한 비밀번호도 지워져요."><button class="lk" style="color:var(--red-t)">지우기</button></form></div></li>`;
   const gwCard = `<style>.amlist{list-style:none;margin:8px 0 12px;padding:0}.amrow{display:flex;gap:12px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;padding:12px 0;border-top:1px solid var(--line-soft)}.amrow:first-child{border-top:0}.amacts{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.amform{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));margin-top:8px}</style>
       <section class="cstep${gwList.some((g) => g.last_ok_at && !g.blocked) ? ' done' : ''}"><h2>지원 메일 받기: 그룹웨어 직접 연결</h2>
-        <p class="muted" style="font-size:15px">그룹웨어 아이디·비밀번호를 넣으면 <b>시스템이 1분마다</b> 그 메일함에서 알바몬 지원 메일을 가져와 <b>내 새 지원</b>에 넣어요. <b>PC가 꺼져 있어도</b> 들어와요. 비밀번호는 암호화해 저장하고 다시 보여 주지 않아요.</p>
+        <p class="muted" style="font-size:15px">그룹웨어 아이디·비밀번호를 넣으면 <b>시스템이 1분마다</b> 그 메일함에서 알바몬 지원 메일을 가져와 <b>내 새 지원</b>에 넣어요. <b>PC가 꺼져 있어도</b> 들어와요.</p>
         <div class="stack">
           ${gwList.length ? `<ul class="amlist">${gwList.map(gwRow).join('')}</ul>` : ''}
           <form method="post" action="/applicants/inbox/gw" class="amform" autocomplete="off" data-busy="그룹웨어 연결 확인 중">
             <input name="login_id" maxlength="80" required placeholder="그룹웨어 아이디 (예: bigbear)" autocomplete="off" aria-label="그룹웨어 아이디">
             <input name="pw" type="password" maxlength="100" required placeholder="그룹웨어 비밀번호" autocomplete="new-password" aria-label="그룹웨어 비밀번호">
             <button class="btn small">${gwList.length ? '추가·비밀번호 바꾸기' : '연결하기'}</button></form>
-          <p class="muted" style="font-size:13px;margin:0">비밀번호가 틀리면 계정이 잠기지 않게 다시 저장할 때까지 쉬어요. 그룹웨어 비밀번호를 바꾸면 여기서도 다시 저장해 주세요.</p>
-          <p class="muted" style="font-size:13px;margin:0">참고: 회사 메일 서버(POP3)가 암호화를 지원하지 않아 <b>비밀번호가 암호화 없이 전송</b>돼요(관리자 승인, 2026-10). 메일은 읽기만 하고 지우지 않아요.</p>
+          <p class="muted" style="font-size:13px;margin:0">그룹웨어 비밀번호를 바꾸면 여기서도 다시 저장해 주세요.</p>
         </div></section>`;
   // 관리자: 연락처를 가져오면 바로 지원자로 등록(예전에는 공용 수신 주소 카드 안에 있었다)
   const autoCard = isSuper ? `<div class="card" style="margin-top:12px"><b>자동 등록</b> <small class="muted">관리자</small>

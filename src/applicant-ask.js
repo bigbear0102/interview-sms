@@ -176,7 +176,7 @@ export function renderAsk({ q = '', f = null, result = null, pending = 0, todo =
     : `<div class="bubble ai">
         <p>${describe(f)} 조건으로 찾았어요. ${result.total ? `<b>${result.total}명</b> 중 ${result.rows.length < result.total ? `상위 ${result.rows.length}명을 ` : ''}담당자 별점 높은 순으로 보여 드려요.` : '맞는 지원자가 없어요.'}</p>
         ${f.ignored.length ? `<p class="notice info" style="margin-top:8px">${icon('info')}<span><b>${f.ignored.map(esc).join(', ')}</b> 조건은 시스템에 정보가 없어서 거르지 못했어요.${f.ignored.some((w) => /젊|나이|연령/.test(w)) ? ' 나이는 "20대", "30세 이상"처럼 숫자로 적어 주세요.' : ''}</span></p>` : ''}
-        ${f.ageMin !== null || f.ageMax !== null || f.gender ? '<p class="muted" style="font-size:13px;margin-top:6px">나이·성별은 알바몬 지원 메일에 적힌 값으로 걸러요. 그 정보가 없는 지원자(직접 등록 등)는 결과에서 빠져요.</p>' : ''}
+        ${f.ageMin !== null || f.ageMax !== null || f.gender ? '<p class="muted" style="font-size:13px;margin-top:6px">나이·성별 정보가 있는 지원자만 보여요.</p>' : ''}
         ${f.by === 'plain' ? `<p class="muted" style="font-size:13px;margin-top:6px">${ai ? 'AI가 응답하지 않아' : 'AI가 꺼져 있어'} 입력한 낱말로 찾았어요.</p>` : ''}
         ${result.rows.length ? `<form method="get" action="/campaigns/new" class="asklist" id="askform">
           <ul>${result.rows.map((r) => `<li>

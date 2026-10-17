@@ -47,7 +47,6 @@ export function ratingPanel(applicantId, list, userId, back = '') {
       <span class="lbl">내 별점</span><span class="starrow">${btns}</span>${mine ? '<button name="stars" value="0" class="tertiary small" style="margin-left:4px">지우기</button>' : ''}</form>
     <p class="muted" style="font-size:14px;margin:8px 0 0">${n ? `평균 <b style="color:var(--ink)">${avg}점</b> · 담당자 ${n}명` : '아직 아무도 별점을 주지 않았어요.'}</p>
     ${n ? `<ul class="ratelist">${list.map((r) => `<li><span>${esc(r.who || '담당자')}</span><span class="st" aria-label="${r.stars}점">${starText(r.stars)}</span></li>`).join('')}</ul>` : ''}
-    <p class="muted" style="font-size:12px;margin-top:8px">면접·근무에서 본 사실을 기준으로 주세요. 나이·성별 같은 이유로 점수를 주면 안 돼요.</p>
   </section>`;
 }
 

@@ -84,7 +84,7 @@ test('예전에 연락처만 가져온 사람: 이력서만 다시 읽기(등록
   await db.prepare(`UPDATE applicant_inbox SET phone='01011110001', fetch_state='done' WHERE id=?`).bind(a).run();
   await db.prepare(`UPDATE applicant_inbox SET phone='01011110002', fetch_state='done', status='registered' WHERE id=?`).bind(b).run();
   const inbox = await (await boss.call('/applicants/inbox')).text();
-  assert.match(inbox, /이력서 내용이 저장되지 않은 지원자가 2명/);
+  assert.match(inbox, /이력서가 없는 지원자 <b>2명<\/b>/);
   const res = await boss.post('/applicants/inbox/resume-all', {});
   assert.equal(res.headers.get('location'), '/applicants/inbox?ok=resumeall&n=2');
   const q = await agentQueue(db, 10, null);
