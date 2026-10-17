@@ -1,6 +1,6 @@
 // 문자 관리 시스템 화면 (홈, 문자 보내기, 문자함, 면접 안내 목록/만들기/상세, 로그인, 비밀번호, 기록)
 // 화면 구성 원칙: 한 화면에 하나의 주요 동작, 숫자는 먼저, 설명은 짧게, 모든 표시값은 ui.js 형식을 따른다.
-import { all, first } from './d1.js';
+import { all, first, chunks, IN_MAX } from './d1.js';
 import { esc, fmtTime, icon } from './views.js';
 import { OUTCOMES } from './reminders.js';
 import { unreadCount } from './delivery.js';
@@ -562,13 +562,15 @@ export async function namesForPhones(db, phones, gatewayIds) {
   const out = new Map();
   const list = phones.filter(Boolean).slice(0, 200);
   if (!list.length) return out;
-  const p = idList(list);
-  const cands = gatewayIds.length ? await all(db,
-    `SELECT ca.phone, ca.name, ca.campaign_id, k.name camp FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
-      WHERE ca.phone IN (${p}) AND ca.name!='' AND k.gateway_id IN (${idList(gatewayIds)}) AND k.purged_at IS NULL ORDER BY ca.id DESC`, ...list, ...gatewayIds) : [];
-  for (const c of cands) if (!out.has(c.phone)) out.set(c.phone, { name: c.name, campaignId: c.campaign_id, camp: c.camp });
-  const apps = await all(db, `SELECT phone, name FROM applicants WHERE phone IN (${p})`, ...list);
-  for (const a of apps) if (!out.has(a.phone)) out.set(a.phone, { name: a.name });
+  for (const part of chunks(list, Math.max(10, IN_MAX - gatewayIds.length))) {
+    const p = idList(part);
+    const cands = gatewayIds.length ? await all(db,
+      `SELECT ca.phone, ca.name, ca.campaign_id, k.name camp FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
+        WHERE ca.phone IN (${p}) AND ca.name!='' AND k.gateway_id IN (${idList(gatewayIds)}) AND k.purged_at IS NULL ORDER BY ca.id DESC`, ...part, ...gatewayIds) : [];
+    for (const c of cands) if (!out.has(c.phone)) out.set(c.phone, { name: c.name, campaignId: c.campaign_id, camp: c.camp });
+    const apps = await all(db, `SELECT phone, name FROM applicants WHERE phone IN (${p})`, ...part);
+    for (const a of apps) if (!out.has(a.phone)) out.set(a.phone, { name: a.name });
+  }
   return out;
 }
 
@@ -608,7 +610,7 @@ export async function renderMessages(db, { gws, dirFilter, phoneFilter, notice =
   const tab = (key, label, n) => `<a href="/messages${key ? `?dir=${key}` : ''}"${dirFilter === key ? ' aria-current="page"' : ''}>${label}${n !== undefined ? ` <span class="n">${n}</span>` : ''}</a>`;
   const empty = { in: '받은 문자가 없어요', out: '보낸 문자가 없어요', scheduled: '예약된 문자가 없어요' }[dirFilter] || '주고받은 문자가 없어요';
 
-  return `${pageHeader({ title: '문자함', desc: '받은 문자와 보낸 문자를 한곳에서 봐요. 15초마다 저절로 새로 불러와요.',
+  return `${pageHeader({ title: '문자함', desc: '받은 문자와 보낸 문자를 한곳에서 봐요. 화면을 열어 두면 30초마다 저절로 새로 불러와요.',
     actions: `<a class="btn" href="/send">${icon('plus', 18)}새 문자</a>` })}
     ${notice}
     <div class="tabs">${tab('', '전체')}${tab('in', '받은 문자', inCount)}${tab('out', '보낸 문자')}${tab('scheduled', '예약 문자', schedCount)}</div>

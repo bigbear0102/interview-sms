@@ -27,9 +27,12 @@ async function setup() {
   const call = (path, init = {}) => handleRequest(new Request('https://example.test' + path, {
     ...init, headers: { cookie: `sid=${sid}`, origin: 'https://example.test', ...(init.headers || {}) }
   }), env, ctx);
-  const post = (path, fields) => call(path, {
-    method: 'POST', body: new URLSearchParams(fields).toString(), headers: { 'content-type': 'application/x-www-form-urlencoded' }, redirect: 'manual'
-  });
+  // 배열 값은 화면의 체크칸처럼 같은 이름으로 여러 번 보낸다(ids=1&ids=2…)
+  const post = (path, fields) => {
+    const body = new URLSearchParams();
+    for (const [k, v] of Object.entries(fields)) for (const x of [].concat(v)) body.append(k, String(x));
+    return call(path, { method: 'POST', body: body.toString(), headers: { 'content-type': 'application/x-www-form-urlencoded' }, redirect: 'manual' });
+  };
   return { db, env, call, post };
 }
 const messages = (db) => db.prepare(`SELECT phone, text FROM messages ORDER BY id`).all().then((r) => r.results);
@@ -372,4 +375,37 @@ test('오늘 면접: 오늘 면접일시인 사람을 모아 출석·노쇼 기�
   const box = visible(await (await call('/messages')).text());
   assert.match(box, /내일참석 010-1111-0003/);
   assert.match(box, /오늘 안내/);
+});
+
+test('D1 값 100개 제한: 새 지원 "전체 선택" 150건 일괄 처리, 문자함 이름 표시가 나눠서 동작', async () => {
+  const { db, call, post } = await setup();
+  const ids = [];
+  for (let i = 0; i < 150; i++) {
+    const r = await db.prepare(`INSERT INTO applicant_inbox (source, apply_no, recruit_no, company, job_title, name, received_at, status, resume_url, owner_user_id)
+      VALUES ('albamon',?, '1','회사','공고',?,?,'pending','https://www.albamon.com/x',1)`).bind(String(i), '지원' + i, Date.now()).run();
+    ids.push(Number(r.meta.last_row_id));
+  }
+  const r1 = await post('/applicants/inbox/bulk', { op: 'fetch', ids });
+  assert.equal(r1.status, 303);
+  assert.equal(r1.headers.get('location'), '/applicants/inbox?ok=fetchall&n=150');
+  const r2 = await post('/applicants/inbox/bulk', { op: 'ignore', ids });
+  assert.match(r2.headers.get('location'), /n=150/);
+  assert.equal((await db.prepare(`SELECT COUNT(*) n FROM applicant_inbox WHERE status='ignored'`).first()).n, 150);
+  // 문자함: 서로 다른 번호 120개
+  for (let i = 0; i < 120; i++) await db.prepare(`INSERT INTO inbound (gateway_id,sender,message,received_at,result) VALUES (1,?,?,?,'unmatched')`).bind('0101234' + String(1000 + i), 'hi', Date.now()).run();
+  assert.equal((await call('/messages')).status, 200);
+  assert.throws(() => db.prepare('SELECT 1').bind(...new Array(101).fill(1)), /too many SQL variables/);
+});
+
+test('직접 정한 사람의 취소·변경 답장은 확인 필요로 올라온다(그 밖의 답장은 원문만)', async () => {
+  const { db } = await setup();
+  await createCampaign(db, { departmentId: 1, gatewayId: 1, name: 'm', template: '{이름}', userId: 1,
+    candidates: [{ site: 's', name: '가', phone: '01011110001', interview_at: '10/21 14:00' }] });
+  await db.prepare(`UPDATE candidates SET status='attending', manual=1, sent_at=?`).bind(Date.now()).run();
+  await handleInbound(db, 1, { sender: '01011110001', message: '네 감사합니다' });
+  assert.equal((await cand(db, '01011110001')).status, 'attending');
+  await handleInbound(db, 1, { sender: '01011110001', message: '죄송해요 못 갈 것 같아요' });
+  const c = await cand(db, '01011110001');
+  assert.equal(c.status, 'unclear');
+  assert.equal(c.manual, 0);
 });

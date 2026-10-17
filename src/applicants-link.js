@@ -3,7 +3,7 @@
 //  - history  : 지원자 상세·기록에 면접 안내 이력 표시
 //  - suggest  : 노쇼 N회 이상이면 블랙리스트 후보로 "제안"만 한다(승인은 사람이)
 //  - flag     : 면접 안내 명단에 블랙리스트 대상이 있으면 "참고용"으로 알려 준다(발송은 막지 않는다)
-import { all, first, run } from './d1.js';
+import { all, first, run, chunks, IN_MAX } from './d1.js';
 import { esc } from './views.js';
 
 const KEYS = {
@@ -116,18 +116,21 @@ export function stageOf(c) {
 }
 
 export async function latestStages(db, phones, user) {
-  const list = [...new Set((phones || []).filter(Boolean))].slice(0, 100);
+  const list = [...new Set((phones || []).filter(Boolean))].slice(0, 200);
   const out = new Map();
   if (!list.length) return out;
   const scoped = user && user.role !== 'super';
   const deps = (user && user.departments) || [];
   if (scoped && !deps.length) return out;
-  const rows = await all(db,
-    `SELECT ca.phone, ca.status, ca.outcome, ca.interview_at, ca.campaign_id
-       FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
-      WHERE ca.phone IN (${list.map(() => '?').join(',')}) AND k.status!='cancelled'
-        ${scoped ? `AND k.department_id IN (${deps.map(() => '?').join(',')})` : ''}
-      ORDER BY ca.id DESC`, ...list, ...(scoped ? deps : []));
+  const rows = [];
+  for (const part of chunks(list, Math.max(10, IN_MAX - (scoped ? deps.length : 0)))) {
+    rows.push(...await all(db,
+      `SELECT ca.id, ca.phone, ca.status, ca.outcome, ca.interview_at, ca.campaign_id
+         FROM candidates ca JOIN campaigns k ON k.id=ca.campaign_id
+        WHERE ca.phone IN (${part.map(() => '?').join(',')}) AND k.status!='cancelled'
+          ${scoped ? `AND k.department_id IN (${deps.map(() => '?').join(',')})` : ''}`, ...part, ...(scoped ? deps : [])));
+  }
+  rows.sort((a, b) => b.id - a.id);
   for (const r of rows) {
     const cur = out.get(r.phone);
     if (!cur) out.set(r.phone, { ...stageOf(r), times: 1, noshow: r.outcome === 'noshow' ? 1 : 0 });

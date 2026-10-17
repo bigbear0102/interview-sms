@@ -63,7 +63,7 @@ async function loadCampaign(db, user, id) {
 
 // 지원자 관리에서 고른 사람(ids=1,2,3)으로 면접 안내 명단을 채운다. 원가중심점은 가장 최근 지원 건의 값.
 async function prefillFromApplicants(db, idsParam) {
-  const ids = [...new Set(String(idsParam || '').split(',').map((x) => parseInt(x, 10)).filter((x) => Number.isInteger(x) && x > 0))].slice(0, 200);
+  const ids = [...new Set(String(idsParam || '').split(',').map((x) => parseInt(x, 10)).filter((x) => Number.isInteger(x) && x > 0))].slice(0, 80); // D1 쿼리당 값 100개 제한
   if (!ids.length) return null;
   const rows = await all(db,
     `SELECT a.id, a.name, a.phone,
@@ -607,7 +607,8 @@ async function handle(request, env, ctx) {
     const dirFilter = ['in', 'out', 'scheduled'].includes(dirParam) ? dirParam : '';
     if (dirFilter === '' || dirFilter === 'in') { await markAllRead(db, user); unread = 0; }
     const body = await renderMessages(db, { gws, dirFilter, phoneFilter: normalizePhone(url.searchParams.get('phone') || '') });
-    const live = '<script>setInterval(function(){var a=document.activeElement;if(a&&(a.tagName==="TEXTAREA"||a.tagName==="INPUT"))return;location.reload();},15000);</script>';
+    // 화면이 보일 때만 30초마다 새로 불러온다(숨은 탭·입력 중 제외, 다시 보이면 바로). D1 읽기 절약
+    const live = '<script>(function(){var t=Date.now();function go(){var a=document.activeElement;if(document.hidden||(a&&(a.tagName==="TEXTAREA"||a.tagName==="INPUT")))return;if(Date.now()-t>=30000)location.reload();}setInterval(go,5000);document.addEventListener("visibilitychange",function(){if(!document.hidden)go();});})();</script>';
     return html(pg('문자함', body + live));
   }
 

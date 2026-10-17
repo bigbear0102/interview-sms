@@ -6,7 +6,11 @@ import { dirname, join } from 'node:path';
 
 class Stmt {
   constructor(db, sql) { this.db = db; this.sql = sql; this.args = []; }
-  bind(...args) { this.args = args.map((a) => (a === undefined ? null : a)); return this; }
+  bind(...args) {
+    // D1 과 같게: 쿼리 하나에 묶는 값은 100개까지(로컬 시험에서도 같은 제한으로 잡는다)
+    if (args.length > 100) throw new Error(`D1_ERROR: too many SQL variables (${args.length} > 100)`);
+    this.args = args.map((a) => (a === undefined ? null : a)); return this;
+  }
   _first() { return this.db.prepare(this.sql).get(...this.args) ?? null; }
   _all() { return { results: this.db.prepare(this.sql).all(...this.args).map((r) => ({ ...r })) }; }
   _run() {
