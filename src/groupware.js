@@ -245,6 +245,13 @@ export async function runProbe(env) {
     out.push('밖으로 나가는 머리말: ' + JSON.stringify(h.headers));
     const ip = await (await fetch('https://httpbin.org/ip')).json();
     out.push('밖에서 보이는 IP: ' + JSON.stringify(ip));
+    // 접속 IP 머리말을 IPv4 로 직접 보내면 바뀌는지(그룹웨어가 IPv6 를 저장하지 못하는 문제 확인용)
+    const v4 = String(ip.origin || '').split(',').map((x) => x.trim()).find((x) => /^\d+\.\d+\.\d+\.\d+$/.test(x)) || '';
+    if (v4) {
+      const h2 = await (await fetch('https://httpbin.org/headers', { headers: { 'X-Forwarded-For': v4, 'X-Real-IP': v4 } })).json();
+      const ip2 = await (await fetch('https://httpbin.org/ip', { headers: { 'X-Forwarded-For': v4, 'X-Real-IP': v4 } })).json();
+      out.push(`IPv4(${v4})를 직접 보냈을 때 → IP: ${JSON.stringify(ip2)} / 머리말: ${JSON.stringify({ xff: h2.headers['X-Forwarded-For'], real: h2.headers['X-Real-Ip'] })}`);
+    }
   } catch (e) { out.push('httpbin 실패: ' + e.message); }
   try {
     const jar = new CookieJar();
